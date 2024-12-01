@@ -17,16 +17,16 @@ This code is based in riffy, but its an 100% Rewrite made from scratch...
 - Youtube and Spotify support
 - Minimal Requests to the lavalink server (helps the lavalink recourses!)
 
-# How to install (Not avalible yet)
+# How to install
 
-```npm install aqualink```
+`npm install aqualink`
 
 `pnpm install aqualink`
 
-# Basic usage (Not 100% functional yet)
+# Basic usage
 
 ```javascript
-const { Aqua } = require("./build/index.js");
+const { Aqua } = require("aqualink");
 const { Client, Collection, GatewayDispatchEvents } = require("discord.js");
 
 const client = new Client({
