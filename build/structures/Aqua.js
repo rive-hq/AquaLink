@@ -98,6 +98,7 @@ class Aqua extends EventEmitter {
         if (packet.t === "VOICE_SERVER_UPDATE") player.connection.setServerUpdate(packet.d);
         else if (packet.t === "VOICE_STATE_UPDATE" && packet.d.user_id === this.clientId) player.connection.setStateUpdate(packet.d);
     }
+    
     /**
      * Fetches nodes by the specified region.
      * @param {string} region - The region to filter nodes by.
@@ -133,6 +134,7 @@ class Aqua extends EventEmitter {
 
         return this.createPlayer(node, options);
     }
+
     /**
      * Creates a player using the specified node.
      * @param {Node} node - The node to create the player with.
@@ -146,6 +148,7 @@ class Aqua extends EventEmitter {
         this.emit("playerCreate", player);
         return player;
     }
+
     /**
      * Destroys the player associated with the given guild ID.
      * @param {string} guildId - The ID of the guild.
