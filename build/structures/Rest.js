@@ -109,38 +109,6 @@ class Rest {
             return null;
         }
     }
-
-    /**
-     * Adds a request to the queue and processes it.
-     * @param {function} requestFunction - The request function to execute.
-     */
-    async queueRequest(requestFunction) {
-        if (this.queue.length >= this.maxQueueSize) {
-            this.aqua.emit("debug", "[Rest] Queue is full, discarding oldest request.");
-            this.queue.shift(); 
-        }
-        this.queue.push(requestFunction);
-        this.processQueue();
-    }
-
-    /**
-     * Processes the queue of requests with concurrency control.
-     */
-    async processQueue() {
-        while (this.activeRequests < this.maxConcurrentRequests && this.queue.length > 0) {
-            const requestFunction = this.queue.shift(); 
-            this.activeRequests++; 
-            try {
-                await requestFunction(); 
-            } catch (error) {
-                this.aqua.emit("error", error);
-            } finally {
-                this.activeRequests--; 
-                this.processQueue();
-            }
-        }
-    }
-
     /**
      * Cleans up resources related to the queue.
      */
