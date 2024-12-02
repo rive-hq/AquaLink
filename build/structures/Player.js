@@ -246,21 +246,25 @@ class Player extends EventEmitter {
         const player = this.aqua.players.get(payload.guildId);
         if (!player) return;
 
+        const track = this.current;
+
         switch (payload.type) {
             case "TrackStartEvent":
-                this.trackStart(player, payload);
+                this.trackStart(player, track, payload);
                 break;
             case "TrackEndEvent":
-                this.trackEnd(player, payload);
+                this.trackEnd(player, track, payload);
                 break;
             case "TrackExceptionEvent":
-                this.trackError(player, payload);
+                this.trackError(player, track, payload);
                 break;
             case "TrackStuckEvent":
-                this.trackStuck(player, payload);
+                this.trackStuck(player, track, payload);
                 break;
+            case "TrackChangeEvent":
+                this.trackChange(player, track, payload);
             case "WebSocketClosedEvent":
-                this.socketClosed(player, payload);
+                this.socketClosed(player, track, payload);
                 break;
             default:
                 this.handleUnknownEvent(payload);
@@ -272,11 +276,18 @@ class Player extends EventEmitter {
      * Handles track start events.
      * @param {Object} player - The player instance.
      * @param {Object} payload - The event payload.
+     * @param {Object} track - The track object.
      */
-    trackStart(player, payload) {
+    trackStart(player, track, payload) {
         this.playing = true;
         this.paused = false;
-        this.aqua.emit("trackStart", player, payload);
+        this.aqua.emit("trackStart", player, track, payload);
+    }
+
+    trackChange(player, track, payload) {
+        this.playing = true;
+        this.paused = this.player.this.paused
+        this.aqua.emit("trackChange", player, track, payload);
     }
 
     /**
@@ -284,7 +295,7 @@ class Player extends EventEmitter {
      * @param {Object} player - The player instance.
      * @param {Object} payload - The event payload.
      */
-    trackEnd(player, payload) {
+    trackEnd(player, track, payload) {
         this.addToPreviousTrack(this.current);
         if (["loadfailed", "cleanup"].includes(payload.reason.replace("_", "").toLowerCase())) {
             if (player.queue.length === 0) {
@@ -317,7 +328,7 @@ class Player extends EventEmitter {
      * @param {Object} player - The player instance.
      * @param {Object} payload - The event payload.
      */
-    trackError(player, payload) {
+    trackError(player, track, payload) {
         this.aqua.emit("trackError", player, payload);
         this.stop();
     }
@@ -327,7 +338,7 @@ class Player extends EventEmitter {
      * @param {Object} player - The player instance.
      * @param {Object} payload - The event payload.
      */
-    trackStuck(player, payload) {
+    trackStuck(player, track, payload) {
         this.aqua.emit("trackStuck", player, payload);
         this.stop();
     }
