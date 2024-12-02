@@ -14,6 +14,7 @@ class Node {
         this.host = nodes.host || "localhost";
         this.port = nodes.port || 2333;
         this.password = nodes.password || "youshallnotpass";
+        this.stats = this.initializeStats();
         this.restVersion = "v4"; // Fixed to the specified version
         this.secure = nodes.secure || false;
         this.sessionId = nodes.sessionId || null;
@@ -23,9 +24,8 @@ class Node {
         this.restUrl = `http${this.secure ? 's' : ''}://${this.host}:${this.port}`;
         
         this.ws = null;
-        this.regions = nodes.regions;
+        this.regions = nodes.regions || [];
         this.info = null;
-        this.stats = this.initializeStats();
         this.connected = false;
 
         this.resumeKey = options.resumeKey || null;
@@ -61,9 +61,16 @@ class Node {
         };
     }
 
+    /**
+     * Fetches the lavalink node's information.
+     * @param {Object} [options] Options to pass to the rest request.
+     * @param {boolean} [options.includeHeaders=false] Include headers in the response.
+     * @returns {Promise<Object>} The lavalink node's information.
+     */
     async fetchInfo(options = {}) {
         return await this.rest.makeRequest("GET", `/v4/info`, null, options.includeHeaders);
     }
+    
 
     async connect() {
         if (this.ws) this.ws.close();
@@ -115,20 +122,21 @@ class Node {
         if (Date.now() - this.lastStats < 5000) {
             return this.stats;
         }
-
+        
+    
         const stats = await this.rest.makeRequest("GET", `/v4/stats`)
             .catch(err => {
                 this.aqua.emit('debug', `Error fetching stats: ${err.message}`);
                 return null;
-            });
-
+           });
+    
         if (stats) {
-            this.stats = stats;
+            this.stats = { ...this.stats, ...stats };
             this.lastStats = Date.now();
         }
-
         return stats;
     }
+
 
     resumePlayers() {
         for (const player of this.aqua.players.values()) {
@@ -158,7 +166,7 @@ class Node {
     handlePayload(payload) {
         switch (payload.op) {
             case "stats":
-                this.stats = { ...payload };
+                this.stats = { ...this.stats, ...payload };
                 this.lastStats = Date.now();
                 break;
             case "ready":
@@ -248,3 +256,4 @@ class Node {
 }
 
 module.exports = { Node };
+
