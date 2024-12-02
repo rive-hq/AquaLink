@@ -1,12 +1,12 @@
 const { EventEmitter } = require("events");
 const { Connection } = require("./Connection");
 const { Queue } = require("./Queue");
-const {Filters} = require("./Filters");
+const { Filters } = require("./Filters");
 
 class Player extends EventEmitter {
     /**
      * @param {Object} aqua - The Aqua instance.
-     * @param {Object} node - The node instance.
+     * @param {Object} nodes - The node instances.
      * @param {Object} options - Configuration options for the player.
      * @param {string} options.guildId - The ID of the guild.
      * @param {string} options.textChannel - The ID of the text channel.
@@ -40,14 +40,22 @@ class Player extends EventEmitter {
         this.timestamp = 0;
         this.ping = 0;
         this.isAutoplay = false;
+
         this.setupEventListeners();
     }
 
+    /**
+     * Sets up event listeners for player events.
+     */
     setupEventListeners() {
-        this.on("playerUpdate", this.onPlayerUpdate);
+        this.on("playerUpdate", this.onPlayerUpdate.bind(this));
         this.on("event", this.handleEvent.bind(this));
     }
 
+    /**
+     * Handles player update events.
+     * @param {Object} packet - The packet containing the player update data.
+     */
     onPlayerUpdate(packet) {
         const { state } = packet;
         this.connected = state.connected;
@@ -57,7 +65,7 @@ class Player extends EventEmitter {
     }
 
     /**
-     * Get the previous track.
+     * Gets the previous track.
      * @returns {Object|null} The previous track or null if none exists.
      */
     get previous() {
@@ -65,7 +73,7 @@ class Player extends EventEmitter {
     }
 
     /**
-     * Add a track to the previous tracks list.
+     * Adds a track to the previous tracks list.
      * @param {Object} track - The track object to add.
      */
     addToPreviousTrack(track) {
@@ -73,13 +81,12 @@ class Player extends EventEmitter {
     }
 
     /**
-     * Play the next track in the queue.
+     * Plays the next track in the queue.
      * @returns {Promise<Player>} The player instance.
      * @throws {Error} If the player is not connected.
      */
     async play() {
         if (!this.connected) throw new Error("Player connection is not established. Please connect first.");
-
         this.current = this.queue.shift();
         if (!this.current) return this;
 
@@ -90,19 +97,12 @@ class Player extends EventEmitter {
         this.playing = true;
         this.position = 0;
 
-        // Log info for debugging
         this.aqua.emit("debug", this.guildId, `Playing track: ${this.current.track}`);
-
-        await this.nodes.rest.updatePlayer({
-            guildId: this.guildId,
-            data: {
-                track: { encoded: this.current.track },
-            },
-        });
+        await this.updatePlayer({ track: { encoded: this.current.track } });
         return this;
     }
     /**
-     * Connect to the voice channel.
+     * Connects the player to the voice channel.
      * @param {Object} [options=this] - Connection options.
      * @param {string} options.guildId - The ID of the guild.
      * @param {string} options.voiceChannel - The ID of the voice channel.
@@ -121,18 +121,20 @@ class Player extends EventEmitter {
         this.connected = true;
         this.aqua.emit("debug", this.guildId, `Player has connected to voice channel: ${voiceChannel}.`);
     }
+
     /**
-     * Disconnect the player from the voice channel.
+     * Disconnects the player from the voice channel and cleans up resources.
      * @returns {Promise<Player>} The player instance.
      */
     async destroy() {
         await this.updatePlayer({ track: null });
         this.connected = false;
+        this.clearData(); // Clear data when destroyed
         this.aqua.emit("debug", this.guildId, "Player has disconnected from voice channel.");
     }
 
     /**
-     * Pause or resume the player.
+     * Pauses or resumes the player.
      * @param {boolean} paused - Whether to pause the player.
      * @returns {Promise<Player>} The player instance.
      */
@@ -143,7 +145,7 @@ class Player extends EventEmitter {
     }
 
     /**
-     * Seek to a specific position in the current track.
+     * Seeks to a specific position in the current track.
      * @param {number} position - The position in milliseconds to seek to.
      * @returns {Promise<Player>} The player instance.
      */
@@ -154,7 +156,7 @@ class Player extends EventEmitter {
     }
 
     /**
-     * Stop playback and clear the current track.
+     * Stops playback and clears the current track.
      * @returns {Promise<Player>} The player instance.
      */
     async stop() {
@@ -163,7 +165,7 @@ class Player extends EventEmitter {
     }
 
     /**
-     * Set the volume of the player.
+     * Sets the volume of the player.
      * @param {number} volume - The volume level (0-200).
      * @returns {Promise<Player>} The player instance.
      * @throws {Error} If the volume is out of bounds.
@@ -176,7 +178,7 @@ class Player extends EventEmitter {
     }
 
     /**
-     * Set the loop mode for the player.
+     * Sets the loop mode for the player.
      * @param {string} mode - The loop mode ('none', 'track', 'queue').
      * @returns {Promise<Player>} The player instance.
      * @throws {Error} If the loop mode is invalid.
@@ -189,7 +191,7 @@ class Player extends EventEmitter {
     }
 
     /**
-     * Send data to the player.
+     * Sends data to the player.
      * @param {Object} data - The data to send.
      * @returns {Promise<Player>} The player instance.
      */
@@ -199,7 +201,7 @@ class Player extends EventEmitter {
     }
 
     /**
-     * Set the text channel for the player.
+     * Sets the text channel for the player.
      * @param {string} channel - The ID of the text channel.
      * @returns {Promise<Player>} The player instance.
      */
@@ -209,7 +211,7 @@ class Player extends EventEmitter {
     }
 
     /**
-     * Set the voice channel for the player.
+     * Sets the voice channel for the player.
      * @param {string} channel - The ID of the voice channel.
      * @returns {Promise<Player>} The player instance.
      * @throws {TypeError} If the channel is not a string.
@@ -221,18 +223,12 @@ class Player extends EventEmitter {
             throw new ReferenceError(`Player is already connected to ${channel}.`);
         }
         this.voiceChannel = channel;
-        await this.connect({
-            deaf: this.deaf,
-            guildId: this.guildId,
-            voiceChannel: this.voiceChannel,
-            textChannel: this.textChannel,
-            mute: this.mute,
-        });
+        await this.connect({ deaf: this.deaf, guildId: this.guildId, voiceChannel: this.voiceChannel, textChannel: this.textChannel, mute: this.mute });
         return this;
     }
 
     /**
-     * Disconnect the player from the voice channel.
+     * Disconnects the player from the voice channel.
      * @returns {Promise<Player>} The player instance.
      */
     async disconnect() {
@@ -242,12 +238,13 @@ class Player extends EventEmitter {
     }
 
     /**
-     * Handle events from the player.
+     * Handles events from the player.
      * @param {Object} payload - The event payload.
      */
     async handleEvent(payload) {
         const player = this.aqua.players.get(payload.guildId);
         if (!player) return;
+
         switch (payload.type) {
             case "TrackStartEvent":
                 this.trackStart(player, payload);
@@ -271,7 +268,7 @@ class Player extends EventEmitter {
     }
 
     /**
-     * Handle track start events.
+     * Handles track start events.
      * @param {Object} player - The player instance.
      * @param {Object} payload - The event payload.
      */
@@ -282,7 +279,7 @@ class Player extends EventEmitter {
     }
 
     /**
-     * Handle track end events.
+     * Handles track end events.
      * @param {Object} player - The player instance.
      * @param {Object} payload - The event payload.
      */
@@ -315,7 +312,7 @@ class Player extends EventEmitter {
     }
 
     /**
-     * Handle track error events.
+     * Handles track error events.
      * @param {Object} player - The player instance.
      * @param {Object} payload - The event payload.
      */
@@ -325,7 +322,7 @@ class Player extends EventEmitter {
     }
 
     /**
-     * Handle track stuck events.
+     * Handles track stuck events.
      * @param {Object} player - The player instance.
      * @param {Object} payload - The event payload.
      */
@@ -335,7 +332,7 @@ class Player extends EventEmitter {
     }
 
     /**
-     * Handle socket closed events.
+     * Handles socket closed events.
      * @param {Object} player - The player instance.
      * @param {Object} payload - The event payload.
      */
@@ -354,7 +351,7 @@ class Player extends EventEmitter {
     }
 
     /**
-     * Send data to the Aqua instance.
+     * Sends data to the Aqua instance.
      * @param {Object} data - The data to send.
      */
     send(data) {
@@ -362,34 +359,34 @@ class Player extends EventEmitter {
     }
 
     /**
-     * Set a custom value in the player's data.
+     * Sets a custom value in the player's data.
      * @param {string} key - The key of the data.
      * @param {any} value - The value to set.
      */
     set(key, value) {
-        this.data[key] = value;
+        this.data.set(key, value); // Use WeakMap to set data
     }
 
     /**
-     * Get a custom value from the player's data.
+     * Gets a custom value from the player's data.
      * @param {string} key - The key of the data.
      * @returns {any} The value associated with the key.
      */
     get(key) {
-        return this.data[key];
+        return this.data.get(key); // Use WeakMap to get data
     }
 
     /**
-     * Clear all custom data set on the player.
+     * Clears all custom data set on the player.
      * @returns {Player} The player instance.
      */
     clearData() {
-        this.data = {}; // Clear all custom data efficiently
+        this.data = {} // Clear all custom data efficiently
         return this;
     }
 
     /**
-     * Update the player with new data.
+     * Updates the player with new data.
      * @param {Object} data - The data to update the player with.
      * @returns {Promise<void>}
      */
@@ -401,15 +398,23 @@ class Player extends EventEmitter {
     }
 
     /**
-     * Handle unknown events from the node.
+     * Handles unknown events from the node.
      * @param {Object} payload - The event payload.
      */
     handleUnknownEvent(payload) {
         const error = new Error(`Node encountered an unknown event: '${payload.type}'`);
         this.aqua.emit("nodeError", this, error);
     }
+
+    /**
+     * Cleans up the player when idle.
+     * @returns {Promise<void>}
+     */
+    async cleanup() {
+        if (!this.playing && !this.paused && this.queue.isEmpty()) {
+            await this.destroy(); 
+        }
+    }
 }
 
 module.exports = { Player };
-
-
