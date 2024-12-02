@@ -86,7 +86,11 @@ client.on("messageCreate", async (message) => {
 
     const query = message.content.slice(6);
 
-    const player = client.aqua.players.get(message.guild.id) ?? client.aqua.createConnection({
+    if (!query) return message.channel.send("Please provide a query.");
+    if (!message.member.voice.channel) return message.channel.send("You need to be in a voice channel to use this command.");
+
+
+    const player = client.aqua.createConnection({
         guildId: message.guild.id,
         voiceChannel: message.member.voice.channel.id,
         textChannel: message.channel.id,
@@ -140,6 +144,7 @@ client.aqua.on("nodeConnect", (node) => {
 client.aqua.on("nodeError", (node, error) => {
     console.log(`Node "${node.name}" encountered an error: ${error.message}.`);
 });
+aqua.on('debug', (message) => console.log(message));
 
 client.login("Yourtokenhere");
 ```

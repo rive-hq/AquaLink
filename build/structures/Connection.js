@@ -22,7 +22,7 @@ class Connection {
         if (!endpoint) {
             throw new Error("Missing 'endpoint' property in VOICE_SERVER_UPDATE packet/payload. Please wait or disconnect the bot from the voice channel and try again.");
         }
-        
+
         const previousVoiceRegion = this.region;
         this.voice.endpoint = endpoint;
         this.voice.token = token;
@@ -45,7 +45,10 @@ class Connection {
      * @param {boolean} data.self_mute The self-muted status of the player.
      */
     setStateUpdate({ session_id, channel_id, self_deaf, self_mute }) {
-        if (channel_id == null) {
+        if (channel_id == null || session_id == null) {
+            this.player.aqua.emit("playerLeave", this.player.voiceChannel);
+            this.player.voiceChannel = null;
+            this.voiceChannel = null;
             this.player.destroy();
             this.player.aqua.emit("playerDestroy", this.player);
             return;
@@ -59,7 +62,7 @@ class Connection {
 
         this.selfDeaf = self_deaf;
         this.selfMute = self_mute;
-        this.voice.sessionId = session_id || null;
+        this.voice.sessionId = session_id;
 
         this.updatePlayerVoiceData();
     }

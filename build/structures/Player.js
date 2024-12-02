@@ -62,6 +62,7 @@ class Player extends EventEmitter {
         this.position = state.position;
         this.ping = state.ping;
         this.timestamp = state.time;
+
     }
 
     /**
@@ -223,7 +224,7 @@ class Player extends EventEmitter {
             throw new ReferenceError(`Player is already connected to ${channel}.`);
         }
         this.voiceChannel = channel;
-        await this.connect({ deaf: this.deaf, guildId: this.guildId, voiceChannel: this.voiceChannel, textChannel: this.textChannel, mute: this.mute });
+        await this.connect({ deaf: this.deaf, guildId: this.guildId, voiceChannel: this.voiceChannel, mute: this.mute });
         return this;
     }
 

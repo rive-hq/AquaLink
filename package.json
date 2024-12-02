@@ -1,0 +1,51 @@
+{
+  "name": "aqualink",
+  "version": "1.0.2",
+  "description": "An Lavalink wrapper, focused in speed, performance, and features, Based in Riffy!",
+  "main": "build/index.js",
+  "scripts": {
+    "start": "node ./build/index.js"
+  },
+  "exports": {
+    ".": {
+      "require": "./build/index.js"
+    }
+  },
+  "keywords": [
+    "lavalink",
+    "client-wrapper",
+    "discord.js",
+    "node.js",
+    "audio-streaming",
+    "music-bot",
+    "discord-integration",
+    "high-performance",
+    "scalable",
+    "lavalink",
+    "api",
+    "discord",
+    "lavalink.js",
+    "discord.js",
+    "lavalink-api",
+    "cross-platform",
+    "seamless-integration",
+    "community-support",
+    "open-source",
+    "opus"
+  ],
+  "author": "mushroom0162 (https://github.com/ToddyTheNoobDud)",
+  "license": "ISC",
+  "dependencies": {
+    "stream": "^0.0.3",
+    "undici": "^7.0.0",
+    "ws": "^8.18.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ToddyTheNoobDud/AquaLink"
+  },
+  
+  "devDependencies": {
+    "discord.js": "^14.16.3"
+  }
+}
