@@ -26,9 +26,8 @@ class Queue extends Array {
      * @param {*} track - The track to add.
      */
     add(track) {
-        if (track) {
-            this.push(track);
-        }
+        this.push(track);
+        return this;
     }
 
     /**
@@ -79,6 +78,15 @@ class Queue extends Array {
         return this.shift(); // Removes and returns the first element
     }
 
+    // Check if the queue is empty
+    /**
+     * Check if the queue is empty.
+     * @returns {boolean} Whether the queue is empty.
+     */
+    isEmpty() {
+        return this.length === 0;
+    }
+
     /**
      * Add multiple tracks to the queue.
      * @param {Array} tracks - The tracks to add.
@@ -88,6 +96,8 @@ class Queue extends Array {
             this.push(...tracks);
         }
     }
+
 }
 
 module.exports = { Queue };
+
