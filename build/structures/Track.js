@@ -16,12 +16,7 @@ class Track {
         this.info = data.info;
         this.requester = requester;
         this.nodes = nodes;
-
-        if (data.encoded) {
-            this.track = data.encoded;
-        } else {
-            this.track = Buffer.from(data.track, "base64").toString("utf8");
-        }
+        this.track = data.encoded || Buffer.from(data.track, "base64").toString("utf8");
     }
 
     /**
@@ -29,8 +24,7 @@ class Track {
      * @returns {string|null}
      */
     resolveThumbnail(thumbnail) {
-        if (!thumbnail) return null;
-        return thumbnail.startsWith("http") ? thumbnail : getImageUrl(thumbnail, this.nodes);
+        return thumbnail ? (thumbnail.startsWith("http") ? thumbnail : getImageUrl(thumbnail, this.nodes)) : null;
     }
 
     /**
@@ -40,16 +34,9 @@ class Track {
     async resolve(aqua) {
         const query = `${this.info.author} - ${this.info.title}`;
         const result = await aqua.resolve({ query, source: aqua.options.defaultSearchPlatform, requester: this.requester, node: this.nodes });
-
-        if (!result || !result.tracks.length) return null;
-
-        const matchedTrack = this.findBestMatch(result.tracks);
-        if (matchedTrack) {
-            this.updateTrackInfo(matchedTrack);
-            return this;
-        }
-        this.updateTrackInfo(result.tracks[0]);
-        return this;
+        const matchedTrack = result?.tracks?.length ? this.findBestMatch(result.tracks) || result.tracks[0] : null;
+        if (matchedTrack) this.updateTrackInfo(matchedTrack);
+        return matchedTrack ? this : null;
     }
 
     /**
@@ -57,23 +44,16 @@ class Track {
      * @returns {Track|null}
      */
     findBestMatch(tracks) {
-        const titleLower = this.info.title.toLowerCase();
-        const authorLower = this.info.author.toLowerCase();
-        const exactMatch = tracks.find(track =>
-            track.info.author.toLowerCase() === authorLower && track.info.title.toLowerCase() === titleLower
-        );
-        if (exactMatch) return exactMatch;
-        const authorMatch = tracks.find(track => track.info.author.toLowerCase() === authorLower);
-        if (authorMatch) return authorMatch;
-        const titleMatch = tracks.find(track => track.info.title.toLowerCase() === titleLower);
-        if (titleMatch) return titleMatch;
-        if (this.info.length) {
-            return tracks.find(track =>
-                track.info.length >= (this.info.length - 2000) && track.info.length <= (this.info.length + 2000)
-            );
-        }
-
-        return null;
+        const { title, author, length } = this.info;
+        const titleLower = title.toLowerCase();
+        const authorLower = author.toLowerCase();
+        return tracks.find(track => {
+            const { author, title, length: tLength } = track.info;
+            return (author.toLowerCase() === authorLower && title.toLowerCase() === titleLower) ||
+                   (author.toLowerCase() === authorLower) ||
+                   (title.toLowerCase() === titleLower) ||
+                   (length && tLength >= (length - 2000) && tLength <= (length + 2000));
+        });
     }
 
     /**
@@ -88,9 +68,7 @@ class Track {
      * @private
      */
     cleanup() {
-        this.rawData = null;
-        this.track = null;
-        this.info = null;
+        this.rawData = this.track = this.info = null;
     }
 }
 
