@@ -7,7 +7,7 @@ const { getImageUrl } = require("../handlers/fetchImage");
  */
 class Track {
     /**
-     * @param {{ encoded: string, info: { identifier: string, isSeekable: boolean, author: string, length: number, isStream: boolean, position: number, title: string, uri: string, sourceName: string, thumbnail: string, track: string, tracks: Array<Track>, playlist: { name: string, selectedTrack: number } } }} data
+     * @param {{ encoded: string, info: { identifier: string, isSeekable: boolean, author: string, length: number, isStream: boolean, position: number, title: string, uri: string, sourceName: string, artworkUrl: string, track: string, tracks: Array<Track>, playlist: { name: string, selectedTrack: number } } }} data
      * @param {Player} requester
      * @param {Node} nodes
      */
@@ -17,6 +17,7 @@ class Track {
         this.requester = requester;
         this.nodes = nodes;
         this.track = data.encoded || Buffer.from(data.track, "base64").toString("utf8");
+        this.playlist = data.playlist || null;
     }
 
     /**
@@ -62,13 +63,16 @@ class Track {
     updateTrackInfo(track) {
         this.info.identifier = track.info.identifier;
         this.track = track.track;
+        if (track.playlist) {
+            this.playlist = track.playlist;
+        }
     }
 
     /**
      * @private
      */
     cleanup() {
-        this.rawData = this.track = this.info = null;
+        this.rawData = this.track = this.info = this.playlist = null;
     }
 }
 

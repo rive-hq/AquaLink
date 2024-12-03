@@ -13,6 +13,7 @@ class Aqua extends EventEmitter {
      * @param {string} [options.defaultSearchPlatform="ytsearch"] - Default search platform.
      * @param {string} [options.restVersion="v4"] - Version of the REST API.
      * @param {Array<Object>} [options.plugins=[]] - Plugins to load.
+     * @param {string} [options.shouldDeleteMessage='none'] - Should delete your message? (true, false)
      */
     constructor(client, nodes, options) {
         super();
@@ -27,6 +28,7 @@ class Aqua extends EventEmitter {
         this.clientId = null;
         this.initiated = false;
         this.sessionId = null;
+        this.shouldDeleteMessage = options.shouldDeleteMessage || "false";
         this.defaultSearchPlatform = options.defaultSearchPlatform || "ytmsearch";
         this.restVersion = options.restVersion || "v3";
         this.plugins = options.plugins || [];
@@ -225,21 +227,28 @@ class Aqua extends EventEmitter {
      * @param {Node} requestNode - The node that handled the request.
      */
     loadTracks(response, requester, requestNode) {
-        this.tracks = [];
-        if (response.loadType === "track") {
-            if (response.data) {
-                this.tracks.push(new Track(response.data, requester, requestNode));
-            }
-        } else if (response.loadType === "playlist") {
-            this.tracks = response.data?.tracks.map(track => new Track(track, requester, requestNode)) || [];
-            this.playlistInfo = response.data?.info || null;
-        } else if (response.loadType === "search") {
-            this.tracks = response.data.map(track => new Track(track, requester, requestNode));
+
+        switch (response.loadType) {
+            case "track":
+                if (response.data) {
+                    this.tracks.push(new Track(response.data, requester, requestNode));
+                }
+                break;
+            case "playlist":
+                this.tracks = response.data?.tracks?.map(track => new Track(track, requester, requestNode)) || [];
+                this.playlistInfo = {
+                    name: response.data?.info?.name || response.data?.info?.title,
+                    ...response.data?.info,
+                } || null;
+                break;
+            case "search":
+                this.tracks = response.data?.map(track => new Track(track, requester, requestNode));
+                break;
         }
+
         this.loadType = response.loadType;
         this.pluginInfo = response.pluginInfo || {};
     }
-
     /**
      * Constructs the response object for the resolved tracks.
      * @returns {Object} The constructed response.
@@ -253,6 +262,7 @@ class Aqua extends EventEmitter {
             tracks: this.tracks.length ? [this.tracks.shift()] : [],
         };
     }
+
 
     /**
      * Gets the player associated with the specified guild ID.

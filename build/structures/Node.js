@@ -1,4 +1,3 @@
-
 const WebSocket = require("ws");
 const { Rest } = require("./Rest");
 
@@ -19,22 +18,18 @@ class Node {
         this.secure = nodes.secure || false;
         this.sessionId = nodes.sessionId || null;
         this.rest = new Rest(aqua, this);
-
         this.wsUrl = `ws${this.secure ? 's' : ''}://${this.host}:${this.port}/v4/websocket`;
-        this.restUrl = `http${this.secure ? 's' : ''}://${this.host}:${this.port}`;
-        
         this.ws = null;
         this.regions = nodes.regions || [];
         this.info = null;
         this.connected = false;
-
         this.resumeKey = options.resumeKey || null;
         this.resumeTimeout = options.resumeTimeout || 60;
         this.autoResume = options.autoResume || false;
-
         this.reconnectTimeout = options.reconnectTimeout || 5000;
         this.reconnectTries = options.reconnectTries || 3;
         this.reconnectAttempted = 0;
+        this.lastStatsRequest = 0; // Track the last time stats were requested
     }
 
     initializeStats() {
@@ -61,16 +56,9 @@ class Node {
         };
     }
 
-    /**
-     * Fetches the lavalink node's information.
-     * @param {Object} [options] Options to pass to the rest request.
-     * @param {boolean} [options.includeHeaders=false] Include headers in the response.
-     * @returns {Promise<Object>} The lavalink node's information.
-     */
     async fetchInfo(options = {}) {
         return await this.rest.makeRequest("GET", `/v4/info`, null, options.includeHeaders);
     }
-    
 
     async connect() {
         if (this.ws) this.ws.close();
@@ -100,12 +88,12 @@ class Node {
     async onOpen() {
         this.connected = true;
         this.aqua.emit('debug', this.name, `Connected to Lavalink at ${this.wsUrl}`);
-
-        this.info = await this.fetchInfo()
-            .catch(err => {
-                this.aqua.emit('debug', `Failed to fetch info: ${err.message}`);
-                return null;
-            });
+        try {
+            this.info = await this.fetchInfo();
+        } catch (err) {
+            this.aqua.emit('debug', `Failed to fetch info: ${err.message}`);
+            this.info = null;
+        }
 
         if (!this.info && !this.aqua.bypassChecks.nodeFetchInfo) {
             throw new Error(`Failed to fetch node info.`);
@@ -114,29 +102,25 @@ class Node {
         if (this.autoResume) {
             this.resumePlayers();
         }
-
         this.lastStats = 0;
     }
 
     async getStats() {
-        if (Date.now() - this.lastStats < 5000) {
-            return this.stats;
+        const now = Date.now();
+        if (now - this.lastStatsRequest < 5000) {
+            return this.stats; // Return cached stats if requested too soon
         }
-        
-    
-        const stats = await this.rest.makeRequest("GET", `/v4/stats`)
-            .catch(err => {
-                this.aqua.emit('debug', `Error fetching stats: ${err.message}`);
-                return null;
-           });
-    
-        if (stats) {
-            this.stats = { ...this.stats, ...stats };
-            this.lastStats = Date.now();
-        }
-        return stats;
-    }
 
+        try {
+            const stats = await this.rest.makeRequest("GET", `/v4/stats`);
+            this.stats = { ...this.stats, ...stats };
+            this.lastStatsRequest = now; // Update last request time
+            return stats;
+        } catch (err) {
+            this.aqua.emit('debug', `Error fetching stats: ${err.message}`);
+            return this.stats; // Return last known stats on error
+        }
+    }
 
     resumePlayers() {
         for (const player of this.aqua.players.values()) {
@@ -153,13 +137,10 @@ class Node {
     onMessage(msg) {
         if (Array.isArray(msg)) msg = Buffer.concat(msg);
         if (msg instanceof ArrayBuffer) msg = Buffer.from(msg);
-
         const payload = JSON.parse(msg.toString());
         if (!payload.op) return;
-
         this.aqua.emit("raw", "Node", payload);
         this.aqua.emit("debug", this.name, `Received update: ${JSON.stringify(payload)}`);
-
         this.handlePayload(payload);
     }
 
@@ -201,7 +182,6 @@ class Node {
             this.aqua.emit("nodeError", this, new Error(`Unable to connect after ${this.reconnectTries} attempts.`));
             return this.destroy();
         }
-
         setTimeout(() => {
             this.aqua.emit("nodeReconnect", this);
             this.connect();
@@ -216,17 +196,13 @@ class Node {
             this.aqua.nodes.delete(this.name);
             return;
         }
-
         if (!this.connected) return;
-
         this.aqua.players.forEach((player) => {
             if (player.node === this) player.destroy();
         });
-
         if (this.ws) this.ws.close(1000, "destroy");
         this.ws?.removeAllListeners();
         this.ws = null;
-
         this.aqua.emit("nodeDestroy", this);
         this.aqua.nodeMap.delete(this.name);
         this.connected = false;
@@ -256,4 +232,3 @@ class Node {
 }
 
 module.exports = { Node };
-

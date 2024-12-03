@@ -16,7 +16,7 @@ class Player extends EventEmitter {
      * @param {number} [options.defaultVolume=100] - The default volume level (0-200).
      * @param {string} [options.loop='none'] - The loop mode ('none', 'track', 'queue').
      */
-    constructor(aqua, nodes, options) {
+    constructor(aqua, nodes, options = {}) {
         super();
         this.aqua = aqua;
         this.nodes = nodes;
@@ -40,6 +40,9 @@ class Player extends EventEmitter {
         this.timestamp = 0;
         this.ping = 0;
         this.isAutoplay = false;
+        this.nowPlayingMessage = null;
+        
+        this.shouldDeleteMessage = options.shouldDeleteMessage ?? true;
 
         this.setupEventListeners();
     }
@@ -62,7 +65,6 @@ class Player extends EventEmitter {
         this.position = state.position;
         this.ping = state.ping;
         this.timestamp = state.time;
-
     }
 
     /**
@@ -83,18 +85,24 @@ class Player extends EventEmitter {
 
     /**
      * Plays the next track in the queue.
+     * @param {Object} options - Options for playing the next track.
+     * @param {string} options.query - The query to search for the next track.
+     * @param {boolean} options.force - Whether to force play the next track even if the queue is empty.
      * @returns {Promise<Player>} The player instance.
      * @throws {Error} If the player is not connected.
+     * @throws {Error} If the queue is empty and force is not set to true.
+     * @description This method plays the next track in the queue.
+     * @event play
      */
     async play() {
-        if (!this.connected) throw new Error("Player connection is not established. Please connect first.");
+        if (!this.connected) throw new Error("Bro go on and use the connection first");
+        if (!this.queue.length) return;
+
         this.current = this.queue.shift();
-        if (!this.current) return this;
 
         if (!this.current.track) {
             this.current = await this.current.resolve(this.aqua);
         }
-
         this.playing = true;
         this.position = 0;
 
@@ -102,6 +110,7 @@ class Player extends EventEmitter {
         await this.updatePlayer({ track: { encoded: this.current.track } });
         return this;
     }
+
     /**
      * Connects the player to the voice channel.
      * @param {Object} [options=this] - Connection options.
@@ -307,10 +316,12 @@ class Player extends EventEmitter {
      * @param {Object} payload - The event payload.
      */
     trackEnd(player, track, payload) {
-        this.addToPreviousTrack(this.current);
+        if (this.shouldDeleteMessage && this.nowPlayingMessage) {
+            this.nowPlayingMessage.delete();
+            this.nowPlayingMessage = null;
+        }
         if (["loadfailed", "cleanup"].includes(payload.reason.replace("_", "").toLowerCase())) {
             if (player.queue.length === 0) {
-                this.playing = false;
                 return this.aqua.emit("queueEnd", player);
             }
             this.aqua.emit("trackEnd", player, payload);
@@ -326,14 +337,12 @@ class Player extends EventEmitter {
             return player.play();
         }
         if (player.queue.length === 0) {
-            this.playing = false;
             return this.aqua.emit("queueEnd", player);
         } else {
             this.aqua.emit("trackEnd", player, payload);
             return player.play();
         }
     }
-
     /**
      * Handles track error events.
      * @param {Object} player - The player instance.
@@ -440,3 +449,4 @@ class Player extends EventEmitter {
 }
 
 module.exports = { Player };
+

@@ -1,5 +1,4 @@
 const { fetch: undiciFetch } = require("undici");
-const nodeUtil = require("node:util");
 
 class Rest {
     constructor(aqua, options) {
@@ -9,10 +8,10 @@ class Rest {
         this.password = options.password;
         this.version = options.restVersion;
         this.calls = 0;
-        this.queue = []; 
-        this.maxQueueSize = options.maxQueueSize || 100; 
-        this.maxConcurrentRequests = options.maxConcurrentRequests || 5; 
-        this.activeRequests = 0; 
+        this.queue = [];
+        this.maxQueueSize = options.maxQueueSize || 100;
+        this.maxConcurrentRequests = options.maxConcurrentRequests || 5;
+        this.activeRequests = 0;
     }
 
     setSessionId(sessionId) {
@@ -24,22 +23,23 @@ class Rest {
             "Content-Type": "application/json",
             Authorization: this.password,
         };
-        const requestOptions = {
-            method,
-            headers,
-            body: body ? JSON.stringify(body) : null,
-        };
+
         try {
-            const response = await undiciFetch(`${this.url}${endpoint}`, requestOptions);
+            const response = await undiciFetch(`${this.url}${endpoint}`, {
+                method,
+                headers,
+                body: body && JSON.stringify(body),
+            });
             this.calls++;
             const data = await this.parseResponse(response);
             this.aqua.emit("apiResponse", endpoint, response);
             this.aqua.emit(
                 "debug",
-                `[Rest] ${method} ${endpoint} ${body ? `body: ${JSON.stringify(body)}` : ""} -> Status Code: ${response.status} Response: ${nodeUtil.inspect(data)}`
+                `[Rest] ${method} ${endpoint} ${body ? `body: ${JSON.stringify(body)}` : ""} -> Status Code: ${response.status} Response(body): ${JSON.stringify(data)}`
             );
             return includeHeaders ? { data, headers: response.headers } : data;
         } catch (error) {
+            this.aqua.emit("debug", `Network error during request: ${method} ${this.url}${endpoint}`, { cause: error });
             throw new Error(`Network error during request: ${method} ${this.url}${endpoint}`, { cause: error });
         }
     }
@@ -50,15 +50,18 @@ class Rest {
 
     async updatePlayer(options) {
         const requestBody = { ...options.data };
+
         if ((requestBody.track && requestBody.track.encoded && requestBody.track.identifier) ||
             (requestBody.encodedTrack && requestBody.identifier)) {
             throw new Error(`Cannot provide both 'encoded' and 'identifier' for track in Update Player Endpoint`);
         }
+
         if (this.version === "v3" && options.data?.track) {
             const { track } = requestBody;
             delete requestBody.track;
             Object.assign(requestBody, track.encoded ? { encodedTrack: track.encoded } : { identifier: track.identifier });
         }
+
         return this.makeRequest("PATCH", `/${this.version}/sessions/${this.sessionId}/players/${options.guildId}?noReplace=false`, requestBody);
     }
 
@@ -70,7 +73,7 @@ class Rest {
         return this.makeRequest("GET", `/${this.version}/loadtracks?identifier=${encodeURIComponent(identifier)}`);
     }
 
-    async decodeTrack(track, node) {
+    async decodeTrack(track) {
         return this.makeRequest("GET", `/${this.version}/decodetrack?encodedTrack=${encodeURIComponent(track)}`);
     }
 
@@ -79,10 +82,7 @@ class Rest {
     }
 
     async getStats() {
-        if (this.version === "v3") {
-            return this.makeRequest("GET", `/${this.version}/stats`);
-        }
-        return this.makeRequest("GET", `/${this.version}/stats/all`);
+        return this.makeRequest("GET", this.version === "v3" ? `/${this.version}/stats` : `/${this.version}/stats/all`);
     }
 
     async getInfo() {
@@ -98,23 +98,19 @@ class Rest {
     }
 
     async parseResponse(response) {
-        if (response.status === 204) {
-            return null;
-        }
+        if (response.status === 204) return null;
         try {
-            const contentType = response.headers.get("Content-Type");
-            return await response[contentType.includes("text/plain") ? "text" : "json"]();
+            return response.headers.get("Content-Type").includes("text/plain") ? await response.text() : await response.json();
         } catch (error) {
             this.aqua.emit("debug", `[Rest - Error] Failed to process response from ${response.url}: ${error}`);
             return null;
         }
     }
-    /**
-     * Cleans up resources related to the queue.
-     */
+
     cleanupQueue() {
-        this.queue = []; 
+        this.queue = [];
     }
 }
 
 module.exports = { Rest };
+

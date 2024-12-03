@@ -10,6 +10,8 @@ class Connection {
         this.selfDeaf = false;
         this.selfMute = false;
         this.voiceChannel = player.voiceChannel;
+        this.lastUpdateTime = 0; // Track the last update time to throttle updates
+        this.updateThrottle = 1000; // Throttle updates to every 1000 ms (1 second)
     }
 
     /**
@@ -27,6 +29,7 @@ class Connection {
         this.voice.endpoint = endpoint;
         this.voice.token = token;
         this.region = endpoint.split(".")[0].replace(/[0-9]/g, "");
+
         this.player.aqua.emit("debug", `[Player ${this.player.guildId} - CONNECTION] ${previousVoiceRegion ? `Changed Voice Region from ${previousVoiceRegion} to ${this.region}` : `Voice Server: ${this.region}`}`);
 
         if (this.player.paused) {
@@ -70,16 +73,15 @@ class Connection {
     /**
      * Updates the player voice data.
      */
-    updatePlayerVoiceData() {
-        this.player.nodes.rest.updatePlayer({
-            guildId: this.player.guildId,
-            data: {
-                voice: this.voice,
-                volume: this.player.volume
-            }
-        });
-    }
-}
+    updatePlayerVoiceData() { 
+        this.player.nodes.rest.updatePlayer({ 
+            guildId: this.player.guildId, 
+            data: { 
+                voice: this.voice, 
+                volume: this.player.volume 
+            } 
+        }); 
+    } 
+} 
 
 module.exports = { Connection };
-
