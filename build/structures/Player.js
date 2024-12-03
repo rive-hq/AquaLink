@@ -124,16 +124,19 @@ class Player extends EventEmitter {
     }
 
     /**
-     * Disconnects the player from the voice channel and cleans up resources.
+     * Disconnects the player from the voice channel and leaves the channel.
      * @returns {Promise<Player>} The player instance.
      */
     async destroy() {
-        await this.updatePlayer({ track: null });
+        await this.updatePlayer({ track: { encoded: null },  });
         this.connected = false;
+        await this.send({
+            guild_id: this.guildId,
+            channel_id: null,
+        });
         this.clearData(); // Clear data when destroyed
         this.aqua.emit("debug", this.guildId, "Player has disconnected from voice channel.");
     }
-
     /**
      * Pauses or resumes the player.
      * @param {boolean} paused - Whether to pause the player.
@@ -161,10 +164,17 @@ class Player extends EventEmitter {
      * @returns {Promise<Player>} The player instance.
      */
     async stop() {
-        await this.updatePlayer({ track: null });
+        if (!this.playing) return this; // If not playing, return early
+        this.playing = false;
+        this.current = null;
+        this.position = 0;
+        await this.updatePlayer({ track: 
+            {
+                encoded: null,
+            }
+         });
         return this;
     }
-
     /**
      * Sets the volume of the player.
      * @param {number} volume - The volume level (0-200).
@@ -233,7 +243,8 @@ class Player extends EventEmitter {
      * @returns {Promise<Player>} The player instance.
      */
     async disconnect() {
-        await this.updatePlayer({ track: null });
+        await this.updatePlayer({ track: { encoded: null }});
+        await this.send({ guild_id: this.guildId, channel_id: null });
         this.connected = false;
         this.aqua.emit("debug", this.guildId, "Player has disconnected from voice channel.");
     }
@@ -246,21 +257,25 @@ class Player extends EventEmitter {
         const player = this.aqua.players.get(payload.guildId);
         if (!player) return;
 
+        const track = this.current;
+
         switch (payload.type) {
             case "TrackStartEvent":
-                this.trackStart(player, payload);
+                this.trackStart(player, track, payload);
                 break;
             case "TrackEndEvent":
-                this.trackEnd(player, payload);
+                this.trackEnd(player, track, payload);
                 break;
             case "TrackExceptionEvent":
-                this.trackError(player, payload);
+                this.trackError(player, track, payload);
                 break;
             case "TrackStuckEvent":
-                this.trackStuck(player, payload);
+                this.trackStuck(player, track, payload);
                 break;
+            case "TrackChangeEvent":
+                this.trackChange(player, track, payload);
             case "WebSocketClosedEvent":
-                this.socketClosed(player, payload);
+                this.socketClosed(player, track, payload);
                 break;
             default:
                 this.handleUnknownEvent(payload);
@@ -272,11 +287,18 @@ class Player extends EventEmitter {
      * Handles track start events.
      * @param {Object} player - The player instance.
      * @param {Object} payload - The event payload.
+     * @param {Object} track - The track object.
      */
-    trackStart(player, payload) {
+    trackStart(player, track, payload) {
         this.playing = true;
         this.paused = false;
-        this.aqua.emit("trackStart", player, payload);
+        this.aqua.emit("trackStart", player, track, payload);
+    }
+
+    trackChange(player, track, payload) {
+        this.playing = true;
+        this.paused = this.player.this.paused
+        this.aqua.emit("trackChange", player, track, payload);
     }
 
     /**
@@ -284,7 +306,7 @@ class Player extends EventEmitter {
      * @param {Object} player - The player instance.
      * @param {Object} payload - The event payload.
      */
-    trackEnd(player, payload) {
+    trackEnd(player, track, payload) {
         this.addToPreviousTrack(this.current);
         if (["loadfailed", "cleanup"].includes(payload.reason.replace("_", "").toLowerCase())) {
             if (player.queue.length === 0) {
@@ -317,7 +339,7 @@ class Player extends EventEmitter {
      * @param {Object} player - The player instance.
      * @param {Object} payload - The event payload.
      */
-    trackError(player, payload) {
+    trackError(player, track, payload) {
         this.aqua.emit("trackError", player, payload);
         this.stop();
     }
@@ -327,7 +349,7 @@ class Player extends EventEmitter {
      * @param {Object} player - The player instance.
      * @param {Object} payload - The event payload.
      */
-    trackStuck(player, payload) {
+    trackStuck(player, track, payload) {
         this.aqua.emit("trackStuck", player, payload);
         this.stop();
     }
@@ -338,7 +360,7 @@ class Player extends EventEmitter {
      * @param {Object} payload - The event payload.
      */
     socketClosed(player, payload) {
-        if ([4015, 4009].includes(payload.code)) {
+        if (payload && [4015, 4009].includes(payload.code)) {
             this.send({
                 guild_id: payload.guildId,
                 channel_id: this.voiceChannel,
@@ -350,7 +372,6 @@ class Player extends EventEmitter {
         this.pause(true);
         this.aqua.emit("debug", this.guildId, "Player paused due to socket closure.");
     }
-
     /**
      * Sends data to the Aqua instance.
      * @param {Object} data - The data to send.

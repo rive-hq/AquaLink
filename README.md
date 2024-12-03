@@ -26,8 +26,16 @@ This code is based in riffy, but its an 100% Rewrite made from scratch...
 # Basic usage
 
 ```javascript
-const { Aqua } = require('aqualink')
-const { Client, GatewayDispatchEvents, EmbedBuilder } = require("discord.js");
+// If you're using Module, use this:
+// import { createRequire } from 'module';
+// const require = createRequire(import.meta.url);
+
+//const { Aqua } = require('aqualink');
+
+
+
+const { Aqua } = require("aqualink");
+const { Client, Collection, GatewayDispatchEvents } = require("discord.js");
 
 const client = new Client({
     intents: [
@@ -42,10 +50,10 @@ const client = new Client({
 const nodes = [
     {
         host: "127.0.0.1",
-        password: "anpasswordthatiforgotforever",
-        port: 9350,
+        password: "yourpass",
+        port: 233,
         secure: false,
-        name: "toddys"
+        name: "localhost"
     }
 ];
 
@@ -61,13 +69,7 @@ const aqua = new Aqua(client, nodes, {
 
 client.aqua = aqua;
 
-process.on("unhandledRejection", (error) => {
-    console.error(error);
-})
 
-process.on("uncaughtException", (error) => {
-    console.error(error);
-})
 client.once("ready", () => {
     client.aqua.init(client.user.id);
     console.log("Ready!");
@@ -86,10 +88,6 @@ client.on("messageCreate", async (message) => {
 
     const query = message.content.slice(6);
 
-    if (!query) return message.channel.send("Please provide a query.");
-    if (!message.member.voice.channel) return message.channel.send("You need to be in a voice channel to use this command.");
-
-
     const player = client.aqua.createConnection({
         guildId: message.guild.id,
         voiceChannel: message.member.voice.channel.id,
@@ -102,40 +100,21 @@ client.on("messageCreate", async (message) => {
     if (resolve.loadType === 'playlist') {
         await message.channel.send(`Added ${resolve.tracks.length} songs from ${resolve.playlistInfo.name} playlist.`);
         player.queue.add(resolve.tracks);
+        if (!player.playing && !player.paused) return player.play();
 
     } else if (resolve.loadType === 'search' || resolve.loadType === 'track') {
         const track = resolve.tracks.shift();
         track.info.requester = message.member;
+
         player.queue.add(track);
 
         await message.channel.send(`Added **${track.info.title}** to the queue.`);
 
+        if (!player.playing && !player.paused) return player.play();
+
     } else {
         return message.channel.send(`There were no results found for your query.`);
     }
-
-    if (!player.playing && !player.paused && player.queue.size > 0) return player.play();
-});
-
-client.on("messageCreate", async (message) => {
-    if (message.author.bot) return;
-
-    if (!message.content.startsWith("!queue")) return;
-
-    const player = client.aqua.players.get(message.guild.id);
-
-    if (!player) return message.channel.send({ content: "There is no player in this guild." });
-    if (player.queue.size === 0) return message.channel.send({ content: "There are no songs in the queue." });
-
-    const tracks = player.queue.map((track) => `${track.info.title} - ${track.info.author}`);
-
-    const queue = new EmbedBuilder()
-        .setTitle("Queue")
-        .setDescription(tracks.join("\n"))
-        .setFooter({ text: `Total tracks: ${player.queue.size}` });
-
-    await message.channel.send({ embeds: [queue] });
-
 });
 
 client.aqua.on("nodeConnect", (node) => {
@@ -144,7 +123,6 @@ client.aqua.on("nodeConnect", (node) => {
 client.aqua.on("nodeError", (node, error) => {
     console.log(`Node "${node.name}" encountered an error: ${error.message}.`);
 });
-aqua.on('debug', (message) => console.log(message));
 
 client.login("Yourtokenhere");
 ```
