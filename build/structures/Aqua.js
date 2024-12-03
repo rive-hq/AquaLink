@@ -125,6 +125,9 @@ class Aqua extends EventEmitter {
         if (!this.initiated) throw new Error("BRO! Get aqua on before !!!");
         if (!this.leastUsedNodes.length) throw new Error("No nodes are available");
 
+        const player = this.players.get(options.guildId);
+        if (player && player.voiceChannel) return player;
+
         const node = (options.region ? this.fetchRegion(options.region) : this.leastUsedNodes)[0];
         if (!node) throw new Error("No nodes are available");
 
