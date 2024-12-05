@@ -405,9 +405,10 @@ class Player extends EventEmitter {
      * @returns {Player} The player instance.
      */
     clearData() {
-        this.data = {} // Clear all custom data efficiently
+        this.data = new WeakMap(); // Clear the WeakMap to prevent leaks
         return this;
     }
+
 
     /**
      * Updates the player with new data.
