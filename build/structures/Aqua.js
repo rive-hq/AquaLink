@@ -53,7 +53,7 @@ class Aqua extends EventEmitter {
 
     /**
      * Initializes Aqua with the provided client ID.
-     * @param {string} clientId - The client ID.
+     * @param {string} clientId - The client ID
      * @returns {Aqua} The Aqua instance.
      */
     init(clientId) {
@@ -100,7 +100,7 @@ class Aqua extends EventEmitter {
         if (packet.t === "VOICE_SERVER_UPDATE") player.connection.setServerUpdate(packet.d);
         else if (packet.t === "VOICE_STATE_UPDATE" && packet.d.user_id === this.clientId) player.connection.setStateUpdate(packet.d);
     }
-    
+
     /**
      * Fetches nodes by the specified region.
      * @param {string} region - The region to filter nodes by.
@@ -157,6 +157,7 @@ class Aqua extends EventEmitter {
      */
     destroyPlayer(guildId) {
         const player = this.players.get(guildId);
+        player.clearData();
         if (!player) return;
         player.destroy();
         this.players.delete(guildId);
@@ -169,6 +170,7 @@ class Aqua extends EventEmitter {
      */
     removeConnection(guildId) {
         const player = this.players.get(guildId);
+        player.clearData();
         if (player) {
             player.destroy();
             this.players.delete(guildId);
@@ -202,8 +204,7 @@ class Aqua extends EventEmitter {
             response = await this.handleNoMatches(requestNode.rest, query);
         }
 
-        this.loadTracks(response, requester, requestNode);
-        return this.constructResponse();
+        return this.constructorResponse(response, requester, requestNode);
     }
 
     /**
@@ -225,41 +226,48 @@ class Aqua extends EventEmitter {
      * @param {Object} response - The response from the track resolution.
      * @param {Object} requester - The requester of the tracks.
      * @param {Node} requestNode - The node that handled the request.
+     * @returns {Object} The constructed response.
      */
-    loadTracks(response, requester, requestNode) {
-
+    constructorResponse(response, requester, requestNode) {
         switch (response.loadType) {
             case "track":
                 if (response.data) {
-                    this.tracks.push(new Track(response.data, requester, requestNode));
+                    return {
+                        loadType: response.loadType,
+                        exception: null,
+                        playlistInfo: null,
+                        pluginInfo: response.pluginInfo || {},
+                        tracks: [new Track(response.data, requester, requestNode)],
+                    };
                 }
                 break;
             case "playlist":
-                this.tracks = response.data?.tracks?.map(track => new Track(track, requester, requestNode)) || [];
-                this.playlistInfo = {
-                    name: response.data?.info?.name || response.data?.info?.title,
-                    ...response.data?.info,
-                } || null;
-                break;
+                return {
+                    loadType: response.loadType,
+                    exception: null,
+                    playlistInfo: {
+                        name: response.data?.info?.name || response.data?.info?.title,
+                        ...response.data?.info,
+                    },
+                    pluginInfo: response.pluginInfo || {},
+                    tracks: response.data?.tracks?.map(track => new Track(track, requester, requestNode)) || [],
+                };
             case "search":
-                this.tracks = response.data?.map(track => new Track(track, requester, requestNode));
-                break;
+                return {
+                    loadType: response.loadType,
+                    exception: null,
+                    playlistInfo: null,
+                    pluginInfo: response.pluginInfo || {},
+                    tracks: response.data?.map(track => new Track(track, requester, requestNode)),
+                };
         }
 
-        this.loadType = response.loadType;
-        this.pluginInfo = response.pluginInfo || {};
-    }
-    /**
-     * Constructs the response object for the resolved tracks.
-     * @returns {Object} The constructed response.
-     */
-    constructResponse() {
         return {
-            loadType: this.loadType,
-            exception: this.loadType === "error" ? this.loadType.data : (this.loadType === "LOAD_FAILED" ? this.loadType.exception : null),
-            playlistInfo: this.playlistInfo,
-            pluginInfo: this.pluginInfo,
-            tracks: this.tracks.length ? [this.tracks.shift()] : [],
+            loadType: response.loadType,
+            exception: response.loadType === "error" ? response.loadType.data : (response.loadType === "LOAD_FAILED" ? response.loadType.exception : null),
+            playlistInfo: null,
+            pluginInfo: response.pluginInfo || {},
+            tracks: [],
         };
     }
 
