@@ -2,7 +2,7 @@ const { EventEmitter } = require("events");
 const { Connection } = require("./Connection");
 const { Queue } = require("./Queue");
 const { Filters } = require("./Filters");
-
+ 
 class Player extends EventEmitter {
     /**
      * @param {Object} aqua - The Aqua instance.
