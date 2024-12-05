@@ -275,7 +275,7 @@ class Player extends EventEmitter {
      * @event shuffle
      */
     async shuffle() {
-        this.queue = this.queue.sort(() => Math.random() - 0.5);
+        this.queue.shuffle();
         return this;
     }
 
