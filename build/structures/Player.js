@@ -67,18 +67,6 @@ class Player extends EventEmitter {
         this.timestamp = state.time;
         this.aqua.emit("playerUpdate", this, packet);
     }
-
-    /**
-     * Handles player events.
-     * @param {Object} data - The packet containing the player event data.
-     * 
-     * @event playerUpdate
-     * @event event
-     */
-    handleEvent(data) {
-        this.handleEvent(data)
-        this.emit("event", data);
-    }
     /**
      * Gets the previous track.
      * @returns {Object|null} The previous track or null if none exists.
@@ -327,39 +315,27 @@ class Player extends EventEmitter {
      * @param {Object} player - The player instance.
      * @param {Object} payload - The event payload.
      */
-    trackEnd(player, track, payload) {
+       trackEnd(player, track, payload) {
+
         if (this.shouldDeleteMessage && this.nowPlayingMessage) {
             this.nowPlayingMessage.delete();
             this.nowPlayingMessage = null;
         }
-        
         if (["loadfailed", "cleanup"].includes(payload.reason.replace("_", "").toLowerCase())) {
-            if (player.queue.length === 0) {
-                return this.aqua.emit("queueEnd", player);
-            }
-            this.aqua.emit("trackEnd", player, payload);
-            return player.play();
+            return player.queue.length === 0 ? this.aqua.emit("queueEnd", player) : player.play();
         }
         this.addToPreviousTrack(track)
-        const previousTracks = this.previous;
         if (this.loop === "track") {
-            player.queue.push(previousTracks);
-            this.aqua.emit("trackEnd", player, payload);
-            return player.play();
-        } else if (this.loop === "queue") {
-            player.queue.push(previousTracks);
-            this.aqua.emit("trackEnd", player, payload);
+            player.queue.push(this.previous);
             return player.play();
         }
         if (player.queue.length === 0) {
             this.playing = false;
             return this.aqua.emit("queueEnd", player);
-        } else if (player.queue.length > 0) {
-            this.aqua.emit("trackEnd", player, payload);
-            return player.play();
         }
-        this.playing = false;
+        return player.play();
     }
+
     /**
      * Handles track error events.
      * @param {Object} player - The player instance.
