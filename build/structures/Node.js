@@ -63,8 +63,7 @@ class Node {
     async connect() {
         if (this.ws) this.ws.close();
         this.aqua.emit('debug', this.name, `Attempting to connect...`);
-        const headers = this.constructHeaders();
-        this.ws = new WebSocket(this.wsUrl, { headers });
+        this.ws = new WebSocket(this.wsUrl, { headers: this.constructHeaders() });
         this.setupWebSocketListeners();
     }
 
@@ -112,7 +111,8 @@ class Node {
         }
 
         try {
-            const stats = await this.rest.makeRequest("GET", `/v4/stats`);
+            const response = await this.rest.makeRequest("GET", `/v4/stats`);
+            const stats = await response.json();
             this.stats = { ...this.stats, ...stats };
             this.lastStatsRequest = now; // Update last request time
             return stats;
@@ -156,9 +156,7 @@ class Node {
                 break;
             default:
                 const player = this.aqua.players.get(payload.guildId);
-                if (payload.guildId && player) {
-                    player.emit(payload.op, payload);
-                }
+                if (player) player.emit(payload.op, payload);
                 break;
         }
     }
@@ -177,11 +175,11 @@ class Node {
     }
 
     reconnect() {
-        this.reconnectAttempted++;
-        if (this.reconnectAttempted > this.reconnectTries) {
+        if (this.reconnectAttempted++ >= this.reconnectTries) {
             this.aqua.emit("nodeError", this, new Error(`Unable to connect after ${this.reconnectTries} attempts.`));
             return this.destroy();
         }
+
         setTimeout(() => {
             this.aqua.emit("nodeReconnect", this);
             this.connect();
@@ -200,7 +198,7 @@ class Node {
         this.aqua.players.forEach((player) => {
             if (player.node === this) player.destroy();
         });
-        if (this.ws) this.ws.close(1000, "destroy");
+        this.ws?.close(1000, "destroy");
         this.ws?.removeAllListeners();
         this.ws = null;
         this.aqua.emit("nodeDestroy", this);
