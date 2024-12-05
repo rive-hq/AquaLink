@@ -8,10 +8,6 @@ class Rest {
         this.password = options.password;
         this.version = options.restVersion;
         this.calls = 0;
-        this.queue = [];
-        this.maxQueueSize = options.maxQueueSize || 100;
-        this.maxConcurrentRequests = options.maxConcurrentRequests || 5;
-        this.activeRequests = 0;
     }
 
     setSessionId(sessionId) {
@@ -24,24 +20,21 @@ class Rest {
             Authorization: this.password,
         };
 
-        try {
-            const response = await undiciFetch(`${this.url}${endpoint}`, {
-                method,
-                headers,
-                body: body && JSON.stringify(body),
-            });
-            this.calls++;
-            const data = await this.parseResponse(response);
-            this.aqua.emit("apiResponse", endpoint, response);
-            this.aqua.emit(
-                "debug",
-                `[Rest] ${method} ${endpoint} ${body ? `body: ${JSON.stringify(body)}` : ""} -> Status Code: ${response.status} Response(body): ${JSON.stringify(data)}`
-            );
-            return includeHeaders ? { data, headers: response.headers } : data;
-        } catch (error) {
-            this.aqua.emit("debug", `Network error during request: ${method} ${this.url}${endpoint}`, { cause: error });
-            throw new Error(`Network error during request: ${method} ${this.url}${endpoint}`, { cause: error });
+        const response = await undiciFetch(`${this.url}${endpoint}`, {
+            method,
+            headers,
+            body: body && JSON.stringify(body),
+        });
+
+        this.calls++;
+
+        const data = await response.json();
+        this.aqua.emit("apiResponse", endpoint, response);
+
+        if (includeHeaders) {
+            return { data, headers: response.headers };
         }
+        return data;
     }
 
     async getPlayers() {
@@ -95,20 +88,6 @@ class Rest {
 
     async getRoutePlannerAddress(address) {
         return this.makeRequest("POST", `/${this.version}/routeplanner/free/address`, { address });
-    }
-
-    async parseResponse(response) {
-        if (response.status === 204) return null;
-        try {
-            return response.headers.get("Content-Type").includes("text/plain") ? await response.text() : await response.json();
-        } catch (error) {
-            this.aqua.emit("debug", `[Rest - Error] Failed to process response from ${response.url}: ${error}`);
-            return null;
-        }
-    }
-
-    cleanupQueue() {
-        this.queue = [];
     }
 }
 
