@@ -33,7 +33,6 @@ class Player extends EventEmitter {
         this.queue = new Queue();
         this.position = 0;
         this.current = null;
-        this.previousTracks = [];
         this.playing = false;
         this.paused = false;
         this.connected = false;
@@ -41,6 +40,7 @@ class Player extends EventEmitter {
         this.ping = 0;
         this.isAutoplay = false;
         this.nowPlayingMessage = null;
+        this.previousTracks = new Array();
         
         this.shouldDeleteMessage = options.shouldDeleteMessage ?? true;
 
@@ -59,14 +59,26 @@ class Player extends EventEmitter {
      * Handles player update events.
      * @param {Object} packet - The packet containing the player update data.
      */
-    onPlayerUpdate(packet) {
+      onPlayerUpdate(packet) {
         const { state } = packet;
         this.connected = state.connected;
         this.position = state.position;
         this.ping = state.ping;
         this.timestamp = state.time;
+        this.aqua.emit("playerUpdate", this, packet);
     }
 
+    /**
+     * Handles player events.
+     * @param {Object} data - The packet containing the player event data.
+     * 
+     * @event playerUpdate
+     * @event event
+     */
+    handleEvent(data) {
+        this.handleEvent(data)
+        this.emit("event", data);
+    }
     /**
      * Gets the previous track.
      * @returns {Object|null} The previous track or null if none exists.
@@ -310,7 +322,7 @@ class Player extends EventEmitter {
         this.aqua.emit("trackChange", player, track, payload);
     }
 
-    /**
+   /**
      * Handles track end events.
      * @param {Object} player - The player instance.
      * @param {Object} payload - The event payload.
@@ -320,6 +332,7 @@ class Player extends EventEmitter {
             this.nowPlayingMessage.delete();
             this.nowPlayingMessage = null;
         }
+        
         if (["loadfailed", "cleanup"].includes(payload.reason.replace("_", "").toLowerCase())) {
             if (player.queue.length === 0) {
                 return this.aqua.emit("queueEnd", player);
@@ -327,21 +340,25 @@ class Player extends EventEmitter {
             this.aqua.emit("trackEnd", player, payload);
             return player.play();
         }
+        this.addToPreviousTrack(track)
+        const previousTracks = this.previous;
         if (this.loop === "track") {
-            player.queue.unshift(player.previous);
+            player.queue.push(previousTracks);
             this.aqua.emit("trackEnd", player, payload);
             return player.play();
         } else if (this.loop === "queue") {
-            player.queue.push(player.previous);
+            player.queue.push(previousTracks);
             this.aqua.emit("trackEnd", player, payload);
             return player.play();
         }
         if (player.queue.length === 0) {
+            this.playing = false;
             return this.aqua.emit("queueEnd", player);
-        } else {
+        } else if (player.queue.length > 0) {
             this.aqua.emit("trackEnd", player, payload);
             return player.play();
         }
+        this.playing = false;
     }
     /**
      * Handles track error events.
