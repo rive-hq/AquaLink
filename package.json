@@ -1,6 +1,6 @@
 {
   "name": "aqualink",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "An Lavalink wrapper, focused in speed, performance, and features, Based in Riffy!",
   "main": "build/index.js",
   "scripts": {
