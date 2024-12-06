@@ -1,4 +1,4 @@
-const { fetch: undiciFetch } = require("undici");
+const { request } = require("undici");
 
 class Rest {
     constructor(aqua, options) {
@@ -20,7 +20,7 @@ class Rest {
             Authorization: this.password,
         };
 
-        const response = await undiciFetch(`${this.url}${endpoint}`, {
+        const response = await request(`${this.url}${endpoint}`, {
             method,
             headers,
             body: body && JSON.stringify(body),
@@ -28,7 +28,7 @@ class Rest {
 
         this.calls++;
 
-        const data = await response.json();
+        const data = await response.body.json();
         this.aqua.emit("apiResponse", endpoint, response);
 
         if (includeHeaders) {
