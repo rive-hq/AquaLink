@@ -10,28 +10,31 @@ This code is based in riffy, but its an 100% Rewrite made from scratch...
 - Lots of features to use
 - Lowest CPU Usage
 - Very fast (mine take less than 1 second to load an song!)
-- 1 Player created = ~1 - 0,8 mb per player
+- 1 Player created = ~1 - 0,5 mb per player
 - Auto clean Up memory when song finishes / bot leave the vc
 - Plugin system
 - Lavalink v4 support (din't test v3)
 - Youtube and Spotify support
 - Minimal Requests to the lavalink server (helps the lavalink recourses!)
+- Easy player, node, aqua managing
+- Fast responses from rest and node
+- Playlist support (My mix playlists, youtube playlists)
 
 # Docs (Wiki)
 - https://github.com/ToddyTheNoobDud/AquaLink/wiki
 
 - Example bot: https://github.com/ToddyTheNoobDud/Thorium-Music
 
-# Yay, Version 1.2.0 is released ! aqualink so cool
+# Yay, Version 1.3.0 is released ! aqualink so cool
 
-+ Fixed all the loop system
-+ Fixed could not play after ending (weird ahh bug)
-+ Improved the general queue handler
-+ Remade the REST system (improved speed, ram, and removed useless queue handling)
-+ Updated player stuff (Fixed bugs, Added methods: shuffle, getQueue(), restart)
-+ Updated the NODE system (misc improvements for speed)
-+ Rewrited Aqua system (Fixed playlists support (finnaly), rewrited resolve(), Improved all the code, auto cleanup)
-+ Remade the connection system for handling
++ Updated NODE with more methods (lavalinkLoadPercentage, freePercentage, usedPercentage) + Optimizations
++ Rewrited Aqua.js fully (rewrite events, options, and resolve)
++ Rewrite FetchImage (way more faster, less recourse intensive, better looking)
++ Convert REST to Convert to undici request (experimental, around 221.29 % faster, 12436.39 by difference (requests per min))
+^^ Also is faster and more memory efficient...
++ Updated Player with one more method (added player.skip())
++ Remade all the cache system (players joined to vc shall don't use ram, improved cache saving and speed almost)
++ Remade the TRACK handler (improves track handling, speed, recourses usage and cleaning)
 
 # How to install
 
