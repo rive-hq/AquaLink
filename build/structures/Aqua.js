@@ -27,16 +27,11 @@ class Aqua extends EventEmitter {
         this.players = new Map();
         this.clientId = null;
         this.initiated = false;
-        this.sessionId = null;
         this.shouldDeleteMessage = options.shouldDeleteMessage || "false";
         this.defaultSearchPlatform = options.defaultSearchPlatform || "ytmsearch";
         this.restVersion = options.restVersion || "v3";
         this.plugins = options.plugins || [];
         this.version = pkgVersion;
-        this.loadType = null;
-        this.tracks = [];
-        this.playlistInfo = null;
-        this.pluginInfo = null;
         this.options = options;
         this.send = options.send || null;
     }
@@ -46,8 +41,7 @@ class Aqua extends EventEmitter {
      * @returns {Array<Node>} Array of least used nodes.
      */
     get leastUsedNodes() {
-        return [...this.nodeMap.values()]
-            .filter(node => node.connected)
+        return [...this.nodeMap.values()].filter(node => node.connected)
             .sort((a, b) => a.rest.calls - b.rest.calls);
     }
 
@@ -97,8 +91,12 @@ class Aqua extends EventEmitter {
     updateVoiceState(packet) {
         const player = this.players.get(packet.d.guild_id);
         if (!player) return;
-        if (packet.t === "VOICE_SERVER_UPDATE") player.connection.setServerUpdate(packet.d);
-        else if (packet.t === "VOICE_STATE_UPDATE" && packet.d.user_id === this.clientId) player.connection.setStateUpdate(packet.d);
+
+        if (packet.t === "VOICE_SERVER_UPDATE") {
+            player.connection.setServerUpdate(packet.d);
+        } else if (packet.t === "VOICE_STATE_UPDATE" && packet.d.user_id === this.clientId) {
+            player.connection.setStateUpdate(packet.d);
+        }
     }
 
     /**
@@ -107,14 +105,17 @@ class Aqua extends EventEmitter {
      * @returns {Array<Node>} Array of nodes in the specified region.
      */
     fetchRegion(region) {
-        const nodesByRegion = [...this.nodeMap.values()]
-            .filter(node => node.connected && node.regions?.includes(region?.toLowerCase()))
-            .sort((a, b) => {
-                const aLoad = a.stats.cpu ? (a.stats.cpu.systemLoad / a.stats.cpu.cores) * 100 : 0;
-                const bLoad = b.stats.cpu ? (b.stats.cpu.systemLoad / b.stats.cpu.cores) * 100 : 0;
-                return aLoad - bLoad;
-            });
-        return nodesByRegion;
+        return [...this.nodeMap.values()].filter(node => node.connected && node.regions?.includes(region?.toLowerCase()))
+            .sort((a, b) => this.calculateLoad(a) - this.calculateLoad(b));
+    }
+
+    /**
+     * Calculate the load of a node.
+     * @param {Node} node - The node to calculate the load for.
+     * @returns {number} The load percentage of the node.
+     */
+    calculateLoad(node) {
+        return node.stats.cpu ? (node.stats.cpu.systemLoad / node.stats.cpu.cores) * 100 : 0;
     }
 
     /**
@@ -125,13 +126,13 @@ class Aqua extends EventEmitter {
      * @returns {Player} The created player instance.
      */
     createConnection(options) {
-        if (!this.initiated) throw new Error("BRO! Get aqua on before !!!");
+        if (!this.initiated) throw new Error("Aqua must be initialized before creating a connection");
         if (!this.leastUsedNodes.length) throw new Error("No nodes are available");
 
         const player = this.players.get(options.guildId);
         if (player && player.voiceChannel) return player;
 
-        const node = (options.region ? this.fetchRegion(options.region) : this.leastUsedNodes)[0];
+        const node = options.region ? this.fetchRegion(options.region)[0] : this.leastUsedNodes[0];
         if (!node) throw new Error("No nodes are available");
 
         return this.createPlayer(node, options);
@@ -157,23 +158,12 @@ class Aqua extends EventEmitter {
      */
     destroyPlayer(guildId) {
         const player = this.players.get(guildId);
-        player.clearData();
-        if (!player) return;
-        player.destroy();
-        this.players.delete(guildId);
-        this.emit("playerDestroy", player);
-    }
-
-    /**
-     * Removes the connection for the specified guild ID.
-     * @param {string} guildId - The ID of the guild.
-     */
-    removeConnection(guildId) {
-        const player = this.players.get(guildId);
-        player.clearData();
         if (player) {
+            this.cleanupIdle()
+            player.clearData();
             player.destroy();
             this.players.delete(guildId);
+            this.emit("playerDestroy", player);
         }
     }
 
@@ -214,11 +204,11 @@ class Aqua extends EventEmitter {
      * @returns {Promise<Object>} The response object from the request.
      */
     async handleNoMatches(rest, query) {
-        let response = await rest.makeRequest("GET", `/v4/loadtracks?identifier=https://open.spotify.com/track/${query}`);
-        if (["empty", "NO_MATCHES"].includes(response.loadType)) {
-            response = await rest.makeRequest("GET", `/v4/loadtracks?identifier=https://www.youtube.com/watch?v=${query}`);
+        const spotifyResponse = await rest.makeRequest("GET", `/v4/loadtracks?identifier=https://open.spotify.com/track/${query}`);
+        if (["empty", "NO_MATCHES"].includes(spotifyResponse.loadType)) {
+            return await rest.makeRequest("GET", `/v4/loadtracks?identifier=https://www.youtube.com/watch?v=${query}`);
         }
-        return response;
+        return spotifyResponse;
     }
 
     /**
@@ -229,48 +219,38 @@ class Aqua extends EventEmitter {
      * @returns {Object} The constructed response.
      */
     constructorResponse(response, requester, requestNode) {
-        switch (response.loadType) {
-            case "track":
-                if (response.data) {
-                    return {
-                        loadType: response.loadType,
-                        exception: null,
-                        playlistInfo: null,
-                        pluginInfo: response.pluginInfo || {},
-                        tracks: [new Track(response.data, requester, requestNode)],
-                    };
-                }
-                break;
-            case "playlist":
-                return {
-                    loadType: response.loadType,
-                    exception: null,
-                    playlistInfo: {
-                        name: response.data?.info?.name || response.data?.info?.title,
-                        ...response.data?.info,
-                    },
-                    pluginInfo: response.pluginInfo || {},
-                    tracks: response.data?.tracks?.map(track => new Track(track, requester, requestNode)) || [],
-                };
-            case "search":
-                return {
-                    loadType: response.loadType,
-                    exception: null,
-                    playlistInfo: null,
-                    pluginInfo: response.pluginInfo || {},
-                    tracks: response.data?.map(track => new Track(track, requester, requestNode)),
-                };
-        }
-
-        return {
+        const baseResponse = {
             loadType: response.loadType,
-            exception: response.loadType === "error" ? response.loadType.data : (response.loadType === "LOAD_FAILED" ? response.loadType.exception : null),
+            exception: null,
             playlistInfo: null,
             pluginInfo: response.pluginInfo || {},
             tracks: [],
         };
-    }
 
+        switch (response.loadType) {
+            case "track":
+                if (response.data) {
+                    baseResponse.tracks.push(new Track(response.data, requester, requestNode));
+                }
+                break;
+            case "playlist":
+                baseResponse.playlistInfo = {
+                    name: response.data?.info?.name || response.data?.info?.title,
+                    ...response.data?.info,
+                };
+                baseResponse.tracks = response.data?.tracks?.map(track => new Track(track, requester, requestNode)) || [];
+                break;
+            case "search":
+                baseResponse.tracks = response.data?.map(track => new Track(track, requester, requestNode)) || [];
+                break;
+        }
+
+        if (response.loadType === "error" || response.loadType === "LOAD_FAILED") {
+            baseResponse.exception = response.loadType.data || response.loadType.exception;
+        }
+
+        return baseResponse;
+    }
 
     /**
      * Gets the player associated with the specified guild ID.
