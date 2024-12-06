@@ -298,6 +298,17 @@ class Player extends EventEmitter {
     async replay() {
         return this.seek(0);
     }
+
+
+    /**
+     * Skips the current track.
+     * @returns {Promise<Player>} The player instance.
+     * @description This method skips the current track.
+     * @event skip
+     */
+    async skip() {
+        return await this.updatePlayer({ track: { encoded: null } });
+    }
 async handleEvent(payload) {
     const player = this.aqua.players.get(payload.guildId);
     if (!player) return;
