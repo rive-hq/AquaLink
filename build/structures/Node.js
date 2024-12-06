@@ -42,17 +42,21 @@ class Node {
                 used: 0,
                 allocated: 0,
                 reservable: 0,
+                freePercentage: 0,
+                usedPercentage: 0,
             },
             cpu: {
                 cores: 0,
                 systemLoad: 0,
                 lavalinkLoad: 0,
+                lavalinkLoadPercentage: 0,
             },
             frameStats: {
                 sent: 0,
                 nulled: 0,
                 deficit: 0,
             },
+            ping: 0,
         };
     }
 
@@ -93,11 +97,9 @@ class Node {
             this.aqua.emit('debug', `Failed to fetch info: ${err.message}`);
             this.info = null;
         }
-
         if (!this.info && !this.aqua.bypassChecks.nodeFetchInfo) {
             throw new Error(`Failed to fetch node info.`);
         }
-
         if (this.autoResume) {
             this.resumePlayers();
         }
@@ -109,7 +111,6 @@ class Node {
         if (now - this.lastStatsRequest < 5000) {
             return this.stats; // Return cached stats if requested too soon
         }
-
         try {
             const response = await this.rest.makeRequest("GET", `/v4/stats`);
             const stats = await response.json();
@@ -147,7 +148,7 @@ class Node {
     handlePayload(payload) {
         switch (payload.op) {
             case "stats":
-                this.stats = { ...this.stats, ...payload };
+                this.updateStats(payload);
                 this.lastStats = Date.now();
                 break;
             case "ready":
@@ -159,6 +160,35 @@ class Node {
                 if (player) player.emit(payload.op, payload);
                 break;
         }
+    }
+
+    updateStats(payload) {
+        this.stats = {
+            ...this.stats,
+            players: payload.players || 0,
+            playingPlayers: payload.playingPlayers || 0,
+            uptime: payload.uptime || 0,
+            memory: {
+                free: payload.memory?.free || 0,
+                used: payload.memory?.used || 0,
+                allocated: payload.memory?.allocated || 0,
+                reservable: payload.memory?.reservable || 0,
+                freePercentage: payload.memory ? (payload.memory.free / payload.memory.allocated) * 100 : 0,
+                usedPercentage: payload.memory ? (payload.memory.used / payload.memory.allocated) * 100 : 0,
+            },
+            cpu: {
+                cores: payload.cpu?.cores || 0,
+                systemLoad: payload.cpu?.systemLoad || 0,
+                lavalinkLoad: payload.cpu?.lavalinkLoad || 0,
+                lavalinkLoadPercentage: payload.cpu ? (payload.cpu.lavalinkLoad / payload.cpu.cores) * 100 : 0,
+            },
+            frameStats: {
+                sent: payload.frameStats?.sent || 0,
+                nulled: payload.frameStats?.nulled || 0,
+                deficit: payload.frameStats?.deficit || 0,
+            },
+            ping: payload.ping || 0,
+        };
     }
 
     initializeSessionId(sessionId) {
@@ -179,7 +209,6 @@ class Node {
             this.aqua.emit("nodeError", this, new Error(`Unable to connect after ${this.reconnectTries} attempts.`));
             return this.destroy();
         }
-
         setTimeout(() => {
             this.aqua.emit("nodeReconnect", this);
             this.connect();
@@ -208,7 +237,7 @@ class Node {
 
     disconnect() {
         if (!this.connected) return;
-        this.aqua.players.forEach((player) => { if (player.node === this) { player.move() } });
+        this.aqua.players.forEach((player) => { if (player.node === this) { player.move(); } });
         this.ws.close(1000, "disconnect");
         this.aqua.emit("nodeDisconnect", this);
         this.connected = false;
