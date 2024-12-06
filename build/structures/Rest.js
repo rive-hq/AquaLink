@@ -23,18 +23,14 @@ class Rest {
         const response = await request(`${this.url}${endpoint}`, {
             method,
             headers,
-            body: body && JSON.stringify(body),
+            body: body ? JSON.stringify(body) : undefined, // Only stringify if body is not null
         });
 
         this.calls++;
-
         const data = await response.body.json();
         this.aqua.emit("apiResponse", endpoint, response);
 
-        if (includeHeaders) {
-            return { data, headers: response.headers };
-        }
-        return data;
+        return includeHeaders ? { data, headers: response.headers } : data;
     }
 
     async getPlayers() {
@@ -92,4 +88,3 @@ class Rest {
 }
 
 module.exports = { Rest };
-
