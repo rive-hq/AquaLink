@@ -1,4 +1,4 @@
-const undici = require("undici");
+const { request } = require("undici");
 
 const YOUTUBE_URLS = [
     (id) => `https://img.youtube.com/vi/${id}/maxresdefault.jpg`,
@@ -22,7 +22,7 @@ async function getImageUrl(info) {
 
 async function fetchThumbnail(url) {
     try {
-        const response = await undici.fetch(url, { cache: "force-cache" });
+        const response = await request(url, { method: "GET" });
         if (response.ok) {
             const json = await response.json();
             return json.thumbnail_url || null;
