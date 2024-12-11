@@ -367,6 +367,11 @@ class Player extends EventEmitter {
             this.aqua.emit("trackEnd", player, track, payload);
             await this.cleanup();
         }
+        if (player.queue.isEmpty()) {
+            this.playing = false;
+            this.aqua.emit("queueEnd", player);
+        }
+        return player.play();
     }
 
     trackError(player, track, payload) {
