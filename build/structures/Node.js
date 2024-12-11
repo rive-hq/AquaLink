@@ -26,7 +26,7 @@ class Node {
         this.resumeKey = options.resumeKey || null;
         this.resumeTimeout = options.resumeTimeout || 60;
         this.autoResume = options.autoResume || false;
-        this.reconnectTimeout = options.reconnectTimeout || 5000;
+        this.reconnectTimeout = options.reconnectTimeout || 2000;
         this.reconnectTries = options.reconnectTries || 3;
         this.reconnectAttempted = 0;
         this.lastStatsRequest = 0; // Track the last time stats were requested
@@ -65,7 +65,9 @@ class Node {
     }
 
     async connect() {
-        if (this.ws) this.ws.close();
+        if (this.ws) {
+            this.ws.close();
+        }
         this.aqua.emit('debug', this.name, `Attempting to connect...`);
         this.ws = new WebSocket(this.wsUrl, { headers: this.constructHeaders() });
         this.setupWebSocketListeners();
@@ -103,7 +105,7 @@ class Node {
         if (this.autoResume) {
             this.resumePlayers();
         }
-        this.lastStats = 0;
+        this.lastStatsRequest = Date.now();
     }
 
     async getStats() {
@@ -138,7 +140,14 @@ class Node {
     onMessage(msg) {
         if (Array.isArray(msg)) msg = Buffer.concat(msg);
         if (msg instanceof ArrayBuffer) msg = Buffer.from(msg);
-        const payload = JSON.parse(msg.toString());
+        let payload;
+        try {
+            payload = JSON.parse(msg.toString());
+        } catch (err) {
+            this.aqua.emit('debug', `Failed to parse message: ${err.message}`);
+            return;
+        }
+
         if (!payload.op) return;
         this.aqua.emit("raw", "Node", payload);
         this.aqua.emit("debug", this.name, `Received update: ${JSON.stringify(payload)}`);
@@ -149,7 +158,6 @@ class Node {
         switch (payload.op) {
             case "stats":
                 this.updateStats(payload);
-                this.lastStats = Date.now();
                 break;
             case "ready":
                 this.initializeSessionId(payload.sessionId);
@@ -217,8 +225,6 @@ class Node {
 
     destroy(clean = false) {
         if (clean) {
-            this.ws?.removeAllListeners();
-            this.ws = null;
             this.aqua.emit("nodeDestroy", this);
             this.aqua.nodes.delete(this.name);
             return;
@@ -227,18 +233,15 @@ class Node {
         this.aqua.players.forEach((player) => {
             if (player.node === this) player.destroy();
         });
-        this.ws?.close(1000, "destroy");
-        this.ws?.removeAllListeners();
-        this.ws = null;
         this.aqua.emit("nodeDestroy", this);
         this.aqua.nodeMap.delete(this.name);
         this.connected = false;
     }
 
+
     disconnect() {
         if (!this.connected) return;
         this.aqua.players.forEach((player) => { if (player.node === this) { player.move(); } });
-        this.ws.close(1000, "disconnect");
         this.aqua.emit("nodeDisconnect", this);
         this.connected = false;
     }
