@@ -364,25 +364,29 @@ async handleEvent(payload) {
      * @param {Object} player - The player instance.
      * @param {Object} payload - The event payload.
      */
-    trackEnd(player, track, payload) {
-
+   trackEnd(player, track, payload) {
         if (this.shouldDeleteMessage && this.nowPlayingMessage) {
-            this.nowPlayingMessage.delete();
+            this.nowPlayingMessage.delete().catch(console.error);
             this.nowPlayingMessage = null;
-            
         }
-        if (["loadfailed", "cleanup"].includes(payload.reason.replace("_", "").toLowerCase())) {
-            return player.queue.length === 0 ? this.aqua.emit("queueEnd", player) : player.play();
-        }
-        this.addToPreviousTrack(track)
+
+        if (["loadfailed", "cleanup"].includes(payload.reason.replace("_", "").toLowerCase())) return player.queue.isEmpty() ? this.aqua.emit("queueEnd", player) : player.play();
+
+        this.addToPreviousTrack(track);
+
         if (this.loop === "track") {
+            this.aqua.emit("trackRepeat", player, track, payload);
+            player.queue.unshift(this.previous);
+            return player.play();
+        }
+
+        if (this.loop === "queue") {
+            this.aqua.emit("queueRepeat", player, track, payload);
             player.queue.push(this.previous);
             return player.play();
         }
-        if (player.queue.length === 0) {
-            this.playing = false;
-            return this.aqua.emit("queueEnd", player);
-        }
+
+        this.aqua.emit("trackEnd", player, track, payload);
         this.cleanup();
         this.clearData();
         return player.play();
