@@ -35,9 +35,10 @@ class Track {
   async resolve(aqua) {
     const query = `${this.info.author} - ${this.info.title}`;
     const result = await aqua.resolve({ query, source: aqua.options.defaultSearchPlatform, requester: this.requester, node: this.nodes });
-    const matchedTrack = result?.tracks?.length ? this.findBestMatch(result.tracks) || result.tracks[0] : null;
-    if (matchedTrack) this.updateTrackInfo(matchedTrack);
-    return matchedTrack ? this : null;
+    if (!result?.tracks?.length) return null;
+    const matchedTrack = this.findBestMatch(result.tracks) || result.tracks[0];
+    this.updateTrackInfo(matchedTrack);
+    return this;
   }
 
   /**
@@ -46,14 +47,9 @@ class Track {
    */
   findBestMatch(tracks) {
     const { title, author, length } = this.info;
-    const titleLower = title.toLowerCase();
-    const authorLower = author.toLowerCase();
     return tracks.find(track => {
-      const { author, title, length: tLength } = track.info;
-      return (author.toLowerCase() === authorLower && title.toLowerCase() === titleLower) ||
-             (author.toLowerCase() === authorLower) ||
-             (title.toLowerCase() === titleLower) ||
-             (length && tLength >= (length - 2000) && tLength <= (length + 2000));
+      const { author: tAuthor, title: tTitle, length: tLength } = track.info;
+      return tAuthor === author && tTitle === title && (!length || tLength >= (length - 2000) && tLength <= (length + 2000));
     });
   }
 
