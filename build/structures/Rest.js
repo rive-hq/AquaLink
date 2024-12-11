@@ -6,8 +6,12 @@ class Rest {
         this.url = `http${options.secure ? "s" : ""}://${options.host}:${options.port}`;
         this.sessionId = options.sessionId;
         this.password = options.password;
-        this.version = options.restVersion;
+        this.version = options.restVersion || "v4";
         this.calls = 0;
+        this.headers = {
+            "Content-Type": "application/json",
+            Authorization: this.password,
+        };
     }
 
     setSessionId(sessionId) {
@@ -15,25 +19,25 @@ class Rest {
     }
 
     async makeRequest(method, endpoint, body = null, includeHeaders = false) {
-        const headers = {
-            "Content-Type": "application/json",
-            Authorization: this.password,
-        };
+        try {
+            const response = await request(`${this.url}${endpoint}`, {
+                method,
+                headers: this.headers,
+                body: body ? JSON.stringify(body) : undefined,
+            });
 
-        const response = await request(`${this.url}${endpoint}`, {
-            method,
-            headers,
-            body: body ? JSON.stringify(body) : undefined, // Only stringify if body is not null
-        });
+            this.calls++;
+            const data = await response.body.json();
+            this.aqua.emit("apiResponse", endpoint, response);
 
-        this.calls++;
-        const data = await response.body.json();
-        this.aqua.emit("apiResponse", endpoint, response);
-
-        return includeHeaders ? { data, headers: response.headers } : data;
+            return includeHeaders ? { data, headers: response.headers } : data;
+        } catch (error) {
+            this.aqua.emit("apiError", endpoint, error);
+            throw new Error(`Failed to make request to ${endpoint}: ${error.message}`);
+        }
     }
 
-    async getPlayers() {
+    getPlayers() {
         return this.makeRequest("GET", `/${this.version}/sessions/${this.sessionId}/players`);
     }
 
@@ -54,35 +58,35 @@ class Rest {
         return this.makeRequest("PATCH", `/${this.version}/sessions/${this.sessionId}/players/${options.guildId}?noReplace=false`, requestBody);
     }
 
-    async destroyPlayer(guildId) {
+    destroyPlayer(guildId) {
         return this.makeRequest("DELETE", `/${this.version}/sessions/${this.sessionId}/players/${guildId}`);
     }
 
-    async getTracks(identifier) {
+    getTracks(identifier) {
         return this.makeRequest("GET", `/${this.version}/loadtracks?identifier=${encodeURIComponent(identifier)}`);
     }
 
-    async decodeTrack(track) {
+    decodeTrack(track) {
         return this.makeRequest("GET", `/${this.version}/decodetrack?encodedTrack=${encodeURIComponent(track)}`);
     }
 
-    async decodeTracks(tracks) {
+    decodeTracks(tracks) {
         return this.makeRequest("POST", `/${this.version}/decodetracks`, tracks);
     }
 
-    async getStats() {
-        return this.makeRequest("GET", this.version === "v3" ? `/${this.version}/stats` : `/${this.version}/stats/all`);
+    getStats() {
+        return this.makeRequest("GET", `/${this.version}/stats${this.version !== "v3" ? "/all" : ""}`);
     }
 
-    async getInfo() {
+    getInfo() {
         return this.makeRequest("GET", `/${this.version}/info`);
     }
 
-    async getRoutePlannerStatus() {
+    getRoutePlannerStatus() {
         return this.makeRequest("GET", `/${this.version}/routeplanner/status`);
     }
 
-    async getRoutePlannerAddress(address) {
+    getRoutePlannerAddress(address) {
         return this.makeRequest("POST", `/${this.version}/routeplanner/free/address`, { address });
     }
 }
