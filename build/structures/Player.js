@@ -140,6 +140,7 @@ class Player extends EventEmitter {
         this.connected = false;
         await this.send({ guild_id: this.guildId, channel_id: null });
         this.clearData();
+        if(this.nowPlayingMessage) this.nowPlayingMessage.delete();
         this.aqua.emit("debug", this.guildId, "Player has disconnected from voice channel.");
     }
 
