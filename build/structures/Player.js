@@ -367,8 +367,6 @@ class Player extends EventEmitter {
             this.aqua.emit("trackEnd", player, track, payload);
             await this.cleanup();
         }
-
-        return player.play();
     }
 
     trackError(player, track, payload) {
