@@ -38,10 +38,8 @@ class Player extends EventEmitter {
         this.connected = false;
         this.timestamp = 0;
         this.ping = 0;
-        this.isAutoplay = false;
         this.nowPlayingMessage = null;
         this.previousTracks = new Array();
-        
         this.shouldDeleteMessage = options.shouldDeleteMessage ?? true;
 
         this.setupEventListeners();
@@ -122,11 +120,14 @@ class Player extends EventEmitter {
      * @description This method connects the player to a voice channel.
      * @event ready
      */
-    async connect(options = this) {
+    async connect(options) {
+        if (this.connected) throw new Error("Player is already connected.");
+        
         const { guildId, voiceChannel, deaf = true, mute = false } = options;
         await this.send({ guild_id: guildId, channel_id: voiceChannel, self_deaf: deaf, self_mute: mute });
         this.connected = true;
-        this.aqua.emit("debug", this.guildId, `Player has connected to voice channel: ${voiceChannel}.`);
+        this.aqua.emit("debug", this.guildId, `Player connected to voice channel: ${voiceChannel}.`);
+        return this;
     }
 
     /**
@@ -136,12 +137,17 @@ class Player extends EventEmitter {
      * @event destroy
      */
     async destroy() {
-        await this.updatePlayer({ track: { encoded: null } });
-        this.connected = false;
-        await this.send({ guild_id: this.guildId, channel_id: null });
+        await this.disconnect();
         this.clearData();
-        if(this.nowPlayingMessage) this.nowPlayingMessage.delete();
-        this.aqua.emit("debug", this.guildId, "Player has disconnected from voice channel.");
+        if (this.nowPlayingMessage) {
+            try {
+                await this.nowPlayingMessage.delete();
+            } catch (error) {
+                console.error("Failed to delete now playing message:", error);
+            }
+            this.nowPlayingMessage = null;
+        }
+        return this;
     }
 
     /**
@@ -165,6 +171,7 @@ class Player extends EventEmitter {
      * @event seek
      */
     async seek(position) {
+        if (position < 0) throw new Error("Seek position cannot be negative.");
         this.position = position;
         await this.updatePlayer({ position });
         return this;
@@ -178,12 +185,14 @@ class Player extends EventEmitter {
      */
     async stop() {
         if (!this.playing) return this;
+
         this.playing = false;
         this.current = null;
         this.position = 0;
         await this.updatePlayer({ track: { encoded: null } });
         return this;
     }
+
 
     /**
      * Sets the volume of the player.
@@ -214,19 +223,6 @@ class Player extends EventEmitter {
         await this.updatePlayer({ loop: mode });
         return this;
     }
-
-    /**
-     * Sends an update to the player.
-     * @param {Object} data - The data to send to the player.
-     * @returns {Promise<Player>} The player instance.
-     * @description This method sends an update to the player.
-     * @event update
-     */
-    async send(data) {
-        await this.updatePlayer(data);
-        return this;
-    }
-
     /**
      * Sets the text channel of the player.
      * @param {string} channel - The ID of the text channel to set.
@@ -255,7 +251,6 @@ class Player extends EventEmitter {
         await this.connect({ deaf: this.deaf, guildId: this.guildId, voiceChannel: this.voiceChannel, mute: this.mute });
         return this;
     }
-
     /**
      * Disconnects the player from the voice channel.
      * @returns {Promise<void>} The result of the disconnect method.
@@ -266,9 +261,8 @@ class Player extends EventEmitter {
         await this.updatePlayer({ track: { encoded: null } });
         await this.send({ guild_id: this.guildId, channel_id: null });
         this.connected = false;
-        this.aqua.emit("debug", this.guildId, "Player has disconnected from voice channel.");
+        this.aqua.emit("debug", this.guildId, "Player disconnected from voice channel.");
     }
-
     /**
      * Shuffles the queue of the player.
      * @returns {Promise<Player>} The player instance.
@@ -276,7 +270,10 @@ class Player extends EventEmitter {
      * @event shuffle
      */
     async shuffle() {
-        this.queue.shuffle();
+        for (let i = this.queue.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [this.queue[i], this.queue[j]] = [this.queue[j], this.queue[i]];
+        }
         return this;
     }
 
@@ -308,45 +305,28 @@ class Player extends EventEmitter {
      * @event skip
      */
     async skip() {
-        return await this.updatePlayer({ track: { encoded: null } });
+        await this.stop(); 
+        return this.play(); 
     }
-async handleEvent(payload) {
-    const player = this.aqua.players.get(payload.guildId);
-    if (!player) return;
+    async handleEvent(payload) {
+        const player = this.aqua.players.get(payload.guildId);
+        if (!player) return;
 
-    const track = this.current;
+        const track = player.current; 
 
-    switch (payload.type) {
-        case "TrackStartEvent":
-            this.trackStart(player, track, payload);
-            break;
-        case "TrackEndEvent":
-            this.trackEnd(player, track, payload);
-            break;
-        case "TrackExceptionEvent":
-            this.trackError(player, track, payload);
-            break;
-        case "TrackStuckEvent":
-            this.trackStuck(player, track, payload);
-            break;
-        case "TrackChangeEvent":
-            this.trackChange(player, track, payload);
-            break;
-        case "WebSocketClosedEvent":
-            this.socketClosed(player, track, payload);
-            break;
-        default:
-            this.handleUnknownEvent(payload);
-            break;
+        const eventHandlers = {
+            TrackStartEvent: this.trackStart.bind(this),
+            TrackEndEvent: this.trackEnd.bind(this),
+            TrackExceptionEvent: this.trackError.bind(this),
+            TrackStuckEvent: this.trackStuck.bind(this),
+            TrackChangeEvent: this.trackChange.bind(this),
+            WebSocketClosedEvent: this.socketClosed.bind(this),
+        };
+
+        const handler = eventHandlers[payload.type] || this.handleUnknownEvent.bind(this);
+        handler(player, track, payload);
     }
-}
 
-    /**
-     * Handles track start events.
-     * @param {Object} player - The player instance.
-     * @param {Object} payload - The event payload.
-     * @param {Object} track - The track object.
-     */
     trackStart(player, track, payload) {
         this.playing = true;
         this.paused = false;
@@ -355,68 +335,52 @@ async handleEvent(payload) {
 
     trackChange(player, track, payload) {
         this.playing = true;
-        this.paused = false
+        this.paused = false;
         this.aqua.emit("trackChange", player, track, payload);
     }
 
-    /**
-     * Handles track end events.
-     * @param {Object} player - The player instance.
-     * @param {Object} payload - The event payload.
-     */
-   trackEnd(player, track, payload) {
+    async trackEnd(player, track, payload) {
         if (this.shouldDeleteMessage && this.nowPlayingMessage) {
-            this.nowPlayingMessage.delete().catch(console.error);
-            this.nowPlayingMessage = null;
+            try {
+                await this.nowPlayingMessage.delete();
+            } catch (error) {
+                console.error(error);
+            } finally {
+                this.nowPlayingMessage = null;
+            }
         }
-
-        if (["loadfailed", "cleanup"].includes(payload.reason.replace("_", "").toLowerCase())) return player.queue.isEmpty() ? this.aqua.emit("queueEnd", player) : player.play();
+        
+        const reason = payload.reason.replace("_", "").toLowerCase();
+        if (["loadfailed", "cleanup"].includes(reason)) {
+            return player.queue.isEmpty() ? this.aqua.emit("queueEnd", player) : player.play();
+        }
 
         this.addToPreviousTrack(track);
 
         if (this.loop === "track") {
             this.aqua.emit("trackRepeat", player, track, payload);
             player.queue.unshift(this.previous);
-            return player.play();
-        }
-
-        if (this.loop === "queue") {
+        } else if (this.loop === "queue") {
             this.aqua.emit("queueRepeat", player, track, payload);
             player.queue.push(this.previous);
-            return player.play();
+        } else {
+            this.aqua.emit("trackEnd", player, track, payload);
+            await this.cleanup();
         }
 
-        this.aqua.emit("trackEnd", player, track, payload);
-        this.cleanup();
-        this.clearData();
         return player.play();
     }
 
-    /**
-     * Handles track error events.
-     * @param {Object} player - The player instance.
-     * @param {Object} payload - The event payload.
-     */
     trackError(player, track, payload) {
         this.aqua.emit("trackError", player, payload);
         this.stop();
     }
 
-    /**
-     * Handles track stuck events.
-     * @param {Object} player - The player instance.
-     * @param {Object} payload - The event payload.
-     */
     trackStuck(player, track, payload) {
         this.aqua.emit("trackStuck", player, payload);
         this.stop();
     }
 
-    /**
-     * Handles socket closed events.
-     * @param {Object} player - The player instance.
-     * @param {Object} payload - The event payload.
-     */
     socketClosed(player, payload) {
         if (payload && [4015, 4009].includes(payload.code)) {
             this.send({
@@ -430,46 +394,24 @@ async handleEvent(payload) {
         this.pause(true);
         this.aqua.emit("debug", this.guildId, "Player paused due to socket closure.");
     }
-    /**
-     * Sends data to the Aqua instance.
-     * @param {Object} data - The data to send.
-     */
+
     send(data) {
         this.aqua.send({ op: 4, d: data });
     }
 
-    /**
-     * Sets a custom value in the player's data.
-     * @param {string} key - The key of the data.
-     * @param {any} value - The value to set.
-     */
     set(key, value) {
-        this.data.set(key, value); // Use WeakMap to set data
+        this.data.set(key, value);
     }
 
-    /**
-     * Gets a custom value from the player's data.
-     * @param {string} key - The key of the data.
-     * @returns {any} The value associated with the key.
-     */
     get(key) {
-        return this.data.get(key); // Use WeakMap to get data
+        return this.data.get(key);
     }
 
-    /**
-     * Clears all custom data set on the player.
-     * @returns {Player} The player instance.
-     */
     clearData() {
         this.data = {};
         return this;
     }
 
-    /**
-     * Updates the player with new data.
-     * @param {Object} data - The data to update the player with.
-     * @returns {Promise<void>}
-     */
     async updatePlayer(data) {
         await this.nodes.rest.updatePlayer({
             guildId: this.guildId,
@@ -477,19 +419,11 @@ async handleEvent(payload) {
         });
     }
 
-    /**
-     * Handles unknown events from the node.
-     * @param {Object} payload - The event payload.
-     */
     handleUnknownEvent(payload) {
         const error = new Error(`Node encountered an unknown event: '${payload.type}'`);
         this.aqua.emit("nodeError", this, error);
     }
 
-    /**
-     * Cleans up the player when idle.
-     * @returns {Promise<void>}
-     */
     async cleanup() {
         if (!this.playing && !this.paused && this.queue.isEmpty()) {
             await this.destroy(); 
