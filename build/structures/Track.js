@@ -1,5 +1,4 @@
 const { getImageUrl } = require("../handlers/fetchImage");
-
 /**
  * @typedef {import("../Aqua")} Aqua
  * @typedef {import("../structures/Player")} Player
@@ -24,21 +23,26 @@ class Track {
    * @returns {string|null}
    */
   resolveThumbnail(thumbnail) {
-    return thumbnail ? (thumbnail.startsWith("http") ? thumbnail : getImageUrl(thumbnail, this.nodes)) : null;
+    return thumbnail && (thumbnail.startsWith("http") ? thumbnail : getImageUrl(thumbnail, this.nodes)) || null;
   }
 
   /**
    * @param {Aqua} aqua
-   * @returns {Promise<Track>}
    * @returns {Promise<Track|null>}
    */
   async resolve(aqua) {
     const query = `${this.info.author} - ${this.info.title}`;
-    const result = await aqua.resolve({ query, source: aqua.options.defaultSearchPlatform, requester: this.requester, node: this.nodes });
-    if (!result?.tracks?.length) return null;
-    const matchedTrack = this.findBestMatch(result.tracks) || result.tracks[0];
-    this.updateTrackInfo(matchedTrack);
-    return this;
+    try {
+      const result = await aqua.resolve({ query, source: aqua.options.defaultSearchPlatform, requester: this.requester, node: this.nodes });
+      if (!result?.tracks?.length) return null;
+
+      const matchedTrack = this.findBestMatch(result.tracks) || result.tracks[0];
+      this.updateTrackInfo(matchedTrack);
+      return this;
+    } catch (error) {
+      console.error(`Error resolving track: ${error.message}`);
+      return null;
+    }
   }
 
   /**
@@ -49,8 +53,17 @@ class Track {
     const { title, author, length } = this.info;
     return tracks.find(track => {
       const { author: tAuthor, title: tTitle, length: tLength } = track.info;
-      return tAuthor === author && tTitle === title && (!length || tLength >= (length - 2000) && tLength <= (length + 2000));
+      return tAuthor === author && tTitle === title && this.isLengthMatch(tLength, length);
     });
+  }
+
+  /**
+   * @param {number} tLength
+   * @param {number} length
+   * @returns {boolean}
+   */
+  isLengthMatch(tLength, length) {
+    return !length || (tLength >= (length - 2000) && tLength <= (length + 2000));
   }
 
   /**
@@ -68,7 +81,9 @@ class Track {
    * @private
    */
   cleanup() {
-    this.info = this.track = this.playlist = null;
+    this.info = null;
+    this.track = null;
+    this.playlist = null;
   }
 }
 
