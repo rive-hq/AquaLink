@@ -25,16 +25,19 @@ This code is based in riffy, but its an 100% Rewrite made from scratch...
 
 - Example bot: https://github.com/ToddyTheNoobDud/Thorium-Music
 
-# Yay, Version 1.3.0 is released ! aqualink so cool
+# Yay, Version 1.4.0 is released ! aqualink so cool
 
-+ Updated NODE with more methods (lavalinkLoadPercentage, freePercentage, usedPercentage) + Optimizations
-+ Rewrited Aqua.js fully (rewrite events, options, and resolve)
-+ Rewrite FetchImage (way more faster, less recourse intensive, better looking)
-+ Convert REST to Convert to undici request (experimental, around 221.29 % faster, 12436.39 by difference (requests per min))
-^^ Also is faster and more memory efficient...
-+ Updated Player with one more method (added player.skip())
-+ Remade all the cache system (players joined to vc shall don't use ram, improved cache saving and speed almost)
-+ Remade the TRACK handler (improves track handling, speed, recourses usage and cleaning)
+- Misc changes to TRACK handler (fixed some bugs, improved overall speed and caching)
+- Reworked some stuff from FetchImage (improves speed, made the requests dynamic, remove useless caching)
+- Rewrited Player.js (Detailed: Rewrite Events (use switch, new methods), Rewrite disconnect, stop and destroy, improve cleanUp system)
+
+^^ Also fixes a lot of bugs (example: create a connection first, needs an connection, and others i forgot)
+
+- Rewrite the REST system again (uses async, dynamic requests, and re-utilizes some stuff for better speed)
+- Remade NODE manager (this brings better speed, dynamic requests, better caching system, and faster connecting speeds)
+- Rewrited the AQUA manager (this makes the resolve 2x faster, uses better functions, auto clean up system, better overall manager and faster)
+- Misc Fixes: fixed the queue looping system, improved the finished handler, better error handler, more automations
+
 
 # How to install
 
