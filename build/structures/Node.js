@@ -147,7 +147,6 @@ class Node {
             this.aqua.emit('debug', `Failed to parse message: ${err.message}`);
             return;
         }
-
         if (!payload.op) return;
         this.aqua.emit("raw", "Node", payload);
         this.aqua.emit("debug", this.name, `Received update: ${JSON.stringify(payload)}`);
@@ -188,7 +187,7 @@ class Node {
                 cores: payload.cpu?.cores || 0,
                 systemLoad: payload.cpu?.systemLoad || 0,
                 lavalinkLoad: payload.cpu?.lavalinkLoad || 0,
-                lavalinkLoadPercentage: payload.cpu ? (payload.cpu.lavalinkLoad / payload.cpu.cores) * 100 : 0,
+                lavalinkLoadPercentage: payload.cpu ? (payload.cpu?.lavalinkLoad / payload.cpu?.cores) * 100 : 0,
             },
             frameStats: {
                 sent: payload.frameStats?.sent || 0,
@@ -237,7 +236,6 @@ class Node {
         this.aqua.nodeMap.delete(this.name);
         this.connected = false;
     }
-
 
     disconnect() {
         if (!this.connected) return;
