@@ -14,7 +14,7 @@ class Aqua extends EventEmitter {
         this.players = new Map();
         this.clientId = null;
         this.initiated = false;
-        this.shouldDeleteMessage = options.shouldDeleteMessage || "false";
+        this.shouldDeleteMessage = options.shouldDeleteMessage || false;
         this.defaultSearchPlatform = options.defaultSearchPlatform || "ytsearch";
         this.restVersion = options.restVersion || "v3";
         this.plugins = options.plugins || [];
@@ -30,7 +30,8 @@ class Aqua extends EventEmitter {
     }
 
     get leastUsedNodes() {
-        return [...this.nodeMap.values()].filter(node => node.connected)
+        return [...this.nodeMap.values()]
+            .filter(node => node.connected)
             .sort((a, b) => a.rest.calls - b.rest.calls);
     }
 
@@ -72,7 +73,9 @@ class Aqua extends EventEmitter {
     }
 
     fetchRegion(region) {
-        return [...this.nodeMap.values()].filter(node => node.connected && node.regions?.includes(region?.toLowerCase()))
+        const lowerRegion = region?.toLowerCase();
+        return [...this.nodeMap.values()]
+            .filter(node => node.connected && node.regions?.includes(lowerRegion))
             .sort((a, b) => this.calculateLoad(a) - this.calculateLoad(b));
     }
 
@@ -87,7 +90,6 @@ class Aqua extends EventEmitter {
 
         const node = options.region ? this.fetchRegion(options.region)[0] : this.leastUsedNodes[0];
         if (!node) throw new Error("No nodes are available");
-
         return this.createPlayer(node, options);
     }
 
@@ -109,28 +111,33 @@ class Aqua extends EventEmitter {
         }
     }
 
-/**
- * Resolves a track or playlist based on the provided query and returns the response.
- * Ensures that Aqua is initialized before proceeding.
- *
- * @param {Object} params
- * @param {string} params.query - The search query or URL to resolve.
- * @param {string} [params.source] - The source platform for the search (e.g., "ytsearch").
- * @param {Object} params.requester - The user or entity requesting the track.
- * @param {string|Node} [params.nodes] - Optional specific node or node identifier to use for the request.
- * @returns {Promise<Object>} The response containing track or playlist information.
- * @throws {Error} If Aqua is not initialized.
- */
+/** 
+ * Resolves a track or playlist based on the provided query and returns the response. 
+ * Ensures that Aqua is initialized before proceeding. 
+ * 
+ * @param {Object} params 
+ * @param {string} params.query - The search query or URL to resolve. 
+ * @param {string} [params.source] - The source platform for the search (e.g., "ytsearch"). 
+ * @param {Object} params.requester - The user or entity requesting the track. 
+ * @param {string|Node} [params.nodes] - Optional specific node or node identifier to use for the request. 
+ * @returns {Promise<Object>} The response containing track or playlist information. 
+ * @throws {Error} If Aqua is not initialized. 
+ */ 
     async resolve({ query, source, requester, nodes }) {
         this.ensureInitialized();
         const requestNode = this.getRequestNode(nodes);
         const formattedQuery = this.formatQuery(query, source || this.defaultSearchPlatform);
         
-        let response = await requestNode.rest.makeRequest("GET", `/v4/loadtracks?identifier=${encodeURIComponent(formattedQuery)}`);
-        if (["empty", "NO_MATCHES"].includes(response.loadType)) {
-            response = await this.handleNoMatches(requestNode.rest, query);
+        try {
+            let response = await requestNode.rest.makeRequest("GET", `/v4/loadtracks?identifier=${encodeURIComponent(formattedQuery)}`);
+            if (["empty", "NO_MATCHES"].includes(response.loadType)) {
+                response = await this.handleNoMatches(requestNode.rest, query);
+            }
+            return this.constructorResponse(response, requester, requestNode);
+        } catch (error) {
+            console.error("Error resolving track:", error);
+            throw new Error("Failed to resolve track");
         }
-        return this.constructorResponse(response, requester, requestNode);
     }
 
     ensureInitialized() {
@@ -149,11 +156,16 @@ class Aqua extends EventEmitter {
     }
 
     async handleNoMatches(rest, query) {
-        const spotifyResponse = await rest.makeRequest("GET", `/v4/loadtracks?identifier=https://open.spotify.com/track/${query}`);
-        if (["empty", "NO_MATCHES"].includes(spotifyResponse.loadType)) {
-            return await rest.makeRequest("GET", `/v4/loadtracks?identifier=https://www.youtube.com/watch?v=${query}`);
+        try {
+            const spotifyResponse = await rest.makeRequest("GET", `/v4/loadtracks?identifier=https://open.spotify.com/track/${query}`);
+            if (["empty", "NO_MATCHES"].includes(spotifyResponse.loadType)) {
+                return await rest.makeRequest("GET", `/v4/loadtracks?identifier=https://www.youtube.com/watch?v=${query}`);
+            }
+            return spotifyResponse;
+        } catch (error) {
+            console.error("Error handling no matches:", error);
+            throw new Error("Failed to handle no matches");
         }
-        return spotifyResponse;
     }
 
     constructorResponse(response, requester, requestNode) {
