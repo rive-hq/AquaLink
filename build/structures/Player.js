@@ -32,7 +32,7 @@ class Player extends EventEmitter {
         this.deaf = options.deaf ?? false;
         this.volume = options.defaultVolume ?? 100;
         this.loop = options.loop ?? "none";
-        this.data = new Map();
+        this.data = new Map()
         this.queue = new Queue();
         this.position = 0;
         this.current = null;
@@ -50,6 +50,7 @@ class Player extends EventEmitter {
     setupEventListeners() {
         this.on("playerUpdate", this.onPlayerUpdate.bind(this));
         this.on("event", this.handleEvent.bind(this));
+        this.on('destroy', this.destroy.bind(this));
     }
 
     onPlayerUpdate(packet) {
@@ -119,7 +120,6 @@ class Player extends EventEmitter {
      */
     async destroy() {
         await this.disconnect();
-        this.clearData();
         return this;
     }
 
@@ -150,7 +150,7 @@ class Player extends EventEmitter {
         return this;
     }
 
-    /**
+       /**
      * Stops the player and resets its state.
      *
      * @returns {Promise<Player>} The player instance.
@@ -158,10 +158,9 @@ class Player extends EventEmitter {
      */
     async stop() {
         if (!this.playing) return this;
-        this.playing = false;
-        this.current = null;
-        this.position = 0;
         await this.updatePlayer({ track: { encoded: null } });
+        this.playing = false;
+        this.position = 0;
         return this;
     }
 
@@ -280,22 +279,30 @@ class Player extends EventEmitter {
     handleEvent = (payload) => {
         const player = this.aqua.players.get(payload.guildId);
         if (!player) return;
-
-        const { type, ...rest } = payload;
         const track = player.current;
-
-        const handlers = {
-            TrackStartEvent: this.trackStart.bind(this),
-            TrackEndEvent: this.trackEnd.bind(this),
-            TrackExceptionEvent: this.trackError.bind(this),
-            TrackStuckEvent: this.trackStuck.bind(this),
-            TrackChangeEvent: this.trackChange.bind(this),
-            WebSocketClosedEvent: this.socketClosed.bind(this),
-        };
-
-        const handler = handlers[type] || this.handleUnknownEvent;
-        handler(player, track, rest);
-    };
+        switch (payload.type) {
+            case "TrackStartEvent":
+                this.trackStart(player, track, payload);
+                break;
+            case "TrackEndEvent":
+                this.trackEnd(player, track, payload);
+                break;
+            case "TrackExceptionEvent":
+                this.trackError(player, track, payload);
+                break;
+            case "TrackStuckEvent":
+                this.trackStuck(player, track, payload);
+                break;
+            case "TrackChangeEvent":
+                this.trackChange(player, track, payload);
+                break;
+            case "WebSocketClosedEvent":
+                this.socketClosed(player, track, payload);
+                break;
+            default:
+                this.handleUnknownEvent(player, track, payload);
+        }
+    }
     trackStart(player, track, payload) {
         this.playing = true;
         this.paused = false;
@@ -304,39 +311,45 @@ class Player extends EventEmitter {
 
     trackChange(player, track, payload) {
         this.playing = true;
-        this.paused = false;
+        this.paused = false
         this.aqua.emit("trackChange", player, track, payload);
     }
 
     async trackEnd(player, track, payload) {
         if (this.shouldDeleteMessage && this.nowPlayingMessage) {
-            try {
-                await this.nowPlayingMessage.delete();
-            } catch (error) {
-                console.error(error);
-            } finally {
-                this.nowPlayingMessage = null;
-            }
+            this.nowPlayingMessage.delete().catch(console.error).finally(() => this.nowPlayingMessage = null);
         }
+
         const reason = payload.reason.replace("_", "").toLowerCase();
-        if (["loadfailed", "cleanup"].includes(reason)) {
-            return player.queue.isEmpty() ? this.aqua.emit("queueEnd", player) : player.play();
+        switch (reason) {
+            case "loadfailed":
+            case "cleanup":
+                return player.queue.isEmpty() ? this.aqua.emit("queueEnd", player) : player.play();
+
+            case "track":
+                this.aqua.emit("trackRepeat", player, track, payload);
+                player.queue.unshift(this.previous);
+                break;
+
+            case "queue":
+                this.aqua.emit("queueRepeat", player, track, payload);
+                player.queue.push(this.previous);
+                break;
+
+            default:
+                this.aqua.emit("trackEnd", player, track, payload);
+                await this.cleanup();
         }
-        this.addToPreviousTrack(track);
-        if (this.loop === "track") {
-            this.aqua.emit("trackRepeat", player, track, payload);
-            player.queue.unshift(this.previous);
-        } else if (this.loop === "queue") {
-            this.aqua.emit("queueRepeat", player, track, payload);
-            player.queue.push(this.previous);
-        } else {
-            this.aqua.emit("trackEnd", player, track, payload);
-            await this.cleanup();
-        }
-        if (player.queue.isEmpty()) {
+
+        if (player.queue.length === 0) {
             this.playing = false;
             this.aqua.emit("queueEnd", player);
         }
+
+        if (!player.playing) {
+            return this.cleanup();
+        }
+
         return player.play();
     }
 
