@@ -68,6 +68,9 @@ class Aqua extends EventEmitter {
                 player.connection.setServerUpdate(packet.d);
             } else if (packet.t === "VOICE_STATE_UPDATE" && packet.d.user_id === this.clientId) {
                 player.connection.setStateUpdate(packet.d);
+                if (packet.d.status === "disconnected") {
+                    this.cleanupPlayer(player); // Cleanup when disconnected
+                }
             }
         }
     }
@@ -87,7 +90,6 @@ class Aqua extends EventEmitter {
         this.ensureInitialized();
         const player = this.players.get(options.guildId);
         if (player && player.voiceChannel) return player;
-
         const node = options.region ? this.fetchRegion(options.region)[0] : this.leastUsedNodes[0];
         if (!node) throw new Error("No nodes are available");
         return this.createPlayer(node, options);
@@ -97,6 +99,7 @@ class Aqua extends EventEmitter {
         const player = new Player(this, node, options);
         this.players.set(options.guildId, player);
         player.connect(options);
+        player.on("destroy", () => this.cleanupPlayer(player)); // Listen for player destruction
         this.emit("playerCreate", player);
         return player;
     }
@@ -111,23 +114,20 @@ class Aqua extends EventEmitter {
         }
     }
 
-/** 
- * Resolves a track or playlist based on the provided query and returns the response. 
- * Ensures that Aqua is initialized before proceeding. 
- * 
- * @param {Object} params 
- * @param {string} params.query - The search query or URL to resolve. 
- * @param {string} [params.source] - The source platform for the search (e.g., "ytsearch"). 
- * @param {Object} params.requester - The user or entity requesting the track. 
- * @param {string|Node} [params.nodes] - Optional specific node or node identifier to use for the request. 
- * @returns {Promise<Object>} The response containing track or playlist information. 
- * @throws {Error} If Aqua is not initialized. 
- */ 
+    /**
+     * Resolve a track into an array of {@link Track} objects.
+     *
+     * @param {Object} options - The options for the resolve operation.
+     * @param {string} options.query - The query to search for.
+     * @param {string} [options.source] - The source to use for the search. Defaults to the bot's default search platform.
+     * @param {GuildMember} options.requester - The member who requested the track.
+     * @param {Node[]} [options.nodes] - The nodes to prioritize for the search. Defaults to all nodes.
+     * @returns {Promise<Track[]>} The resolved tracks.
+     */
     async resolve({ query, source, requester, nodes }) {
         this.ensureInitialized();
         const requestNode = this.getRequestNode(nodes);
         const formattedQuery = this.formatQuery(query, source || this.defaultSearchPlatform);
-        
         try {
             let response = await requestNode.rest.makeRequest("GET", `/v4/loadtracks?identifier=${encodeURIComponent(formattedQuery)}`);
             if (["empty", "NO_MATCHES"].includes(response.loadType)) {
@@ -176,7 +176,6 @@ class Aqua extends EventEmitter {
             pluginInfo: response.pluginInfo || {},
             tracks: [],
         };
-
         switch (response.loadType) {
             case "track":
                 if (response.data) {
@@ -194,11 +193,9 @@ class Aqua extends EventEmitter {
                 baseResponse.tracks = response.data?.map(track => new Track(track, requester, requestNode)) || [];
                 break;
         }
-
         if (response.loadType === "error" || response.loadType === "LOAD_FAILED") {
             baseResponse.exception = response.loadType.data || response.loadType.exception;
         }
-
         return baseResponse;
     }
 
@@ -215,6 +212,15 @@ class Aqua extends EventEmitter {
                 this.players.delete(guildId);
                 this.emit("playerDestroy", player);
             }
+        }
+    }
+
+    cleanupPlayer(player) {
+        if (player) {
+            player.clearData();
+            player.destroy();
+            this.players.delete(player.guildId);
+            this.emit("playerDestroy", player);
         }
     }
 }
