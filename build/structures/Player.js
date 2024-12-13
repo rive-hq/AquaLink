@@ -50,7 +50,6 @@ class Player extends EventEmitter {
     setupEventListeners() {
         this.on("playerUpdate", this.onPlayerUpdate.bind(this));
         this.on("event", this.handleEvent.bind(this));
-        this.on('destroy', this.destroy.bind(this));
     }
 
     onPlayerUpdate(packet) {
@@ -120,6 +119,7 @@ class Player extends EventEmitter {
      */
     async destroy() {
         await this.disconnect();
+        await this.aqua.emit('destroy', this);
         return this;
     }
 
