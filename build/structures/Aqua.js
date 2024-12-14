@@ -219,6 +219,7 @@ class Aqua extends EventEmitter {
         if (player) {
             player.clearData();
             player.destroy();
+            this.voice = null
             this.players.delete(player.guildId);
             this.emit("playerDestroy", player);
         }
