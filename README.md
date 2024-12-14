@@ -25,19 +25,14 @@ This code is based in riffy, but its an 100% Rewrite made from scratch...
 
 - Example bot: https://github.com/ToddyTheNoobDud/Thorium-Music
 
-# Yay, Version 1.4.0 is released ! aqualink so cool
+# Yay, Version 1.4.2 is released, wow
 
-- Misc changes to TRACK handler (fixed some bugs, improved overall speed and caching)
-- Reworked some stuff from FetchImage (improves speed, made the requests dynamic, remove useless caching)
-- Rewrited Player.js (Detailed: Rewrite Events (use switch, new methods), Rewrite disconnect, stop and destroy, improve cleanUp system)
-
-^^ Also fixes a lot of bugs (example: create a connection first, needs an connection, and others i forgot)
-
-- Rewrite the REST system again (uses async, dynamic requests, and re-utilizes some stuff for better speed)
-- Remade NODE manager (this brings better speed, dynamic requests, better caching system, and faster connecting speeds)
-- Rewrited the AQUA manager (this makes the resolve 2x faster, uses better functions, auto clean up system, better overall manager and faster)
-- Misc Fixes: fixed the queue looping system, improved the finished handler, better error handler, more automations
-
+- Rewrited CONNECTION manager (This fixes Bad request, Fixes sessionId, json responses from lavalink, and other bugfixes)
+- Fixed skip in Player, Fixed Destroy, Fixed desconnection, Fixed stop, And added some optimizations
+- Added clean this.voice on Aqua manager
+- Fixed Destroy sending embeds / text if there is an queue
+- Fixed stop / destroy sending all the texts (songs in queue)
+- Optimized the track handling
 
 # How to install
 
