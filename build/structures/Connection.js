@@ -13,25 +13,29 @@ class Connection {
     setServerUpdate({ endpoint, token }) {
         if (!endpoint) throw new Error("Missing 'endpoint' property in VOICE_SERVER_UPDATE");
 
+        const newRegion = endpoint.split('.')[0].replace(/[0-9]/g, "");
+        if (this.region !== newRegion) {
+            this.updateRegion(newRegion, endpoint, token);
+            this.updatePlayerVoiceData();
+        }
+    }
+
+    updateRegion(newRegion, endpoint, token) {
         const previousVoiceRegion = this.region;
+        this.region = newRegion;
         this.voice.endpoint = endpoint;
         this.voice.token = token;
-        this.region = endpoint.split(".")[0].replace(/[0-9]/g, "");
 
         this.player.aqua.emit("debug", `[Player ${this.player.guildId} - CONNECTION] ${previousVoiceRegion ? `Changed Voice Region from ${previousVoiceRegion} to ${this.region}` : `Voice Server: ${this.region}`}`);
 
-        if (this.player.paused) this.player.pause(false);
-
-        this.updatePlayerVoiceData();
+        if (this.player.paused) {
+            this.player.pause(false);
+        }
     }
 
     setStateUpdate({ session_id, channel_id, self_deaf, self_mute }) {
         if (!channel_id || !session_id) {
-            this.player.aqua.emit("playerLeave", this.player.voiceChannel);
-            this.player.voiceChannel = null;
-            this.voiceChannel = null;
-            this.player.destroy();
-            this.player.aqua.emit("playerDestroy", this.player);
+            this.cleanup();
             return;
         }
 
@@ -44,18 +48,28 @@ class Connection {
         this.selfDeaf = self_deaf;
         this.selfMute = self_mute;
         this.voice.sessionId = session_id;
-
-        this.updatePlayerVoiceData();
     }
 
     updatePlayerVoiceData() {
-        this.player.nodes.rest.updatePlayer({
-            guildId: this.player.guildId,
-            data: {
-                voice: this.voice,
-                volume: this.player.volume
-            }
-        });
+        const currentTime = Date.now();
+        if (currentTime - this.lastUpdateTime >= this.updateThrottle) {
+            this.lastUpdateTime = currentTime;
+            this.player.nodes.rest.updatePlayer({
+                guildId: this.player.guildId,
+                data: {
+                    voice: this.voice,
+                    volume: this.player.volume
+                }
+            });
+        }
+    }
+
+    cleanup() {
+        this.player.aqua.emit("playerLeave", this.player.voiceChannel);
+        this.player.voiceChannel = null;
+        this.voiceChannel = null;
+        this.player.destroy();
+        this.player.aqua.emit("playerDestroy", this.player);
     }
 }
 
