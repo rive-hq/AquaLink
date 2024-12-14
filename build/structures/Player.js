@@ -118,8 +118,9 @@ class Player extends EventEmitter {
      * @throws {Error} If the player is not connected.
      */
     async destroy() {
-        await this.disconnect();
-        await this.aqua.destroyPlayer(this.guildId);
+        await this.disconnect()
+        this.cleanup()
+        this.clearData()
     }
 
 
