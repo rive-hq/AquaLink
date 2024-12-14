@@ -266,14 +266,14 @@ class Player extends EventEmitter {
         return this.seek(0);
     }
 
+
     /**
      * Skips the current track and plays the next one in the queue.
      *
      * @returns {Promise<Player>} The player instance.
      */
     async skip() {
-        await this.stop(); 
-        return this.play(); 
+        await this.stop();
     }
 
     handleEvent = (payload) => {
