@@ -119,9 +119,9 @@ class Player extends EventEmitter {
      */
     async destroy() {
         await this.disconnect();
-        await this.aqua.emit('destroy', this);
-        return this;
+        await this.aqua.destroyPlayer(this.guildId);
     }
+
 
     /**
      * Pauses or unpauses the player.
@@ -230,8 +230,8 @@ class Player extends EventEmitter {
      */
     async disconnect() {
         await this.updatePlayer({ track: { encoded: null } });
-        this.send({ guild_id: this.guildId, channel_id: null });
         this.connected = false;
+        this.send({ guild_id: this.guildId, channel_id: null });
         this.aqua.emit("debug", this.guildId, "Player disconnected from voice channel.");
     }
 
@@ -266,14 +266,14 @@ class Player extends EventEmitter {
         return this.seek(0);
     }
 
-
     /**
      * Skips the current track and plays the next one in the queue.
      *
      * @returns {Promise<Player>} The player instance.
      */
     async skip() {
-        await this.stop();
+        await this.stop()
+        if (this.playing) return this.play();
     }
 
     handleEvent = (payload) => {
