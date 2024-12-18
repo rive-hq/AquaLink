@@ -5,6 +5,16 @@ const { Track } = require("./Track");
 const { version: pkgVersion } = require("../../package.json");
 
 class Aqua extends EventEmitter {
+    /**
+     * @param {Object} client - The client instance.
+     * @param {Array<Object>} nodes - An array of node configurations.
+     * @param {Object} options - Configuration options for Aqua.
+     * @param {Function} options.send - Function to send data.
+     * @param {string} [options.defaultSearchPlatform="ytsearch"] - Default search platform.
+     * @param {string} [options.restVersion="v4"] - Version of the REST API.
+     * @param {Array<Object>} [options.plugins=[]] - Plugins to load.
+     * @param {string} [options.shouldDeleteMessage='none'] - Should delete your message? (true, false)
+     */
     constructor(client, nodes, options) {
         super();
         this.validateInputs(client, nodes, options);
@@ -16,7 +26,7 @@ class Aqua extends EventEmitter {
         this.initiated = false;
         this.shouldDeleteMessage = options.shouldDeleteMessage || false;
         this.defaultSearchPlatform = options.defaultSearchPlatform || "ytsearch";
-        this.restVersion = options.restVersion || "v3";
+        this.restVersion = options.restVersion || "v4";
         this.plugins = options.plugins || [];
         this.version = pkgVersion;
         this.options = options;
@@ -24,10 +34,11 @@ class Aqua extends EventEmitter {
         this.setMaxListeners(0);
     }
 
+
     validateInputs(client, nodes, options) {
         if (!client) throw new Error("Client is required to initialize Aqua");
         if (!Array.isArray(nodes) || nodes.length === 0) throw new Error(`Nodes must be a non-empty Array (Received ${typeof nodes})`);
-        if (typeof options.send !== "function") throw new Error("Send function is required to initialize Aqua");
+        if (typeof options?.send !== "function") throw new Error("Send function is required to initialize Aqua");
     }
 
     get leastUsedNodes() {
@@ -126,10 +137,10 @@ class Aqua extends EventEmitter {
      * @throws {Error} - Throws an error if the track resolution fails.
      */
 
-    async resolve({ query, source, requester, nodes }) {
+    async resolve({ query, source = this.defaultSearchPlatform, requester, nodes }) {
         this.ensureInitialized();
         const requestNode = this.getRequestNode(nodes);
-        const formattedQuery = this.formatQuery(query, source || this.defaultSearchPlatform);
+        const formattedQuery = this.formatQuery(query, source);
         try {
             let response = await requestNode.rest.makeRequest("GET", `/v4/loadtracks?identifier=${encodeURIComponent(formattedQuery)}`);
             if (["empty", "NO_MATCHES"].includes(response.loadType)) {
