@@ -1,4 +1,4 @@
-const { getImageUrl } = require("../handlers/fetchImage");
+[const { getImageUrl } = require("../handlers/fetchImage");
 /**
  * @typedef {import("../Aqua")} Aqua
  * @typedef {import("../structures/Player")} Player
@@ -11,11 +11,11 @@ class Track {
    * @param {Node} nodes
    */
   constructor(data, requester, nodes) {
-    this.info = data.info;
+    this.info = Object.assign({}, data.info);
     this.requester = requester;
     this.nodes = nodes;
     this.track = data.encoded || Buffer.from(data.track, "base64").toString("utf8");
-    this.playlist = data.playlist || null;
+    this.playlist = data.playlist ? Object.assign({}, data.playlist) : null;
   }
 
   /**
@@ -70,10 +70,10 @@ class Track {
    * @param {Track} track
    */
   updateTrackInfo(track) {
-    this.info.identifier = track.info.identifier;
+    Object.assign(this.info, track.info);
     this.track = track.track;
     if (track.playlist) {
-      this.playlist = track.playlist;
+      this.playlist = Object.assign({}, track.playlist);
     }
   }
 
@@ -88,3 +88,4 @@ class Track {
 }
 
 module.exports = { Track };
+
