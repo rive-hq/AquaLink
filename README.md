@@ -25,14 +25,25 @@ This code is based in riffy, but its an 100% Rewrite made from scratch...
 
 - Example bot: https://github.com/ToddyTheNoobDud/Thorium-Music
 
-# Yay, Version 1.5.0 is released, wow
+# Yay, Version 1.5.0 || 1.5.1 || 1.5.2 is released, wow
 
+- 1.5.2-Beta
+- Actually fixed destroy now (i had forgot the queue handling and deleting)
+- Update undici to 7.2.0
+- Implement undici gargabe collector to REST and FetchImage (this can reduce the overall memory usage, experimental) (reference is [This](https://github.com/nodejs/undici/pull/3916))
+- Made some fixes on Player too
+- Why beta (all features are not complete yet, its on testing)
+
+- 1.5.1 : Fully fixed destroy and the queue handling for delete, also now it deletes from lavalink...
+
+1.5.0:
 - Optimized memory usage in `FetchImage` by removing unnecessary code and saving, addressing some memory leaks.
 - Updated `AQUA` with additional cleanup options, faster response arrays, Remade `ConstructResponse` and `resolve`, and improved the `UpdateVoice` handler.
 - Updated `CONNECTION` to fix bugs, improve the cleanup system, and Improve speed.
 - Improved cleanup in the `NODE` manager and fixed issues for VPS.
 - Rewrited the `TRACK` handler for better speed by removing redundant checks and code.
 - REMADE the `PLAYER` system to fix bugs, resolve message sending issues, Fixes `EventEmitter` memory leaks (also Fixes `AQUA`), remove unnecessary JSDoc comments, rewrite some methods, and enhance cleanup.
+
 
 # How to install
 
