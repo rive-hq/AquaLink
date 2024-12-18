@@ -21,6 +21,7 @@ class Aqua extends EventEmitter {
         this.version = pkgVersion;
         this.options = options;
         this.send = options.send;
+        this.setMaxListeners(0);
     }
 
     validateInputs(client, nodes, options) {
@@ -30,7 +31,7 @@ class Aqua extends EventEmitter {
     }
 
     get leastUsedNodes() {
-        return [...this.nodeMap.values()]
+        return Array.from(this.nodeMap.values())
             .filter(node => node.connected)
             .sort((a, b) => a.rest.calls - b.rest.calls);
     }
@@ -63,14 +64,10 @@ class Aqua extends EventEmitter {
 
     updateVoiceState(packet) {
         const player = this.players.get(packet.d.guild_id);
-        if (player) {
-            if (packet.t === "VOICE_SERVER_UPDATE") {
-                player.connection.setServerUpdate(packet.d);
-            } else if (packet.t === "VOICE_STATE_UPDATE" && packet.d.user_id === this.clientId) {
-                player.connection.setStateUpdate(packet.d);
-                if (packet.d.status === "disconnected") {
-                    this.cleanupPlayer(player); // Cleanup when disconnected
-                }
+        if (player && (packet.t === "VOICE_SERVER_UPDATE" || packet.t === "VOICE_STATE_UPDATE" && packet.d.user_id === this.clientId)) {
+            player.connection[packet.t === "VOICE_SERVER_UPDATE" ? "setServerUpdate" : "setStateUpdate"](packet.d);
+            if (packet.d.status === "disconnected") {
+                this.cleanupPlayer(player); // Cleanup when disconnected
             }
         }
     }
@@ -98,6 +95,7 @@ class Aqua extends EventEmitter {
     createPlayer(node, options) {
         const player = new Player(this, node, options);
         this.players.set(options.guildId, player);
+        player.setMaxListeners(0);
         player.connect(options);
         player.on("destroy", () => this.cleanupPlayer(player)); // Listen for player destruction
         this.emit("playerCreate", player);
@@ -115,15 +113,19 @@ class Aqua extends EventEmitter {
     }
 
     /**
-     * Resolve a track into an array of {@link Track} objects.
-     *
-     * @param {Object} options - The options for the resolve operation.
-     * @param {string} options.query - The query to search for.
-     * @param {string} [options.source] - The source to use for the search. Defaults to the bot's default search platform.
-     * @param {GuildMember} options.requester - The member who requested the track.
-     * @param {Node[]} [options.nodes] - The nodes to prioritize for the search. Defaults to all nodes.
-     * @returns {Promise<Track[]>} The resolved tracks.
+     * Resolves a track query by making a request to the appropriate node.
+     * 
+     * @param {Object} options - The options for resolving the track.
+     * @param {string} options.query - The track query to resolve.
+     * @param {string} [options.source] - The optional source platform for the query.
+     * @param {Object} options.requester - The user or entity requesting the track.
+     * @param {Array} [options.nodes] - Optional list of nodes to choose from for the request.
+     * 
+     * @returns {Promise<Object>} - A promise that resolves to the track response object.
+     * 
+     * @throws {Error} - Throws an error if the track resolution fails.
      */
+
     async resolve({ query, source, requester, nodes }) {
         this.ensureInitialized();
         const requestNode = this.getRequestNode(nodes);
@@ -157,11 +159,11 @@ class Aqua extends EventEmitter {
 
     async handleNoMatches(rest, query) {
         try {
-            const spotifyResponse = await rest.makeRequest("GET", `/v4/loadtracks?identifier=https://open.spotify.com/track/${query}`);
-            if (["empty", "NO_MATCHES"].includes(spotifyResponse.loadType)) {
-                return await rest.makeRequest("GET", `/v4/loadtracks?identifier=https://www.youtube.com/watch?v=${query}`);
+            const youtubeResponse = await rest.makeRequest("GET", `/v4/loadtracks?identifier=https://www.youtube.com/watch?v=${query}`);
+            if (["empty", "NO_MATCHES"].includes(youtubeResponse.loadType)) {
+                return await rest.makeRequest("GET", `/v4/loadtracks?identifier=https://open.spotify.com/track/${query}`);
             }
-            return spotifyResponse;
+            return youtubeResponse;
         } catch (error) {
             console.error("Error handling no matches:", error);
             throw new Error("Failed to handle no matches");
@@ -176,26 +178,32 @@ class Aqua extends EventEmitter {
             pluginInfo: response.pluginInfo || {},
             tracks: [],
         };
-        switch (response.loadType) {
+    
+        const { loadType, data } = response;
+    
+        if (loadType === "error" || loadType === "LOAD_FAILED") {
+            baseResponse.exception = data || response.exception;
+            return baseResponse;
+        }
+    
+        switch (loadType) {
             case "track":
-                if (response.data) {
-                    baseResponse.tracks.push(new Track(response.data, requester, requestNode));
+                if (data) {
+                    baseResponse.tracks.push(new Track(data, requester, requestNode));
                 }
                 break;
             case "playlist":
                 baseResponse.playlistInfo = {
-                    name: response.data?.info?.name || response.data?.info?.title,
-                    ...response.data?.info,
+                    name: data?.info?.name || data?.info?.title,
+                    ...data?.info,
                 };
-                baseResponse.tracks = response.data?.tracks?.map(track => new Track(track, requester, requestNode)) || [];
+                baseResponse.tracks = (data?.tracks || []).map(track => new Track(track, requester, requestNode));
                 break;
             case "search":
-                baseResponse.tracks = response.data?.map(track => new Track(track, requester, requestNode)) || [];
+                baseResponse.tracks = (data || []).map(track => new Track(track, requester, requestNode));
                 break;
         }
-        if (response.loadType === "error" || response.loadType === "LOAD_FAILED") {
-            baseResponse.exception = response.loadType.data || response.loadType.exception;
-        }
+    
         return baseResponse;
     }
 
@@ -219,7 +227,6 @@ class Aqua extends EventEmitter {
         if (player) {
             player.clearData();
             player.destroy();
-            this.voice = null
             this.players.delete(player.guildId);
             this.emit("playerDestroy", player);
         }
