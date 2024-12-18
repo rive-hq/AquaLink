@@ -187,7 +187,7 @@ class Node {
                 cores: payload.cpu?.cores || 0,
                 systemLoad: payload.cpu?.systemLoad || 0,
                 lavalinkLoad: payload.cpu?.lavalinkLoad || 0,
-                lavalinkLoadPercentage: payload.cpu ? (payload.cpu?.lavalinkLoad / payload.cpu?.cores) * 100 : 0,
+                lavalinkLoadPercentage: payload.cpu ? (payload.cpu.lavalinkLoad / payload.cpu.cores) * 100 : 0,
             },
             frameStats: {
                 sent: payload.frameStats?.sent || 0,
@@ -235,6 +235,11 @@ class Node {
         this.aqua.emit("nodeDestroy", this);
         this.aqua.nodeMap.delete(this.name);
         this.connected = false;
+        if (this.ws) {
+            this.ws.removeAllListeners();
+            this.ws.close();
+            this.ws = null;
+        }
     }
 
     disconnect() {
