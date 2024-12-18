@@ -1,4 +1,4 @@
-[const { getImageUrl } = require("../handlers/fetchImage");
+const { getImageUrl } = require("../handlers/fetchImage");
 /**
  * @typedef {import("../Aqua")} Aqua
  * @typedef {import("../structures/Player")} Player
