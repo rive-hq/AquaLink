@@ -1,5 +1,4 @@
 const { getImageUrl } = require("../handlers/fetchImage");
-
 /**
  * @typedef {import("../Aqua")} Aqua
  * @typedef {import("../structures/Player")} Player
@@ -15,7 +14,7 @@ class Track {
     this.info = data.info;
     this.requester = requester;
     this.nodes = nodes;
-    this.track = data.encoded || null;
+    this.track = data.encoded || null
     this.playlist = data.playlist || null;
   }
 
@@ -29,11 +28,11 @@ class Track {
 
   /**
    * @param {Aqua} aqua
-   * @returns {Promise<Track>|null}
+   * @returns {Promise<Track|null>}
    */
   async resolve(aqua) {
+    const query = `${this.info.author} - ${this.info.title}`;
     try {
-      const query = `${this.info.author} - ${this.info.title}`;
       const result = await aqua.resolve({ query, source: aqua.options.defaultSearchPlatform, requester: this.requester, node: this.nodes });
       if (!result?.tracks?.length) return null;
 
@@ -52,10 +51,10 @@ class Track {
    */
   findBestMatch(tracks) {
     const { title, author, length } = this.info;
-    return tracks.find(
-      ({ info: { author: tAuthor, title: tTitle, length: tLength } }) =>
-        tAuthor === author && tTitle === title && this.isLengthMatch(tLength, length)
-    );
+    return tracks.find(track => {
+      const { author: tAuthor, title: tTitle, length: tLength } = track.info;
+      return tAuthor === author && tTitle === title && this.isLengthMatch(tLength, length);
+    });
   }
 
   /**
@@ -89,5 +88,3 @@ class Track {
 }
 
 module.exports = { Track };
-
-
