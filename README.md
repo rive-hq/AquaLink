@@ -25,14 +25,14 @@ This code is based in riffy, but its an 100% Rewrite made from scratch...
 
 - Example bot: https://github.com/ToddyTheNoobDud/Thorium-Music
 
-# Yay, Version 1.4.2 is released, wow
+# Yay, Version 1.5.0 is released, wow
 
-- Rewrited CONNECTION manager (This fixes Bad request, Fixes sessionId, json responses from lavalink, and other bugfixes)
-- Fixed skip in Player, Fixed Destroy, Fixed desconnection, Fixed stop, And added some optimizations
-- Added clean this.voice on Aqua manager
-- Fixed Destroy sending embeds / text if there is an queue
-- Fixed stop / destroy sending all the texts (songs in queue)
-- Optimized the track handling
+- Optimized memory usage in `FetchImage` by removing unnecessary code and saving, addressing some memory leaks.
+- Updated `AQUA` with additional cleanup options, faster response arrays, Remade `ConstructResponse` and `resolve`, and improved the `UpdateVoice` handler.
+- Updated `CONNECTION` to fix bugs, improve the cleanup system, and Improve speed.
+- Improved cleanup in the `NODE` manager and fixed issues for VPS.
+- Rewrited the `TRACK` handler for better speed by removing redundant checks and code.
+- REMADE the `PLAYER` system to fix bugs, resolve message sending issues, Fixes `EventEmitter` memory leaks (also Fixes `AQUA`), remove unnecessary JSDoc comments, rewrite some methods, and enhance cleanup.
 
 # How to install
 
