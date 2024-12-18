@@ -23,11 +23,10 @@ async function getImageUrl(info) {
 async function fetchThumbnail(url) {
     try {
         const response = await request(url, { method: "GET" });
-        if (response.ok) {
-            const json = await response.json();
-            return json.thumbnail_url || null;
-        }
-        return null;
+        const json = await response.json();
+        response.body.destroy();
+
+        return json.thumbnail_url || null;
     } catch (error) {
         console.error(`Error fetching ${url}:`, error);
         return null;
