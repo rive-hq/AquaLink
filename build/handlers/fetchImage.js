@@ -23,9 +23,8 @@ async function getImageUrl(info) {
 async function fetchThumbnail(url) {
     try {
         const response = await request(url, { method: "GET" });
-        const json = await response.json();
-        response.body.destroy();
-
+        const json = await response.body.json();
+        response.body.dump();
         return json.thumbnail_url || null;
     } catch (error) {
         console.error(`Error fetching ${url}:`, error);
