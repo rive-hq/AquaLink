@@ -27,11 +27,12 @@ class Rest {
             });
 
             this.calls++;
-            const data = await response.body.json();
-            response.body.dump();
+            const { headers, body: responseBody } = response;
+            const data = await responseBody.json();
+            await responseBody.dump(); // force consumption of body
             this.aqua.emit("apiResponse", endpoint, response);
 
-            return includeHeaders ? { data, headers: response.headers } : data;
+            return includeHeaders ? { data, headers } : data;
         } catch (error) {
             this.aqua.emit("apiError", endpoint, error);
             throw new Error(`Failed to make request to ${endpoint}: ${error.message}`);
