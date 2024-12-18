@@ -96,6 +96,8 @@ class Player extends EventEmitter {
     async destroy() {
         if (!this.connected) return this;
         await this.updatePlayer({ track: { encoded: null } });
+        this.queue.clear();
+        this.current = null;
         this.playing = false;
         this.position = 0;
         this.send({ guild_id: this.guildId, channel_id: null });
