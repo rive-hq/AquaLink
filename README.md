@@ -34,7 +34,8 @@ This code is based in riffy, but its an 100% Rewrite made from scratch...
 - Made some fixes on Player too
 - Why beta (all features are not complete yet, its on testing)
 
-- 1.5.1 : Fully fixed destroy and the queue handling for delete, also now it deletes from lavalink...
+1.5.1 : 
+- Fully fixed destroy and the queue handling for delete, also now it deletes from lavalink...
 
 1.5.0:
 - Optimized memory usage in `FetchImage` by removing unnecessary code and saving, addressing some memory leaks.
