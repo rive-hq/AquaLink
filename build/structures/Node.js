@@ -187,7 +187,7 @@ class Node {
                 cores: payload.cpu?.cores || 0,
                 systemLoad: payload.cpu?.systemLoad || 0,
                 lavalinkLoad: payload.cpu?.lavalinkLoad || 0,
-                lavalinkLoadPercentage: payload.cpu ? (payload.cpu.lavalinkLoad / payload.cpu.cores) * 100 : 0,
+                lavalinkLoadPercentage: payload.cpu ? (payload.cpu?.lavalinkLoad / payload.cpu?.cores) * 100 : 0,
             },
             frameStats: {
                 sent: payload.frameStats?.sent || 0,
