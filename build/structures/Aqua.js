@@ -34,7 +34,6 @@ class Aqua extends EventEmitter {
         this.setMaxListeners(0);
     }
 
-
     validateInputs(client, nodes, options) {
         if (!client) throw new Error("Client is required to initialize Aqua");
         if (!Array.isArray(nodes) || nodes.length === 0) throw new Error(`Nodes must be a non-empty Array (Received ${typeof nodes})`);
@@ -123,20 +122,6 @@ class Aqua extends EventEmitter {
         }
     }
 
-    /**
-     * Resolves a track query by making a request to the appropriate node.
-     * 
-     * @param {Object} options - The options for resolving the track.
-     * @param {string} options.query - The track query to resolve.
-     * @param {string} [options.source] - The optional source platform for the query.
-     * @param {Object} options.requester - The user or entity requesting the track.
-     * @param {Array} [options.nodes] - Optional list of nodes to choose from for the request.
-     * 
-     * @returns {Promise<Object>} - A promise that resolves to the track response object.
-     * 
-     * @throws {Error} - Throws an error if the track resolution fails.
-     */
-
     async resolve({ query, source = this.defaultSearchPlatform, requester, nodes }) {
         this.ensureInitialized();
         const requestNode = this.getRequestNode(nodes);
@@ -189,14 +174,11 @@ class Aqua extends EventEmitter {
             pluginInfo: response.pluginInfo || {},
             tracks: [],
         };
-    
         const { loadType, data } = response;
-    
         if (loadType === "error" || loadType === "LOAD_FAILED") {
             baseResponse.exception = data || response.exception;
             return baseResponse;
         }
-    
         switch (loadType) {
             case "track":
                 if (data) {
@@ -214,7 +196,6 @@ class Aqua extends EventEmitter {
                 baseResponse.tracks = (data || []).map(track => new Track(track, requester, requestNode));
                 break;
         }
-    
         return baseResponse;
     }
 
@@ -227,9 +208,7 @@ class Aqua extends EventEmitter {
     cleanupIdle() {
         for (const [guildId, player] of this.players) {
             if (!player.playing && !player.paused && player.queue.isEmpty()) {
-                player.destroy();
-                this.players.delete(guildId);
-                this.emit("playerDestroy", player);
+                this.cleanupPlayer(player);
             }
         }
     }
@@ -241,6 +220,23 @@ class Aqua extends EventEmitter {
             this.players.delete(player.guildId);
             this.emit("playerDestroy", player);
         }
+    }
+
+    cleanup() {
+        for (const player of this.players.values()) {
+            this.cleanupPlayer(player);
+        }
+        for (const node of this.nodeMap.values()) {
+            this.destroyNode(node.name || node.host);
+        }
+        this.nodeMap.clear();
+        this.players.clear();
+        this.client = null;
+        this.nodes = null;
+        this.plugins = null;
+        this.options = null;
+        this.send = null;
+        this.version = null;
     }
 }
 
