@@ -28,6 +28,7 @@ class Rest {
 
             this.calls++;
             const data = await response.body.json();
+            response.body.dump();
             this.aqua.emit("apiResponse", endpoint, response);
 
             return includeHeaders ? { data, headers: response.headers } : data;
