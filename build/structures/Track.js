@@ -1,4 +1,5 @@
 const { getImageUrl } = require("../handlers/fetchImage");
+
 /**
  * @typedef {import("../Aqua")} Aqua
  * @typedef {import("../structures/Player")} Player
@@ -11,11 +12,11 @@ class Track {
    * @param {Node} nodes
    */
   constructor(data, requester, nodes) {
-    this.info = Object.assign({}, data.info);
+    this.info = data.info;
     this.requester = requester;
     this.nodes = nodes;
-    this.track = data.encoded || Buffer.from(data.track, "base64").toString("utf8");
-    this.playlist = data.playlist ? Object.assign({}, data.playlist) : null;
+    this.track = data.encoded || null;
+    this.playlist = data.playlist || null;
   }
 
   /**
@@ -28,11 +29,11 @@ class Track {
 
   /**
    * @param {Aqua} aqua
-   * @returns {Promise<Track|null>}
+   * @returns {Promise<Track>|null}
    */
   async resolve(aqua) {
-    const query = `${this.info.author} - ${this.info.title}`;
     try {
+      const query = `${this.info.author} - ${this.info.title}`;
       const result = await aqua.resolve({ query, source: aqua.options.defaultSearchPlatform, requester: this.requester, node: this.nodes });
       if (!result?.tracks?.length) return null;
 
@@ -51,10 +52,10 @@ class Track {
    */
   findBestMatch(tracks) {
     const { title, author, length } = this.info;
-    return tracks.find(track => {
-      const { author: tAuthor, title: tTitle, length: tLength } = track.info;
-      return tAuthor === author && tTitle === title && this.isLengthMatch(tLength, length);
-    });
+    return tracks.find(
+      ({ info: { author: tAuthor, title: tTitle, length: tLength } }) =>
+        tAuthor === author && tTitle === title && this.isLengthMatch(tLength, length)
+    );
   }
 
   /**
@@ -70,10 +71,10 @@ class Track {
    * @param {Track} track
    */
   updateTrackInfo(track) {
-    Object.assign(this.info, track.info);
+    this.info.identifier = track.info.identifier;
     this.track = track.track;
     if (track.playlist) {
-      this.playlist = Object.assign({}, track.playlist);
+      this.playlist = track.playlist;
     }
   }
 
@@ -88,4 +89,5 @@ class Track {
 }
 
 module.exports = { Track };
+
 
