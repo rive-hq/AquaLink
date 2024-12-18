@@ -22,9 +22,9 @@ async function getImageUrl(info) {
 
 async function fetchThumbnail(url) {
     try {
-        const response = await request(url, { method: "GET" });
-        const json = await response.body.json();
-        response.body.dump();
+        const { body } = await request(url, { method: "GET" });
+        const json = await body.json();
+        await body.dump();
         return json.thumbnail_url || null;
     } catch (error) {
         console.error(`Error fetching ${url}:`, error);
@@ -45,3 +45,4 @@ async function fetchYouTubeThumbnail(identifier) {
 }
 
 module.exports = { getImageUrl };
+
