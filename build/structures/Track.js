@@ -1,4 +1,5 @@
 const { getImageUrl } = require("../handlers/fetchImage");
+
 /**
  * @typedef {import("../Aqua")} Aqua
  * @typedef {import("../structures/Player")} Player
@@ -6,16 +7,17 @@ const { getImageUrl } = require("../handlers/fetchImage");
  */
 class Track {
   /**
-   * @param {{ encoded: string, info: { identifier: string, isSeekable: boolean, author: string, length: number, isStream: boolean, position: number, title: string, uri: string, sourceName: string, artworkUrl: string, track: string, tracks: Array<Track>, playlist: { name: string, selectedTrack: number } } }} data
+   * @param {{ encoded: string, info: { identifier: string, isSeekable: boolean, author: string, length: number, isStream: boolean, position: number, title: string, uri: string, sourceName: string, artworkUrl: string, track: string }, playlist?: { name: string, selectedTrack: number } }} data
    * @param {Player} requester
    * @param {Node} nodes
    */
   constructor(data, requester, nodes) {
-    this.info = data.info;
+    const { encoded, info, playlist = null } = data;
+    this.info = Object.freeze({ ...info });
     this.requester = requester;
     this.nodes = nodes;
-    this.track = data.encoded || null
-    this.playlist = data.playlist || null;
+    this.track = encoded || null;
+    this.playlist = playlist;
   }
 
   /**
@@ -23,7 +25,8 @@ class Track {
    * @returns {string|null}
    */
   resolveThumbnail(thumbnail) {
-    return thumbnail && (thumbnail.startsWith("http") ? thumbnail : getImageUrl(thumbnail, this.nodes)) || null;
+    if (!thumbnail) return null;
+    return thumbnail.startsWith("http") ? thumbnail : getImageUrl(thumbnail, this.nodes);
   }
 
   /**
@@ -31,16 +34,27 @@ class Track {
    * @returns {Promise<Track|null>}
    */
   async resolve(aqua) {
+    if (!aqua?.options?.defaultSearchPlatform) return null;
+
     const query = `${this.info.author} - ${this.info.title}`;
     try {
-      const result = await aqua.resolve({ query, source: aqua.options.defaultSearchPlatform, requester: this.requester, node: this.nodes });
+      const result = await aqua.resolve({
+        query,
+        source: aqua.options.defaultSearchPlatform,
+        requester: this.requester,
+        node: this.nodes
+      });
+
       if (!result?.tracks?.length) return null;
 
       const matchedTrack = this.findBestMatch(result.tracks) || result.tracks[0];
-      this.updateTrackInfo(matchedTrack);
-      return this;
+      if (matchedTrack) {
+        this.updateTrackInfo(matchedTrack);
+        return this;
+      }
+      return null;
     } catch (error) {
-      console.error(`Error resolving track: ${error.message}`);
+      console.error('Error resolving track:', error);
       return null;
     }
   }
@@ -50,11 +64,16 @@ class Track {
    * @returns {Track|null}
    */
   findBestMatch(tracks) {
+    if (!Array.isArray(tracks)) return null;
+    
     const { title, author, length } = this.info;
-    return tracks.find(track => {
+    for (const track of tracks) {
       const { author: tAuthor, title: tTitle, length: tLength } = track.info;
-      return tAuthor === author && tTitle === title && this.isLengthMatch(tLength, length);
-    });
+      if (tAuthor === author && tTitle === title && this.isLengthMatch(tLength, length)) {
+        return track;
+      }
+    }
+    return null;
   }
 
   /**
@@ -63,27 +82,19 @@ class Track {
    * @returns {boolean}
    */
   isLengthMatch(tLength, length) {
-    return !length || (tLength >= (length - 2000) && tLength <= (length + 2000));
+    if (!length) return true;
+    const threshold = 2000;
+    return tLength >= (length - threshold) && tLength <= (length + threshold);
   }
 
   /**
    * @param {Track} track
    */
   updateTrackInfo(track) {
+    if (!track) return;
     this.info.identifier = track.info.identifier;
     this.track = track.track;
-    if (track.playlist) {
-      this.playlist = track.playlist;
-    }
-  }
-
-  /**
-   * @private
-   */
-  cleanup() {
-    this.info = null;
-    this.track = null;
-    this.playlist = null;
+    this.playlist = track.playlist || null;
   }
 }
 
