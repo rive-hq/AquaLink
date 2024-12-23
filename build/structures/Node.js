@@ -2,11 +2,6 @@ const WebSocket = require("ws");
 const { Rest } = require("./Rest");
 
 class Node {
-    /**
-     * @param {import("./Aqua").Aqua} aqua
-     * @param {Object} nodes
-     * @param {Object} options
-     */
     constructor(aqua, nodes, options) {
         this.aqua = aqua;
         this.name = nodes.name || nodes.host;
@@ -14,7 +9,7 @@ class Node {
         this.port = nodes.port || 2333;
         this.password = nodes.password || "youshallnotpass";
         this.stats = this.initializeStats();
-        this.restVersion = "v4"; // Fixed to the specified version
+        this.restVersion = "v4";
         this.secure = nodes.secure || false;
         this.sessionId = nodes.sessionId || null;
         this.rest = new Rest(aqua, this);
@@ -29,7 +24,7 @@ class Node {
         this.reconnectTimeout = options.reconnectTimeout || 2000;
         this.reconnectTries = options.reconnectTries || 3;
         this.reconnectAttempted = 0;
-        this.lastStatsRequest = 0; // Track the last time stats were requested
+        this.lastStatsRequest = 0;
     }
 
     initializeStats() {
@@ -37,26 +32,38 @@ class Node {
             players: 0,
             playingPlayers: 0,
             uptime: 0,
-            memory: {
-                free: 0,
-                used: 0,
-                allocated: 0,
-                reservable: 0,
-                freePercentage: 0,
-                usedPercentage: 0,
-            },
-            cpu: {
-                cores: 0,
-                systemLoad: 0,
-                lavalinkLoad: 0,
-                lavalinkLoadPercentage: 0,
-            },
-            frameStats: {
-                sent: 0,
-                nulled: 0,
-                deficit: 0,
-            },
+            memory: this.initializeMemoryStats(),
+            cpu: this.initializeCpuStats(),
+            frameStats: this.initializeFrameStats(),
             ping: 0,
+        };
+    }
+
+    initializeMemoryStats() {
+        return {
+            free: 0,
+            used: 0,
+            allocated: 0,
+            reservable: 0,
+            freePercentage: 0,
+            usedPercentage: 0,
+        };
+    }
+
+    initializeCpuStats() {
+        return {
+            cores: 0,
+            systemLoad: 0,
+            lavalinkLoad: 0,
+            lavalinkLoadPercentage: 0,
+        };
+    }
+
+    initializeFrameStats() {
+        return {
+            sent: 0,
+            nulled: 0,
+            deficit: 0,
         };
     }
 
@@ -99,18 +106,19 @@ class Node {
             this.aqua.emit('debug', `Failed to fetch info: ${err.message}`);
             this.info = null;
         }
-        if (!this.info && !this.aqua.bypassChecks.nodeFetchInfo) {
-            throw new Error(`Failed to fetch node info.`);
-        }
-        if (this.autoResume) {
-            this.resumePlayers();
+        switch (true) {
+            case !this.info && !this.aqua.bypassChecks.nodeFetchInfo:
+                throw new Error(`Failed to fetch node info.`);
+            case this.autoResume:
+                this.resumePlayers();
+                break;
         }
         this.lastStatsRequest = Date.now();
     }
 
     async getStats() {
         const now = Date.now();
-        if (now - this.lastStatsRequest < 5000) {
+        if (now - this.lastStatsRequest < 10000) { // Increase the interval to 10 seconds
             return this.stats; // Return cached stats if requested too soon
         }
         try {
@@ -126,11 +134,7 @@ class Node {
     }
 
     resumePlayers() {
-        for (const player of this.aqua.players.values()) {
-            if (player.node === this) {
-                player.restart();
-            }
-        }
+        this.rest.makeRequest(`PATCH`, `/${this.rest.version}/sessions/${this.sessionId}`, { resuming: true, timeout: this.resumeTimeout });
     }
 
     onError(event) {
@@ -141,12 +145,14 @@ class Node {
         if (Array.isArray(msg)) msg = Buffer.concat(msg);
         if (msg instanceof ArrayBuffer) msg = Buffer.from(msg);
         let payload;
+
         try {
             payload = JSON.parse(msg.toString());
         } catch (err) {
             this.aqua.emit('debug', `Failed to parse message: ${err.message}`);
             return;
         }
+
         if (!payload.op) return;
         this.aqua.emit("raw", "Node", payload);
         this.aqua.emit("debug", this.name, `Received update: ${JSON.stringify(payload)}`);
@@ -160,6 +166,7 @@ class Node {
                 break;
             case "ready":
                 this.initializeSessionId(payload.sessionId);
+                if (this.autoResume) this.resumePlayers();
                 this.aqua.emit("nodeConnect", this);
                 break;
             default:
@@ -187,7 +194,7 @@ class Node {
                 cores: payload.cpu?.cores || 0,
                 systemLoad: payload.cpu?.systemLoad || 0,
                 lavalinkLoad: payload.cpu?.lavalinkLoad || 0,
-                lavalinkLoadPercentage: payload.cpu ? (payload.cpu?.lavalinkLoad / payload.cpu?.cores) * 100 : 0,
+                lavalinkLoadPercentage: payload.cpu ? (payload.cpu.lavalinkLoad / payload.cpu.cores) * 100 : 0,
             },
             frameStats: {
                 sent: payload.frameStats?.sent || 0,
