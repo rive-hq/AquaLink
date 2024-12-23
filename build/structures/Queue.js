@@ -87,14 +87,8 @@ class Queue extends Array {
         return this.length === 0;
     }
 
-    /**
-     * Add multiple tracks to the queue.
-     * @param {Array} tracks - The tracks to add.
-     */
-    addMultiple(tracks) {
-        if (Array.isArray(tracks)) {
-            this.push(...tracks);
-        }
+    enqueue(track) {
+        return this.add(track);
     }
 
 }
