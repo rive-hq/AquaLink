@@ -68,7 +68,7 @@ class Node {
     }
 
     async fetchInfo(options = {}) {
-        return await this.rest.makeRequest("GET", `/v4/info`, null, options.includeHeaders);
+        return await this.rest.makeRequest("GET", "/v4/info", null, options.includeHeaders);
     }
 
     async connect() {
@@ -106,35 +106,60 @@ class Node {
             this.aqua.emit('debug', `Failed to fetch info: ${err.message}`);
             this.info = null;
         }
-        switch (true) {
-            case !this.info && !this.aqua.bypassChecks.nodeFetchInfo:
-                throw new Error(`Failed to fetch node info.`);
-            case this.autoResume:
-                this.resumePlayers();
-                break;
+        if (!this.info && !this.aqua.bypassChecks.nodeFetchInfo) {
+            throw new Error(`Failed to fetch node info.`);
+        }
+        if (this.autoResume) {
+            this.resumePlayers();
         }
         this.lastStatsRequest = Date.now();
     }
 
     async getStats() {
         const now = Date.now();
-        if (now - this.lastStatsRequest < 10000) { // Increase the interval to 10 seconds
+        if (now - this.lastStatsRequest < 10000) {
             return this.stats; // Return cached stats if requested too soon
         }
         try {
-            const response = await this.rest.makeRequest("GET", `/v4/stats`);
+            const response = await this.rest.makeRequest("GET", "/v4/stats");
             const stats = await response.json();
-            this.stats = { ...this.stats, ...stats };
+            this.updateStats(stats);
             this.lastStatsRequest = now; // Update last request time
-            return stats;
+            return this.stats;
         } catch (err) {
             this.aqua.emit('debug', `Error fetching stats: ${err.message}`);
             return this.stats; // Return last known stats on error
         }
     }
 
+    updateStats(payload) {
+        this.stats.players = payload.players || 0;
+        this.stats.playingPlayers = payload.playingPlayers || 0;
+        this.stats.uptime = payload.uptime || 0;
+        this.stats.memory = {
+            free: payload.memory?.free || 0,
+            used: payload.memory?.used || 0,
+            allocated: payload.memory?.allocated || 0,
+            reservable: payload.memory?.reservable || 0,
+            freePercentage: payload.memory ? (payload.memory.free / payload.memory.allocated) * 100 : 0,
+            usedPercentage: payload.memory ? (payload.memory.used / payload.memory.allocated) * 100 : 0,
+        };
+        this.stats.cpu = {
+            cores: payload.cpu?.cores || 0,
+            systemLoad: payload.cpu?.systemLoad || 0,
+            lavalinkLoad: payload.cpu?.lavalinkLoad || 0,
+            lavalinkLoadPercentage: payload.cpu ? (payload.cpu.lavalinkLoad / payload.cpu.cores) * 100 : 0,
+        };
+        this.stats.frameStats = {
+            sent: payload.frameStats?.sent || 0,
+            nulled: payload.frameStats?.nulled || 0,
+            deficit: payload.frameStats?.deficit || 0,
+        };
+        this.stats.ping = payload.ping || 0;
+    }
+
     resumePlayers() {
-        this.rest.makeRequest(`PATCH`, `/${this.rest.version}/sessions/${this.sessionId}`, { resuming: true, timeout: this.resumeTimeout });
+        this.rest.makeRequest("PATCH", `/${this.rest.version}/sessions/${this.sessionId}`, { resuming: true, timeout: this.resumeTimeout });
     }
 
     onError(event) {
@@ -145,14 +170,12 @@ class Node {
         if (Array.isArray(msg)) msg = Buffer.concat(msg);
         if (msg instanceof ArrayBuffer) msg = Buffer.from(msg);
         let payload;
-
         try {
             payload = JSON.parse(msg.toString());
         } catch (err) {
             this.aqua.emit('debug', `Failed to parse message: ${err.message}`);
             return;
         }
-
         if (!payload.op) return;
         this.aqua.emit("raw", "Node", payload);
         this.aqua.emit("debug", this.name, `Received update: ${JSON.stringify(payload)}`);
@@ -174,35 +197,6 @@ class Node {
                 if (player) player.emit(payload.op, payload);
                 break;
         }
-    }
-
-    updateStats(payload) {
-        this.stats = {
-            ...this.stats,
-            players: payload.players || 0,
-            playingPlayers: payload.playingPlayers || 0,
-            uptime: payload.uptime || 0,
-            memory: {
-                free: payload.memory?.free || 0,
-                used: payload.memory?.used || 0,
-                allocated: payload.memory?.allocated || 0,
-                reservable: payload.memory?.reservable || 0,
-                freePercentage: payload.memory ? (payload.memory.free / payload.memory.allocated) * 100 : 0,
-                usedPercentage: payload.memory ? (payload.memory.used / payload.memory.allocated) * 100 : 0,
-            },
-            cpu: {
-                cores: payload.cpu?.cores || 0,
-                systemLoad: payload.cpu?.systemLoad || 0,
-                lavalinkLoad: payload.cpu?.lavalinkLoad || 0,
-                lavalinkLoadPercentage: payload.cpu ? (payload.cpu.lavalinkLoad / payload.cpu.cores) * 100 : 0,
-            },
-            frameStats: {
-                sent: payload.frameStats?.sent || 0,
-                nulled: payload.frameStats?.nulled || 0,
-                deficit: payload.frameStats?.deficit || 0,
-            },
-            ping: payload.ping || 0,
-        };
     }
 
     initializeSessionId(sessionId) {
