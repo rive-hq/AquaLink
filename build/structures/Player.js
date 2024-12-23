@@ -306,13 +306,13 @@ class Player extends EventEmitter {
         await player.play();
     }
 
-    trackError(player, track, payload) {
-        this.aqua.emit("trackError", player, payload);
+     trackError(player, track, payload) {
+        this.aqua.emit("trackError", player, track, payload);
         this.stop();
     }
 
     trackStuck(player, track, payload) {
-        this.aqua.emit("trackStuck", player, payload);
+        this.aqua.emit("trackStuck", player, track, payload);
         this.stop();
     }
 
@@ -325,7 +325,7 @@ class Player extends EventEmitter {
                 self_deaf: this.deaf,
             });
         }
-        this.aqua.emit("socketClosed", player, payload);
+        this.aqua.emit("socketClosed", player, track, payload);
         this.pause(true);
         this.aqua.emit("debug", this.guildId, "Player paused due to socket closure.");
     }
