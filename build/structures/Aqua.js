@@ -14,6 +14,7 @@ class Aqua extends EventEmitter {
      * @param {string} [options.restVersion="v4"] - Version of the REST API.
      * @param {Array<Object>} [options.plugins=[]] - Plugins to load.
      * @param {string} [options.shouldDeleteMessage='none'] - Should delete your message? (true, false)
+     * @param {boolean} [options.autoResume=false] - Automatically resume tracks on reconnect.
      */
     constructor(client, nodes, options) {
         super();
@@ -31,6 +32,7 @@ class Aqua extends EventEmitter {
         this.version = pkgVersion;
         this.options = options;
         this.send = options.send;
+        this.autoResume = options.autoResume || false;
         this.setMaxListeners(0);
     }
 
