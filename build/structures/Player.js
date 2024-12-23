@@ -325,7 +325,7 @@ class Player extends EventEmitter {
                 self_deaf: this.deaf,
             });
         }
-        this.aqua.emit("socketClosed", player, track, payload);
+        this.aqua.emit("socketClosed", player, payload);
         this.pause(true);
         this.aqua.emit("debug", this.guildId, "Player paused due to socket closure.");
     }
