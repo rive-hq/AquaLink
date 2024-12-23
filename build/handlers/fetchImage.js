@@ -1,20 +1,20 @@
 const { request } = require("undici");
 
-const YOUTUBE_URLS = [
-    (id) => `https://img.youtube.com/vi/${id}/maxresdefault.jpg`,
-    (id) => `https://img.youtube.com/vi/${id}/hqdefault.jpg`,
-    (id) => `https://img.youtube.com/vi/${id}/mqdefault.jpg`,
-    (id) => `https://img.youtube.com/vi/${id}/default.jpg`,
-];
+// Memoize YouTube URLs to avoid recreating functions
+const YOUTUBE_URLS = Object.freeze([
+    'maxresdefault.jpg',
+    'hqdefault.jpg',
+    'mqdefault.jpg',
+    'default.jpg'
+].map(quality => (id) => `https://img.youtube.com/vi/${id}/${quality}`));
 
 async function getImageUrl(info) {
-    if (!info || !info.sourceName || !info.uri) return null;
-
+    if (!info?.sourceName?.toLowerCase() || !info.uri) return null;
     switch (info.sourceName.toLowerCase()) {
         case "spotify":
-            return await fetchThumbnail(`https://open.spotify.com/oembed?url=${info.uri}`);
+            return fetchThumbnail(`https://open.spotify.com/oembed?url=${encodeURIComponent(info.uri)}`);
         case "youtube":
-            return await fetchYouTubeThumbnail(info.identifier);
+            return fetchYouTubeThumbnail(info.identifier);
         default:
             return null;
     }
@@ -22,10 +22,15 @@ async function getImageUrl(info) {
 
 async function fetchThumbnail(url) {
     try {
-        const { body } = await request(url, { method: "GET" });
+        const { body } = await request(url, {
+            method: "GET",
+            headers: { 'Accept': 'application/json' }
+        });
+        
         const json = await body.json();
         await body.dump();
-        return json.thumbnail_url || null;
+        
+        return json?.thumbnail_url || null;
     } catch (error) {
         console.error(`Error fetching ${url}:`, error);
         return null;
@@ -33,16 +38,23 @@ async function fetchThumbnail(url) {
 }
 
 async function fetchYouTubeThumbnail(identifier) {
-    const fetchPromises = YOUTUBE_URLS.map(urlFunc => fetchThumbnail(urlFunc(identifier)));
-    const results = await Promise.allSettled(fetchPromises);
+    if (!identifier) return null;
 
-    for (const result of results) {
-        if (result.status === "fulfilled" && result.value) {
-            return result.value; 
-        }
+    try {
+        const fetchPromises = YOUTUBE_URLS.map(urlFunc => 
+            fetchThumbnail(urlFunc(identifier))
+        );
+        const result = await Promise.race([
+            ...fetchPromises,
+            new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Timeout')), 5000)
+            )
+        ]);
+        
+        return result || null;
+    } catch {
+        return fetchThumbnail(YOUTUBE_URLS[0](identifier));
     }
-    return null;
 }
 
 module.exports = { getImageUrl };
-
