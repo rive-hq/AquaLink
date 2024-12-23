@@ -33,16 +33,13 @@ class Aqua extends EventEmitter {
         this.options = options;
         this.send = options.send;
         this.autoResume = options.autoResume || false;
+        this.setMaxListeners(0);
     }
 
     validateInputs(client, nodes, options) {
         if (!client) throw new Error("Client is required to initialize Aqua");
-        if (!Array.isArray(nodes) || nodes.length === 0) {
-            throw new Error(`Nodes must be a non-empty Array (Received ${typeof nodes})`);
-        }
-        if (typeof options?.send !== "function") {
-            throw new Error("Send function is required to initialize Aqua");
-        }
+        if (!Array.isArray(nodes) || nodes.length === 0) throw new Error(`Nodes must be a non-empty Array (Received ${typeof nodes})`);
+        if (typeof options?.send !== "function") throw new Error("Send function is required to initialize Aqua");
     }
 
     get leastUsedNodes() {
@@ -79,10 +76,10 @@ class Aqua extends EventEmitter {
 
     updateVoiceState(packet) {
         const player = this.players.get(packet.d.guild_id);
-        if (player && (packet.t === "VOICE_SERVER_UPDATE" || (packet.t === "VOICE_STATE_UPDATE" && packet.d.user_id === this.clientId))) {
+        if (player && (packet.t === "VOICE_SERVER_UPDATE" || packet.t === "VOICE_STATE_UPDATE" && packet.d.user_id === this.clientId)) {
             player.connection[packet.t === "VOICE_SERVER_UPDATE" ? "setServerUpdate" : "setStateUpdate"](packet.d);
             if (packet.d.status === "disconnected") {
-                this.cleanupPlayer(player);
+                this.cleanupPlayer(player); // Cleanup when disconnected
             }
         }
     }
@@ -110,8 +107,9 @@ class Aqua extends EventEmitter {
     createPlayer(node, options) {
         const player = new Player(this, node, options);
         this.players.set(options.guildId, player);
+        player.setMaxListeners(0);
         player.connect(options);
-        player.on("destroy", () => this.cleanupPlayer(player));
+        player.on("destroy", () => this.cleanupPlayer(player)); // Listen for player destruction
         this.emit("playerCreate", player);
         return player;
     }
