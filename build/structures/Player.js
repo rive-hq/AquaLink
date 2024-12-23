@@ -30,9 +30,11 @@ class Player extends EventEmitter {
         this.previousTracks = [];
         this.shouldDeleteMessage = options.shouldDeleteMessage ?? true;
 
-        // no more need for the function ig
-        this.on("playerUpdate", this.onPlayerUpdate.bind(this));
-        this.on("event", this.handleEvent.bind(this));
+        this._boundPlayerUpdate = this.onPlayerUpdate.bind(this);
+        this._boundHandleEvent = this.handleEvent.bind(this);
+
+        this.on("playerUpdate", this._boundPlayerUpdate);
+        this.on("event", this._boundHandleEvent);
     }
 
     onPlayerUpdate(packet) {
@@ -109,23 +111,20 @@ class Player extends EventEmitter {
         return this;
     }
 
-    async destroy() {
+     async destroy() {
         if (!this.connected) return this;
-
         await this.updatePlayer({ track: { encoded: null } });
-
         this.queue.clear();
         this.current = null;
         this.previousTracks.length = 0;
         this.playing = false;
         this.position = 0;
-
         this.send({ guild_id: this.guildId, channel_id: null });
         this.connected = false;
 
         this.removeListener("playerUpdate", this._boundPlayerUpdate);
         this.removeListener("event", this._boundHandleEvent);
-
+        
         return this;
     }
     /**
