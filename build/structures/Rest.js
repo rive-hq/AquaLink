@@ -8,10 +8,10 @@ class Rest {
         this.password = options.password;
         this.version = options.restVersion || "v4";
         this.calls = 0;
-        this.headers = {
+        this.headers = Object.freeze({
             "Content-Type": "application/json",
             Authorization: this.password,
-        };
+        });
     }
 
     setSessionId(sessionId) {
@@ -19,45 +19,58 @@ class Rest {
     }
 
     async makeRequest(method, endpoint, body = null, includeHeaders = false) {
+        let response;
         try {
-            const response = await request(`${this.url}${endpoint}`, {
+            const options = {
                 method,
                 headers: this.headers,
-                body: body ? JSON.stringify(body) : undefined,
+            };
+            if (body) options.body = JSON.stringify(body);
+
+            response = await request(`${this.url}${endpoint}`, options);
+            this.calls++;
+
+            const data = await response.body.json();
+            this.aqua.emit("apiResponse", endpoint, {
+                status: response.statusCode,
+                headers: response.headers
             });
 
-            this.calls++;
-            const { headers, body: responseBody } = response;
-            const data = await responseBody.json();
-            await responseBody.dump(); // force consumption of body
-            this.aqua.emit("apiResponse", endpoint, response);
-
-            return includeHeaders ? { data, headers } : data;
+            return includeHeaders ? { data, headers: response.headers } : data;
         } catch (error) {
             this.aqua.emit("apiError", endpoint, error);
             throw new Error(`Failed to make request to ${endpoint}: ${error.message}`);
+        } finally {
+            if (response?.body) {
+                try {
+                    await response.body.dump();
+                } catch (e) {
+                }
+            }
         }
     }
-
-    getPlayers() {
-        return this.makeRequest("GET", `/${this.version}/sessions/${this.sessionId}/players`);
-    }
-
     async updatePlayer(options) {
         const requestBody = { ...options.data };
 
-        if ((requestBody.track && requestBody.track.encoded && requestBody.track.identifier) ||
+        if ((requestBody.track?.encoded && requestBody.track?.identifier) ||
             (requestBody.encodedTrack && requestBody.identifier)) {
-            throw new Error(`Cannot provide both 'encoded' and 'identifier' for track in Update Player Endpoint`);
+            throw new Error("Cannot provide both 'encoded' and 'identifier' for track");
         }
 
-        if (this.version === "v3" && options.data?.track) {
+        if (this.version === "v3" && requestBody.track) {
             const { track } = requestBody;
             delete requestBody.track;
-            Object.assign(requestBody, track.encoded ? { encodedTrack: track.encoded } : { identifier: track.identifier });
+            requestBody[track.encoded ? 'encodedTrack' : 'identifier'] = track.encoded || track.identifier;
         }
 
-        return this.makeRequest("PATCH", `/${this.version}/sessions/${this.sessionId}/players/${options.guildId}?noReplace=false`, requestBody);
+        return this.makeRequest(
+            "PATCH", 
+            `/${this.version}/sessions/${this.sessionId}/players/${options.guildId}?noReplace=false`, 
+            requestBody
+        );
+    }
+    getPlayers() {
+        return this.makeRequest("GET", `/${this.version}/sessions/${this.sessionId}/players`);
     }
 
     destroyPlayer(guildId) {
