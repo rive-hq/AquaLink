@@ -268,33 +268,42 @@ class Player extends EventEmitter {
 
     async trackEnd(player, track, payload) {
         if (this.shouldDeleteMessage && this.nowPlayingMessage) {
-            this.nowPlayingMessage.delete().catch(console.error).finally(() => this.nowPlayingMessage = null);
+            try {
+                await this.nowPlayingMessage.delete();
+            } catch (error) {
+                console.error(error);
+            } finally {
+                this.nowPlayingMessage = null;
+            }
         }
+
         const reason = payload.reason.replace("_", "").toLowerCase();
-        switch (reason) {
-            case "loadfailed":
-            case "cleanup":
-                return player.queue.isEmpty() ? this.aqua.emit("queueEnd", player) : player.play();
-            case "track":
-                this.aqua.emit("trackRepeat", player, track, payload);
-                player.queue.unshift(this.previous);
-                break;
-            case "queue":
-                this.aqua.emit("queueRepeat", player, track, payload);
-                player.queue.push(this.previous);
-                break;
-            default:
-                this.aqua.emit("trackEnd", player, track, payload);
-                await this.cleanup();
+        const isLoadFailedOrCleanup = ["loadfailed", "cleanup"].includes(reason);
+
+        if (isLoadFailedOrCleanup) {
+            if (player.queue.isEmpty()) {
+                this.aqua.emit("queueEnd", player);
+            } else {
+                await player.play();
+            }
+            return;
         }
-        if (player.queue.length === 0) {
+
+        if (this.loop === "track") {
+            this.aqua.emit("trackRepeat", player, track, payload);
+            player.queue.unshift(track);
+        } else if (this.loop === "queue") {
+            this.aqua.emit("queueRepeat", player, track, payload);
+            player.queue.push(track);
+        }
+
+        if (player.queue.isEmpty()) {
             this.playing = false;
             this.aqua.emit("queueEnd", player);
-        }
-        if (!player.playing) {
             return this.cleanup();
         }
-        return player.play();
+
+        await player.play();
     }
 
     trackError(player, track, payload) {
