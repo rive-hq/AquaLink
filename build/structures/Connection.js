@@ -7,7 +7,7 @@ class Connection {
         this.selfMute = false;
         this.voiceChannel = player.voiceChannel;
         this.lastUpdateTime = 0;
-        this.updateThrottle = 1000;
+        this.updateThrottle = 1000; // Throttle time in milliseconds
     }
 
     setServerUpdate({ endpoint, token }) {
@@ -16,8 +16,8 @@ class Connection {
         const newRegion = endpoint.split('.')[0].replace(/[0-9]/g, "");
         if (this.region !== newRegion) {
             this.updateRegion(newRegion, endpoint, token);
-            this.updatePlayerVoiceData();
         }
+        this.updatePlayerVoiceData();
     }
 
     updateRegion(newRegion, endpoint, token) {
@@ -26,11 +26,11 @@ class Connection {
         this.voice.endpoint = endpoint;
         this.voice.token = token;
 
-        this.player.aqua.emit("debug", `[Player ${this.player.guildId} - CONNECTION] ${previousVoiceRegion ? `Changed Voice Region from ${previousVoiceRegion} to ${this.region}` : `Voice Server: ${this.region}`}`);
-
-        if (this.player.paused) {
-            this.player.pause(false);
-        }
+        const message = previousVoiceRegion 
+            ? `Changed Voice Region from ${previousVoiceRegion} to ${this.region}` 
+            : `Voice Server: ${this.region}`;
+        
+        this.player.aqua.emit("debug", `[Player ${this.player.guildId} - CONNECTION] ${message}`);
     }
 
     setStateUpdate(data) {
@@ -73,16 +73,13 @@ class Connection {
         this.player.aqua.emit("playerLeave", this.player.voiceChannel);
         this.player.voiceChannel = null;
         this.voiceChannel = null;
-
         this.player.destroy();
         this.player.aqua.emit("playerDestroy", this.player);
-
         this.player = null;
         this.voice = null;
         this.region = null;
         this.selfDeaf = null;
         this.selfMute = null;
-        this.voiceChannel = null;
     }
 }
 
