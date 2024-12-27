@@ -18,42 +18,51 @@ class Rest {
         this.sessionId = sessionId;
     }
 
-    async makeRequest(method, endpoint, body = null, includeHeaders = false) {
-        const options = {
-            method,
-            headers: this.headers,
-            body: body ? JSON.stringify(body) : undefined,
-        };
+    getFullUrl(endpoint) {
+        return `${this.url}${endpoint}`;
+    }
 
+    async makeRequest(method, endpoint, body = null, includeHeaders = false) {
+        let response;
         try {
-            const response = await request(`${this.url}${endpoint}`, options);
+            const options = {
+                method,
+                headers: this.headers,
+                ...(body && { body: JSON.stringify(body) }), // Use spread to conditionally add body
+            };
+            response = await request(this.getFullUrl(endpoint), options);
             this.calls++;
             const data = await response.body.json();
             this.aqua.emit("apiResponse", endpoint, {
                 status: response.statusCode,
-                headers: response.headers,
+                headers: response.headers
             });
             return includeHeaders ? { data, headers: response.headers } : data;
         } catch (error) {
             this.aqua.emit("apiError", endpoint, error);
             throw new Error(`Failed to make request to ${endpoint}: ${error.message}`);
+        } finally {
+            if (response?.body) {
+                try {
+                    await response.body.dump();
+                } catch (e) {
+                    console.error("Error dumping response body:", e); // Log the error instead of ignoring it
+                }
+            }
         }
     }
 
     async updatePlayer(options) {
         const requestBody = { ...options.data };
-
         if ((requestBody.track?.encoded && requestBody.track?.identifier) ||
             (requestBody.encodedTrack && requestBody.identifier)) {
             throw new Error("Cannot provide both 'encoded' and 'identifier' for track");
         }
-
         if (this.version === "v3" && requestBody.track) {
             const { track } = requestBody;
             delete requestBody.track;
             requestBody[track.encoded ? 'encodedTrack' : 'identifier'] = track.encoded || track.identifier;
         }
-
         return this.makeRequest(
             "PATCH",
             `/${this.version}/sessions/${this.sessionId}/players/${options.guildId}?noReplace=false`,
