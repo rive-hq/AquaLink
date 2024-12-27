@@ -12,11 +12,21 @@ class Track {
    * @param {Node} nodes
    */
   constructor(data, requester, nodes) {
-    const { encoded, info, playlist = null } = data;
-    this.info = Object.freeze({ ...info });
+    const { encoded = null, info = {}, playlist = null } = data;
+    this.info = Object.freeze({
+      identifier: info.identifier,
+      isSeekable: info.isSeekable,
+      author: info.author,
+      length: info.length,
+      isStream: info.isStream,
+      title: info.title,
+      uri: info.uri,
+      sourceName: info.sourceName,
+      artworkUrl: info.artworkUrl
+    });
     this.requester = requester;
     this.nodes = nodes;
-    this.track = encoded || null;
+    this.track = encoded;
     this.playlist = playlist;
   }
 
@@ -29,15 +39,11 @@ class Track {
     return thumbnail.startsWith("http") ? thumbnail : getImageUrl(thumbnail, this.nodes);
   }
 
-  /**
-   * @param {Aqua} aqua
-   * @returns {Promise<Track|null>}
-   */
   async resolve(aqua) {
     if (!aqua?.options?.defaultSearchPlatform) return null;
 
-    const query = `${this.info.author} - ${this.info.title}`;
     try {
+      const query = `${this.info.author} - ${this.info.title}`;
       const result = await aqua.resolve({
         query,
         source: aqua.options.defaultSearchPlatform,
@@ -47,44 +53,28 @@ class Track {
 
       if (!result?.tracks?.length) return null;
 
-      const matchedTrack = this.findBestMatch(result.tracks) || result.tracks[0];
+      const matchedTrack = result.tracks.find(track => this.isTrackMatch(track)) || result.tracks[0];
+
       if (matchedTrack) {
         this.updateTrackInfo(matchedTrack);
         return this;
       }
+
       return null;
+
     } catch (error) {
       console.error('Error resolving track:', error);
       return null;
     }
   }
 
-  /**
-   * @param {Array<Track>} tracks
-   * @returns {Track|null}
-   */
-  findBestMatch(tracks) {
-    if (!Array.isArray(tracks)) return null;
-    
-    const { title, author, length } = this.info;
-    for (const track of tracks) {
-      const { author: tAuthor, title: tTitle, length: tLength } = track.info;
-      if (tAuthor === author && tTitle === title && this.isLengthMatch(tLength, length)) {
-        return track;
-      }
-    }
-    return null;
-  }
+  isTrackMatch(track) {
+    const { author, title, length } = this.info;
+    const { author: tAuthor, title: tTitle, length: tLength } = track.info;
 
-  /**
-   * @param {number} tLength
-   * @param {number} length
-   * @returns {boolean}
-   */
-  isLengthMatch(tLength, length) {
-    if (!length) return true;
-    const threshold = 2000;
-    return tLength >= (length - threshold) && tLength <= (length + threshold);
+    return tAuthor === author && 
+           tTitle === title && 
+           (!length || Math.abs(tLength - length) <= 2000);
   }
 
   /**
@@ -92,9 +82,23 @@ class Track {
    */
   updateTrackInfo(track) {
     if (!track) return;
-    this.info.identifier = track.info.identifier;
+    this.info = Object.freeze({
+      ...this.info,
+      identifier: track.info.identifier
+    });
+    
     this.track = track.track;
     this.playlist = track.playlist || null;
+  }
+
+  /**
+   * Cleanup method to help garbage collection
+   */
+  destroy() {
+    this.requester = null;
+    this.nodes = null;
+    this.track = null;
+    this.playlist = null;
   }
 }
 
