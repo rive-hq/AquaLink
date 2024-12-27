@@ -1,5 +1,3 @@
-const { request } = require("undici");
-
 class Rest {
     constructor(aqua, options) {
         this.aqua = aqua;
@@ -23,14 +21,14 @@ class Rest {
     }
 
     async makeRequest(method, endpoint, body = null, includeHeaders = false) {
-        let response;
+        const options = {
+            method,
+            headers: this.headers,
+            ...(body && { body: JSON.stringify(body) }),
+        };
+
         try {
-            const options = {
-                method,
-                headers: this.headers,
-                ...(body && { body: JSON.stringify(body) }), // Use spread to conditionally add body
-            };
-            response = await request(this.getFullUrl(endpoint), options);
+            const response = await request(this.getFullUrl(endpoint), options);
             this.calls++;
             const data = await response.body.json();
             this.aqua.emit("apiResponse", endpoint, {
@@ -39,20 +37,15 @@ class Rest {
             });
             return includeHeaders ? { data, headers: response.headers } : data;
         } catch (error) {
-            this.aqua.emit("apiError", endpoint, error);
-            throw new Error(`Failed to make request to ${endpoint}: ${error.message}`);
+            console.error(`Error making request to ${endpoint}:`, error);
+            throw error;
         } finally {
-            if (response?.body) {
-                try {
-                    await response.body.dump();
-                } catch (e) {
-                    console.error("Error dumping response body:", e); // Log the error instead of ignoring it
-                }
-            }
+                await response.body.dump();
+            
         }
     }
 
-    async updatePlayer(options) {
+     updatePlayer(options) {
         const requestBody = { ...options.data };
         if ((requestBody.track?.encoded && requestBody.track?.identifier) ||
             (requestBody.encodedTrack && requestBody.identifier)) {
