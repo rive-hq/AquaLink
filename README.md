@@ -25,7 +25,24 @@ This code is based in riffy, but its an 100% Rewrite made from scratch...
 
 - Example bot: https://github.com/ToddyTheNoobDud/Thorium-Music
 
-# Omg version 1.6.0 woah aqualink
+# Omg version 1.6.0 || 1.6.1  woah aqualink
+
+Version 1.6.1:
+
+- Many fixes related to caching and mapping.
+- Rewrited `AQUA` again, Should fix a lot of stuff related to speed, async memory leaks, remade some methods, and others stuff;
+- Rewrited `CONNECTION` manager again, should be an better cleanup system less memory leaks, correct updating.
+- Fixed various stuff + Various speed improvements, and way less recourses used on `NODE` manager.
+- Updated `REST` Manager to use better checkings, speed, and dumping system.
+- Rewrote the `TRACK` System, fixed small memory leaks, improved speed by wayyy more
+- Some misc changes on player, small optimziations, use Fisher-Yates algorithm, and remove useless asyncs.
+- Improved the internal code Garbage collection.
+- Use more WeakSet and WeakMaps for memory friendly
+- Extra: Also fixed requesting every 1 sec, reducing the requests system and memory usage by a lot i think;
+-- Im working on new features, ex: autoplay, lyrics system, and more to come... its hard to me as an solo dev
+
+
+Version 1.6.0:
 
 - Reworked the `TRACK` Manager (This improves the speed by wayyy more, also uses objects, removed useless code)
 - Improved the `REST` Manager (This improves the garbage collector, an faster code, and more optimized)
