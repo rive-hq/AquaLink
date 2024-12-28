@@ -78,14 +78,21 @@ class Aqua extends EventEmitter {
         }
     }
 
-    updateVoiceState(packet) {
+       updateVoiceState(packet) {
         if (!packet?.d?.guild_id) return;
+
         const player = this.players.get(packet.d.guild_id);
         if (!player) return;
-        const updateType = packet.t === "VOICE_SERVER_UPDATE" ? "setServerUpdate" : "setStateUpdate";
-        player.connection[updateType](packet.d);
-        if (packet.d.status === "disconnected") {
-            this.cleanupPlayer(player);
+
+        if (packet.t === "VOICE_SERVER_UPDATE" ||
+            (packet.t === "VOICE_STATE_UPDATE" && packet.d.user_id === this.clientId)) {
+
+            const updateType = packet.t === "VOICE_SERVER_UPDATE" ? "setServerUpdate" : "setStateUpdate";
+            player.connection[updateType](packet.d);
+
+            if (packet.d.status === "disconnected") {
+                this.cleanupPlayer(player);
+            }
         }
     }
 
