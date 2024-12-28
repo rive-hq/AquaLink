@@ -16,10 +16,9 @@ class Connection {
         const newRegion = endpoint.split('.')[0].replace(/[0-9]/g, "");
         if (this.region !== newRegion) {
             this.updateRegion(newRegion, endpoint, token);
+            this.updatePlayerVoiceData();
         }
-        this.updatePlayerVoiceData();
     }
-
     updateRegion(newRegion, endpoint, token) {
         const previousVoiceRegion = this.region;
         this.region = newRegion;
