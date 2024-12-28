@@ -22,7 +22,7 @@ class Track {
       title: info.title,
       uri: info.uri,
       sourceName: info.sourceName,
-      artworkUrl: info.artworkUrl
+      artworkUrl: info.artworkUrl,
     });
     this.requester = requester;
     this.nodes = nodes;
@@ -39,6 +39,10 @@ class Track {
     return thumbnail.startsWith("http") ? thumbnail : getImageUrl(thumbnail, this.nodes);
   }
 
+  /**
+   * @param {Aqua} aqua
+   * @returns {Promise<Track|null>}
+   */
   async resolve(aqua) {
     if (!aqua?.options?.defaultSearchPlatform) return null;
 
@@ -48,12 +52,12 @@ class Track {
         query,
         source: aqua.options.defaultSearchPlatform,
         requester: this.requester,
-        node: this.nodes
+        node: this.nodes,
       });
 
       if (!result?.tracks?.length) return null;
 
-      const matchedTrack = result.tracks.find(track => this.isTrackMatch(track)) || result.tracks[0];
+      const matchedTrack = result.tracks.find((track) => this.isTrackMatch(track)) || result.tracks[0];
 
       if (matchedTrack) {
         this.updateTrackInfo(matchedTrack);
@@ -61,20 +65,26 @@ class Track {
       }
 
       return null;
-
     } catch (error) {
-      console.error('Error resolving track:', error);
+      console.error("Error resolving track:", error);
       return null;
+    } finally {
+      // Clean up variables to prevent memory leaks
+      query = null;
+      result = null;
+      matchedTrack = null;
     }
   }
 
+  /**
+   * @param {Track} track
+   * @returns {boolean}
+   */
   isTrackMatch(track) {
     const { author, title, length } = this.info;
     const { author: tAuthor, title: tTitle, length: tLength } = track.info;
 
-    return tAuthor === author && 
-           tTitle === title && 
-           (!length || Math.abs(tLength - length) <= 2000);
+    return tAuthor === author && tTitle === title && (!length || Math.abs(tLength - length) <= 2000);
   }
 
   /**
@@ -84,9 +94,9 @@ class Track {
     if (!track) return;
     this.info = Object.freeze({
       ...this.info,
-      identifier: track.info.identifier
+      identifier: track.info.identifier,
     });
-    
+
     this.track = track.track;
     this.playlist = track.playlist || null;
   }
@@ -99,6 +109,7 @@ class Track {
     this.nodes = null;
     this.track = null;
     this.playlist = null;
+    this.info = null;
   }
 }
 
