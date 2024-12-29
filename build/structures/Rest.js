@@ -30,13 +30,13 @@ class Rest {
 
         const response = await request(`${this.url}${endpoint}`, options);
         this.calls++;
-        const data = await response.body.json()
+        const data = await response.body.json();
         this.aqua.emit("apiResponse", endpoint, {
             status: response.statusCode,
             headers: response.headers,
         });
-        response.body.dump();
-        return data
+        response.body.destroy();
+        return data;
     }
 
      updatePlayer(options) {
