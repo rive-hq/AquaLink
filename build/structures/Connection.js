@@ -38,9 +38,8 @@ class Connection {
             return;
         }
 
-        if (this.player.voiceChannel !== data.channel_id) {
-            this.player.aqua.emit("playerMove", this.player.voiceChannel, data.channel_id);
-            this.player.voiceChannel = data.channel_id;
+        if (this.voiceChannel !== data.channel_id) {
+            this.player.aqua.emit("playerMove", this.voiceChannel, data.channel_id);
             this.voiceChannel = data.channel_id;
         }
 
