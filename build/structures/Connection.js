@@ -50,39 +50,31 @@ class Connection {
     }
 
     updatePlayerVoiceData() {
-        const currentTime = Date.now();
-        if (currentTime - this.lastUpdateTime >= this.updateThrottle) {
-            this.lastUpdateTime = currentTime;
+        const data = {
+            voice: this.voice,
+            volume: this.player.volume,
+        };
 
-            const data = {
-                voice: this.voice,
-                volume: this.player.volume,
-            };
-
-            this.player.nodes.rest.updatePlayer({
-                guildId: this.player.guildId,
-                data,
-            }).catch(err => {
-                this.player.aqua.emit("apiError", "updatePlayer", err);
-            });
-        }
+        this.player.nodes.rest.updatePlayer({
+            guildId: this.player.guildId,
+            data,
+        }).catch(err => {
+            this.player.aqua.emit("apiError", "updatePlayer", err);
+        });
     }
 
     cleanup() {
-        if (this.player) {
-            if (this.player.aqua) {
-                this.player.aqua.emit("playerLeave", this.voiceChannel);
-                this.player.aqua.emit("playerDestroy", this.player);
-            }
-            this.player.destroy();
-            this.player.voiceChannel = null;
-        }
-        this.player = null;
+        this.player.aqua.emit("playerLeave", this.player.voiceChannel);
+        this.player.voiceChannel = null;
         this.voiceChannel = null;
+        this.player.destroy();
+        this.player.aqua.emit("playerDestroy", this.player);
+        this.player = null;
         this.voice = null;
         this.region = null;
         this.selfDeaf = null;
         this.selfMute = null;
     }
 }
+
 module.exports = { Connection };
