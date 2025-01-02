@@ -75,4 +75,6 @@ async function isUrlAccessible(url) {
     }
 }
 
+// TODO: Fix batch processing
+
 module.exports = { getImageUrl };
