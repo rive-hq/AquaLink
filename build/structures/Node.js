@@ -39,6 +39,7 @@ class Node {
         this.autoResume = options?.autoResume ?? false;
         this.reconnectTimeout = options?.reconnectTimeout ?? 2000;
         this.reconnectTries = options?.reconnectTries ?? 3;
+        this.infiniteReconnects = options?.infiniteReconnects ?? false;
         
         // State
         this.connected = false;
@@ -146,7 +147,7 @@ class Node {
 
     async getStats() {
         const now = Date.now();
-        const STATS_COOLDOWN = 5000; // Reduced from 10s to 5s for more frequent updates
+        const STATS_COOLDOWN = 60000; // Update every 1 minute.
         
         if (now - this.#lastStatsRequest < STATS_COOLDOWN) {
             return this.#statsCache.get(this) ?? this.stats;
@@ -255,17 +256,26 @@ class Node {
     }
 
     #reconnect() {
+        if (this.infiniteReconnects === true) {
+            this.aqua.emit("nodeReconnect", this, console.log("Experimental infinite reconnects enabled, will be trying non-stop..."));
+            this.connect();
+            return;
+        }
+        
         if (++this.#reconnectAttempted >= this.reconnectTries) {
             this.aqua.emit("nodeError", this, new Error(`Max reconnection attempts reached (${this.reconnectTries})`));
+            clearTimeout(this.reconnectTimeoutId); // Clear the timeout if it exists
             return this.destroy();
         }
-
-        setTimeout(() => {
-            this.aqua.emit("nodeReconnect", this);
+    
+        // Clear any existing timeout to prevent memory leaks
+        clearTimeout(this.reconnectTimeoutId);
+        
+        this.reconnectTimeoutId = setTimeout(() => {
+            this.aqua.emit("nodeReconnect", this, this.#reconnectAttempted);
             this.connect();
-        }, this.reconnectTimeout * this.#reconnectAttempted); // Exponential backoff
+        }, this.reconnectTimeout * this.#reconnectAttempted);
     }
-
     // Performance optimized penalties calculation
     get penalties() {
         if (!this.connected) return Number.MAX_SAFE_INTEGER;
