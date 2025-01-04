@@ -5,6 +5,18 @@ const { Track } = require("./Track");
 const { version: pkgVersion } = require("../../package.json");
 const URL_REGEX = /^https?:\/\//;
 class Aqua extends EventEmitter {
+    /**
+     * @param {Object} client - The client instance.
+     * @param {Array<Object>} nodes - An array of node configurations.
+     * @param {Object} options - Configuration options for Aqua.
+     * @param {Function} options.send - Function to send data.
+     * @param {string} [options.defaultSearchPlatform="ytsearch"] - Default search platform.
+     * @param {string} [options.restVersion="v4"] - Version of the REST API.
+     * @param {Array<Object>} [options.plugins=[]] - Plugins to load.
+     * @param {string} [options.shouldDeleteMessage='none'] - Should delete your message? (true, false)
+     * @param {boolean} [options.autoResume=false] - Automatically resume tracks on reconnect.
+     * @param {boolean} [options.infiniteReconnects=false] - Reconnect infinitely (default: false).
+     */
     constructor(client, nodes, options) {
         super();
         this.validateInputs(client, nodes, options);
@@ -22,6 +34,7 @@ class Aqua extends EventEmitter {
         this.options = options;
         this.send = options.send;
         this.autoResume = options.autoResume || false;
+        this.infiniteReconnects = options.infiniteReconnects || false;
         this.setMaxListeners(0);
     }
 
@@ -78,17 +91,13 @@ class Aqua extends EventEmitter {
         }
     }
 
-    updateVoiceState(packet) {
-        if (!packet?.d?.guild_id) return;
-        const player = this.players.get(packet.d.guild_id);
-        if (!player) return;
-        const updateType = packet.t === "VOICE_SERVER_UPDATE" ? "setServerUpdate" : "setStateUpdate";
-        player.connection[updateType](packet.d);
-        if (packet.d.status === "disconnected") {
-            this.cleanupPlayer(player);
+    updateVoiceState({ d, t }) {
+        const player = this.players.get(d.guild_id);
+        if (player && (t === "VOICE_SERVER_UPDATE" || t === "VOICE_STATE_UPDATE" && d.user_id === this.clientId)) {
+            player.connection[t === "VOICE_SERVER_UPDATE" ? "setServerUpdate" : "setStateUpdate"](d);
+            if (d.status === "disconnected") this.cleanupPlayer(player);
         }
     }
-
     fetchRegion(region) {
         if (!region) return this.leastUsedNodes;
         const lowerRegion = region.toLowerCase();
@@ -104,8 +113,8 @@ class Aqua extends EventEmitter {
 
     createConnection(options) {
         this.ensureInitialized();
-        const existingPlayer = this.players.get(options.guildId);
-        if (existingPlayer?.voiceChannel) return existingPlayer;
+        const player = this.players.get(options.guildId);
+        if (player && player.voiceChannel) return player;
         const node = options.region ? this.fetchRegion(options.region)[0] : this.leastUsedNodes[0];
         if (!node) throw new Error("No nodes are available");
         return this.createPlayer(node, options);
