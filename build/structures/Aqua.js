@@ -10,7 +10,16 @@ class Aqua extends EventEmitter {
      * @param {Array<Object>} nodes - An array of node configurations.
      * @param {Object} options - Configuration options for Aqua.
      * @param {Function} options.send - Function to send data.
-     * @param {string} [options.defaultSearchPlatform="ytsearch"] - Default search platform.
+     * @param {string} [options.defaultSearchPlatform="ytsearch"] - Default search platform. Options include:
+     *     - "youtube music": "ytmsearch"
+     *     - "youtube": "ytsearch"
+     *     - "spotify": "spsearch"
+     *     - "jiosaavn": "jssearch"
+     *     - "soundcloud": "scsearch"
+     *     - "deezer": "dzsearch"
+     *     - "tidal": "tdsearch"
+     *     - "applemusic": "amsearch"
+     *     - "bandcamp": "bcsearch"
      * @param {string} [options.restVersion="v4"] - Version of the REST API.
      * @param {Array<Object>} [options.plugins=[]] - Plugins to load.
      * @param {string} [options.shouldDeleteMessage='none'] - Should delete your message? (true, false)
