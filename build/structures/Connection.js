@@ -39,9 +39,8 @@ class Connection {
             return;
         }
 
-        if (this.player.voiceChannel !== data.channel_id) {
-            this.player.aqua.emit("playerMove", this.player.voiceChannel, data.channel_id);
-            this.player.voiceChannel = data.channel_id;
+        if (this.voiceChannel !== data.channel_id) {
+            this.player.aqua.emit("playerMove", this.voiceChannel, data.channel_id);
             this.voiceChannel = data.channel_id;
         }
 
@@ -51,22 +50,17 @@ class Connection {
     }
 
     updatePlayerVoiceData() {
-        const currentTime = Date.now();
-        if (currentTime - this.lastUpdateTime >= this.updateThrottle) {
-            this.lastUpdateTime = currentTime;
+        const data = {
+            voice: this.voice,
+            volume: this.player.volume,
+        };
 
-            const data = {
-                voice: this.voice,
-                volume: this.player.volume,
-            };
-
-            this.player.nodes.rest.updatePlayer({
-                guildId: this.player.guildId,
-                data,
-            }).catch(err => {
-                this.player.aqua.emit("apiError", "updatePlayer", err);
-            });
-        }
+        this.player.nodes.rest.updatePlayer({
+            guildId: this.player.guildId,
+            data,
+        }).catch(err => {
+            this.player.aqua.emit("apiError", "updatePlayer", err);
+        });
     }
 
     cleanup() {
