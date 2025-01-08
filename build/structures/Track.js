@@ -13,22 +13,22 @@ class Track {
    * @param {Node} nodes
    */
   constructor(data, requester, nodes) {
-    const info = data.info || {};
+    const info = data?.info || {};
     
     this.info = {
       identifier: info.identifier || '',
-      isSeekable: info.isSeekable || false,
+      isSeekable: !!info.isSeekable,
       author: info.author || '',
-      length: ~~info.length, 
-      isStream: info.isStream || false,
+      length: ~~info.length,
+      isStream: !!info.isStream,
       title: info.title || '',
       uri: info.uri || '',
       sourceName: info.sourceName || '',
       artworkUrl: info.artworkUrl || ''
     };
 
-    this.track = data.encoded || null;
-    this.playlist = data.playlist || null;
+    this.track = data?.encoded || null;
+    this.playlist = data?.playlist || null;
     this.requester = requester;
     this.nodes = nodes;
   }
@@ -38,7 +38,8 @@ class Track {
    * @returns {string|null}
    */
   resolveThumbnail(thumbnail) {
-    return !thumbnail ? null : thumbnail.startsWith("http") ? thumbnail : getImageUrl(thumbnail, this.nodes);
+    if (!thumbnail) return null;
+    return thumbnail.startsWith("http") ? thumbnail : getImageUrl(thumbnail, this.nodes);
   }
 
   /**
@@ -46,68 +47,66 @@ class Track {
    * @returns {Promise<Track|null>}
    */
   async resolve(aqua) {
-    if (!aqua || !aqua.options) return null;
-    const platform = aqua.options.defaultSearchPlatform;
-    if (!platform) return null;
+    if (!aqua?.options?.defaultSearchPlatform) return null;
 
-    const info = this.info;
-    
     try {
-      const query = info.author + ' - ' + info.title;
-      
       const result = await aqua.resolve({
-        query,
-        source: platform,
+        query: this.info.author + ' - ' + this.info.title,
+        source: aqua.options.defaultSearchPlatform,
         requester: this.requester,
         node: this.nodes
       });
 
-      const tracks = result?.tracks;
-      if (!tracks?.length) return null;
+      if (!result?.tracks?.length) return null;
 
-      const len = tracks.length;
-      let match = null;
+      const track = this._findMatchingTrack(result.tracks);
+      if (!track) return null;
 
-      const targetAuthor = info.author;
-      const targetTitle = info.title;
-      const targetLength = info.length;
-
-      for (let i = 0; i < len; i++) {
-        const track = tracks[i];
-        const trackInfo = track.info;
-        
-        if (trackInfo.author === targetAuthor && 
-            trackInfo.title === targetTitle && 
-            (!targetLength || Math.abs(trackInfo.length - targetLength) <= 2000)) {
-          match = track;
-          break;
-        }
-      }
-
-      if (!match) match = tracks[0];
-      
-      if (!match) return null;
-
-      info.identifier = match.info.identifier;
-      this.track = match.track;
-      this.playlist = match.playlist || null;
-      
+      this._updateTrack(track);
       return this;
-
     } catch {
       return null;
     }
   }
 
+  /**
+   * @private
+   */
+  _findMatchingTrack(tracks) {
+    const { author, title, length } = this.info;
 
+    for (let i = 0; i < tracks.length; i++) {
+      const track = tracks[i];
+      const tInfo = track.info;
+      
+      if (tInfo.author === author && 
+          tInfo.title === title && 
+          (!length || Math.abs(tInfo.length - length) <= 2000)) {
+        return track;
+      }
+    }
+
+    return tracks[0];
+  }
+
+  /**
+   * @private
+   */
+  _updateTrack(track) {
+    this.info.identifier = track.info.identifier;
+    this.track = track.track;
+    this.playlist = track.playlist || null;
+  }
+
+  /**
+   * Fast cleanup
+   */
   destroy() {
-    Object.assign(this, {
-      requester: null,
-      nodes: null,
-      track: null,
-      playlist: null,
-      info: null
-    });
+    this.requester = null;
+    this.nodes = null;
+    this.track = null;
+    this.playlist = null;
+    this.info = null;
   }
 }
 
