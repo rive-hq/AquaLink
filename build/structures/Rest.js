@@ -29,6 +29,7 @@ class Rest {
         }
 
         const response = await request(`${this.url}${endpoint}`, options);
+        if (response.statusCode === 204) return null;
         this.calls++;
         const data = await response.body.json();
         this.aqua.emit("apiResponse", endpoint, {
