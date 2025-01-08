@@ -25,20 +25,51 @@ This code is based in riffy, but its an 100% Rewrite made from scratch...
 
 - Example bot: https://github.com/ToddyTheNoobDud/Thorium-Music
 
-# Omg version 1.6.0 woah aqualink
+# Real changelog for 1.7.0-beta1
+Note: Not features are widely tested / Not fully Complete
 
-- Reworked the `TRACK` Manager (This improves the speed by wayyy more, also uses objects, removed useless code)
-- Improved the `REST` Manager (This improves the garbage collector, an faster code, and more optimized)
-- Added enqueue to `QUEUE` (this gets the previous, made for dev), removed addMultiple (useless)
-- Fully Rewrite the `PLAYER` Manager (Way faster resolving, way less recourse intensive, more responsive, better error handling)
+- Reformated the `PLAYER` System (removed Documentation for now)
+  - Notable Changes:
+  - New WeakMap System (Properly handling, deleting, setting)
+  - Around 2x faster (by my tests, taked 0ms to resolve an song)
+  - Uses less recourses (reduced by around ~0,5mb, also less cpu instensive)
 
-^^ Now uses the WeakMap and WeakSet for an garbage collector, making it with an better memory management.
+- Fix Some errors in `REST`, Now destroyPlayer, etc, should work as expected.
+- Rewrited out the `TRACK` System
+  - Reduced object creation
+  - Use direct acess
+  - use direct destroy() instead of Object.assing()
+  - Separate _findMatchingTrack()
+  - Rewrite the search system, Removed useless caching, Improved speed, use traditional for ... of instead of find() - Experimental
 
-- Rewrite the `NODE` Manager (reconnect speeds improved, various methods improved, Rewrite the cache and status handler, improve the performance) - Also fixed player resuming.
-- Remade some stuff in `CONNECTION` (this improves error handling, cleaning up, and speed)
-- Rewrite `AQUA` Manager (remade every single method, improved the resolve, made the code dynamic, fixed lots of bugs, uses weakMap too.) - Added autoResume option (true false)
+- Rewrited out the `NODE` System
+  - Implement the InfiniteReconnects Option (this will make the code try to connect to an node non-stop.)
+  - WeakMap has been replaced with statsCache (experimental)
+  - Optimized by using free, used and allocated direct.
+  - Backoff in reconnect logic (by using Math)
+  - Clear reconnectTimeoutId (prevent memory leaks)
+  - Improve the overall speed by a bit
 
-- There are way more stuff that i forgot to add on changelog. pls report bugs on my github !
+- Rewrited the `CONNECTION` System
+  - Improved the Connecting, Resolving, Reconnecting Speed (around 1,5x faster now)
+  - Improved checking
+  - Cached frequently used Code
+  - Object.assign Implemented for Batch updates
+  - Still in testing, pls report bugs
+
+- Some Additions for `AQUA`
+  - Implement the InfiniteReconnects Options
+  - Re-added our DOCS (Now autocomplete works again!)
+  - Add platforms + search system on DefaultPlatform
+
+  - Rewrited the updateVoiceState System
+  - Misc changes to createConnection
+  - Document + fix destroyPlayer
+
+- Remade some stuff in `FetchImage`
+  - Use promise.race since only first sucess is required. (will be tested, may revert to promise.any)
+  - Use map cuz its faster and more efficient than Objects.
+
 # How to install
 
 `npm install aqualink`
