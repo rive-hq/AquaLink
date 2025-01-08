@@ -1,80 +1,106 @@
 class Connection {
     constructor(player) {
-        this.player = player;
-        this.voice = { sessionId: null, endpoint: null, token: null };
-        this.region = null;
-        this.selfDeaf = false;
-        this.selfMute = false;
-        this.voiceChannel = player.voiceChannel;
-        this.lastUpdateTime = 0;
-        this.updateThrottle = 1000; // Throttle time in milliseconds
+      Object.assign(this, {
+        player,
+        voice: { sessionId: null, endpoint: null, token: null },
+        region: null,
+        selfDeaf: false,
+        selfMute: false,
+        voiceChannel: player.voiceChannel,
+        _guildId: player.guildId,
+        _aqua: player.aqua,
+        _nodes: player.nodes
+      });
     }
-
-    setServerUpdate({ endpoint, token }) {
-        if (!endpoint) throw new Error("Missing 'endpoint' property in VOICE_SERVER_UPDATE");
+  
+    setServerUpdate(data) {
+      const endpoint = data.endpoint;
+      if (!endpoint) throw new Error("Missing 'endpoint' property");
+  
+      const dotIndex = endpoint.indexOf('.');
+      if (dotIndex === -1) return;
+      
+      const newRegion = endpoint.substring(0, dotIndex).replace(/[0-9]/g, '');
+      
+      if (this.region !== newRegion) {
+        const prevRegion = this.region;
         
-        const newRegion = endpoint.split('.')[0].replace(/[0-9]/g, "");
-        if (this.region !== newRegion) {
-            this.updateRegion(newRegion, endpoint, token);
-        }
-        this.updatePlayerVoiceData();
-    }
-
-    updateRegion(newRegion, endpoint, token) {
-        const previousVoiceRegion = this.region;
+        Object.assign(this.voice, {
+          endpoint,
+          token: data.token
+        });
         this.region = newRegion;
-        this.voice.endpoint = endpoint;
-        this.voice.token = token;
-
-        const message = previousVoiceRegion 
-            ? `Changed Voice Region from ${previousVoiceRegion} to ${this.region}` 
-            : `Voice Server: ${this.region}`;
-        
-        this.player.aqua.emit("debug", `[Player ${this.player.guildId} - CONNECTION] ${message}`);
+  
+        this._aqua.emit(
+          "debug",
+          `[Player ${this._guildId} - CONNECTION] ${
+            prevRegion 
+              ? `Changed Voice Region from ${prevRegion} to ${newRegion}`
+              : `Voice Server: ${newRegion}`
+          }`
+        );
+      }
+  
+      this._updatePlayerVoiceData();
     }
+  
 
     setStateUpdate(data) {
-        if (!data.channel_id || !data.session_id) {
-            this.cleanup();
-            return;
+      const channelId = data.channel_id;
+      const sessionId = data.session_id;
+  
+      if (!channelId || !sessionId) {
+        this._cleanup();
+        return;
+      }
+
+      if (this.voiceChannel !== channelId) {
+        this._aqua.emit("playerMove", this.voiceChannel, channelId);
+        this.voiceChannel = channelId;
+      }
+  
+      Object.assign(this, {
+        selfDeaf: data.self_deaf,
+        selfMute: data.self_mute
+      });
+      this.voice.sessionId = sessionId;
+    }
+  
+    _updatePlayerVoiceData() {
+      this._nodes.rest.updatePlayer({
+        guildId: this._guildId,
+        data: {
+          voice: this.voice,
+          volume: this.player.volume
         }
-
-        if (this.voiceChannel !== data.channel_id) {
-            this.player.aqua.emit("playerMove", this.voiceChannel, data.channel_id);
-            this.voiceChannel = data.channel_id;
-        }
-
-        this.selfDeaf = data.self_deaf;
-        this.selfMute = data.self_mute;
-        this.voice.sessionId = data.session_id;
+      }).catch(err => {
+        this._aqua.emit("apiError", "updatePlayer", err);
+      });
     }
-
-    updatePlayerVoiceData() {
-        const data = {
-            voice: this.voice,
-            volume: this.player.volume,
-        };
-
-        this.player.nodes.rest.updatePlayer({
-            guildId: this.player.guildId,
-            data,
-        }).catch(err => {
-            this.player.aqua.emit("apiError", "updatePlayer", err);
-        });
+  
+    _cleanup() {
+      const aqua = this._aqua;
+      const channel = this.player.voiceChannel;
+      
+      aqua.emit("playerLeave", channel);
+      
+      this.player.voiceChannel = null;
+      this.voiceChannel = null;
+      this.player.destroy();
+      
+      aqua.emit("playerDestroy", this.player);
+  
+      Object.assign(this, {
+        player: null,
+        voice: null,
+        region: null,
+        selfDeaf: null,
+        selfMute: null,
+        _guildId: null,
+        _aqua: null,
+        _nodes: null
+      });
     }
-
-    cleanup() {
-        this.player.aqua.emit("playerLeave", this.player.voiceChannel);
-        this.player.voiceChannel = null;
-        this.voiceChannel = null;
-        this.player.destroy();
-        this.player.aqua.emit("playerDestroy", this.player);
-        this.player = null;
-        this.voice = null;
-        this.region = null;
-        this.selfDeaf = null;
-        this.selfMute = null;
-    }
-}
-
-module.exports = { Connection };
+  }
+  
+  module.exports = { Connection };
