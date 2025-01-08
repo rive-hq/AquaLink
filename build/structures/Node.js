@@ -243,8 +243,14 @@ class Node {
     #reconnect() {
         if (this.infiniteReconnects) {
             this.aqua.emit("nodeReconnect", this, console.log("Experimental infinite reconnects enabled, will be trying non-stop..."));
-            this.connect();
+            setTimeout(() => {
+                this.connect();
+            }, 10000); 
             return;
+        }
+
+        if (this.connected) {
+            clearTimeout(this.reconnectTimeoutId);
         }
         if (++this.#reconnectAttempted >= this.reconnectTries) {
             this.aqua.emit("nodeError", this, new Error(`Max reconnection attempts reached (${this.reconnectTries})`));
