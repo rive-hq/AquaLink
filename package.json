@@ -1,6 +1,6 @@
 {
   "name": "aqualink",
-  "version": "1.6.0",
+  "version": "1.7.0-beta1",
   "description": "An Lavalink wrapper, focused in speed, performance, and features, Based in Riffy!",
   "main": "build/index.js",
   "scripts": {
@@ -49,7 +49,4 @@
       "url": "https://github.com/ToddyTheNoobDud"
     }
   ],
-  "devDependencies": {
-    "discord.js": "^14.16.3"
-  }
 }
