@@ -56,11 +56,15 @@ class Player extends EventEmitter {
         this.previousTracks.unshift(track);
     }
 
-    play() {
+
+    async play() {
         if (!this.connected) throw new Error("Player must be connected first.");
         if (!this.queue.length) return;
+    
         const track = this.queue.shift();
-        this.current = track.track ? track : track.resolve(this.aqua);
+        
+        this.current = track.track ? track : await track.resolve(this.aqua);
+        
         this.playing = true;
         this.position = 0;
         this.aqua.emit("debug", this.guildId, `Playing track: ${this.current.track}`);

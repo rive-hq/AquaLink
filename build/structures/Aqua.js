@@ -47,6 +47,7 @@ class Aqua extends EventEmitter {
         this.setMaxListeners(0);
     }
 
+
     validateInputs(client, nodes, options) {
         if (!client) throw new Error("Client is required to initialize Aqua");
         if (!Array.isArray(nodes) || !nodes.length) throw new Error(`Nodes must be a non-empty Array (Received ${typeof nodes})`);
@@ -139,21 +140,22 @@ class Aqua extends EventEmitter {
         return player;
     }
 
-    destroyPlayer(guildId) {
-        const player = this.players.get(guildId);
-        if (!player) return;
-        try {
-            player.clearData();
-            player.removeAllListeners();
-            player.destroy();
-            this.players.delete(guildId);
-            this.emit("playerDestroy", player);
-        } catch (error) {
-            console.error(`Error destroying player for guild ${guildId}:`, error);
-        }
-    }
+async destroyPlayer(guildId) {
+    const player = this.players.get(guildId);
+    if (!player) return;
 
-    async resolve({ query, source = this.defaultSearchPlatform, requester, nodes }) {
+    try {
+        // Ensure that clearData and destroy are awaited if they are async
+        await player.clearData(); // Assuming clearData is an async function
+        player.removeAllListeners(); // This should not cause an infinite loop
+        this.players.delete(guildId);
+        this.emit("playerDestroy", player);
+    } catch (error) {
+        console.error(`Error destroying player for guild ${guildId}:`, error);
+    }
+}
+
+    async resolve({ query, source = this.defaultSearchPlatform , requester, nodes }) {
         this.ensureInitialized();
         const requestNode = this.getRequestNode(nodes);
         const formattedQuery = this.formatQuery(query, source);
