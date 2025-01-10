@@ -102,10 +102,13 @@ class Player extends EventEmitter {
     }
 
     seek(position) {
-        if (position < 0) throw new Error("Seek position cannot be negative.");
-        if (!this.playing) return this;
-        this.position = position;
-        this.updatePlayer({ position });
+        if (!this.playing) return this; 
+        const newPosition = this.position + position;
+        if (newPosition < 0) {
+            throw new Error("Seek position cannot be negative.");
+        }
+        this.position = newPosition;
+        this.updatePlayer({ position: this.position });
         return this;
     }
 
