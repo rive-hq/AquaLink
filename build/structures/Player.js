@@ -49,6 +49,10 @@ class Player extends EventEmitter {
         return this.previousTracks.length ? this.previousTracks[0] : null;
     }
 
+    get currenttrack() {
+        return this.current;
+    }
+
     addToPreviousTrack(track) {
         if (this.previousTracks.length >= 50) {
             this.previousTracks.pop();
@@ -223,7 +227,6 @@ class Player extends EventEmitter {
             try {
                 await this.nowPlayingMessage.delete();
             } catch (error) {
-                // Consider logging specific errors
             } finally {
                 this.nowPlayingMessage = null;
             }
