@@ -96,6 +96,16 @@ class Rest {
     getRoutePlannerAddress(address) {
         return this.makeRequest("POST", `/${this.version}/routeplanner/free/address`, { address });
     }
+    async getLyrics({ track }) {
+        if (track.search) {
+            const v2 = await this.makeRequest("GET", `/v4/lyrics/search?query=${track.encoded.info.title}&source=genius`);
+            if (v2) {
+                return v2;
+            }
+        }
+        const v4 = await this.makeRequest("GET", `/v4/sessions/${this.sessionId}/players/${track.guild_id}/track/lyrics?skipTrackSource=false`);
+        return  v4; 
+    }
 }
 
 module.exports = { Rest };
