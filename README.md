@@ -19,6 +19,7 @@ This code is based in riffy, but its an 100% Rewrite made from scratch...
 - Easy player, node, aqua managing
 - Fast responses from rest and node
 - Playlist support (My mix playlists, youtube playlists, spotify playlists)
+- Lyrics Support by Lavalink
 
 # Docs (Wiki)
 - https://github.com/ToddyTheNoobDud/AquaLink/wiki
