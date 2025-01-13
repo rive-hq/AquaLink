@@ -20,7 +20,9 @@ This code is based in riffy, but its an 100% Rewrite made from scratch...
 - Fast responses from rest and node
 - Playlist support (My mix playlists, youtube playlists, spotify playlists)
 - Lyrics Support by Lavalink
-
+  - https://github.com/topi314/LavaLyrics (RECOMMENDED)
+  - https://github.com/DRSchlaubi/lyrics.kt (?)
+  - https://github.com/DuncteBot/java-timed-lyrics (RECOMMENDED)
 # Docs (Wiki)
 - https://github.com/ToddyTheNoobDud/AquaLink/wiki
 
