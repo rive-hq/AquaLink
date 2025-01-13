@@ -105,6 +105,30 @@ class Player extends EventEmitter {
         return this;
     }
 
+    async searchLyrics(query) {
+        if (!query) return null;
+    
+        const response = await this.nodes.rest.getLyrics({ 
+            track: { 
+                encoded: { info: { title: query } },
+                guild_id: this.guildId,
+                search: true
+            } 
+        });
+    
+        return response || null;
+    }
+    async lyrics() {
+        if (!this.playing) return null;
+        const response = await this.nodes.rest.getLyrics({
+            track: {
+              encoded: this.current.track,
+              guild_id: this.guildId
+            },
+          });
+        return response || null;
+    }
+
     seek(position) {
         if (!this.playing) return this; 
         const newPosition = this.position + position;
