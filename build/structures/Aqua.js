@@ -4,8 +4,9 @@ const { Player } = require("./Player");
 const { Track } = require("./Track");
 const { version: pkgVersion } = require("../../package.json");
 const URL_REGEX = /^https?:\/\//;
+
 class Aqua extends EventEmitter {
-    /**
+        /**
      * @param {Object} client - The client instance.
      * @param {Array<Object>} nodes - An array of node configurations.
      * @param {Object} options - Configuration options for Aqua.
@@ -47,7 +48,6 @@ class Aqua extends EventEmitter {
         this.setMaxListeners(0);
     }
 
-
     validateInputs(client, nodes, options) {
         if (!client) throw new Error("Client is required to initialize Aqua");
         if (!Array.isArray(nodes) || !nodes.length) throw new Error(`Nodes must be a non-empty Array (Received ${typeof nodes})`);
@@ -55,8 +55,7 @@ class Aqua extends EventEmitter {
     }
 
     get leastUsedNodes() {
-        const activeNodes = [...this.nodeMap.values()].filter(node => node.connected);
-        return activeNodes.length ? activeNodes.sort((a, b) => a.rest.calls - b.rest.calls) : [];
+        return [...this.nodeMap.values()].filter(node => node.connected).sort((a, b) => a.rest.calls - b.rest.calls);
     }
 
     init(clientId) {
@@ -78,41 +77,42 @@ class Aqua extends EventEmitter {
         this.destroyNode(nodeId); // Ensure no duplicate nodes
         const node = new Node(this, options, this.options);
         this.nodeMap.set(nodeId, node);
-        try {
-            node.connect();
-            this.emit("nodeCreate", node);
-            return node;
-        } catch (error) {
-            this.nodeMap.delete(nodeId);
-            throw error;
-        }
+        node.connect()
+            .then(() => this.emit("nodeCreate", node))
+            .catch(error => {
+                this.nodeMap.delete(nodeId);
+                throw error;
+            });
+        return node;
     }
 
     destroyNode(identifier) {
         const node = this.nodeMap.get(identifier);
         if (!node) return;
-        try {
-            node.disconnect();
-            node.removeAllListeners();
-            this.nodeMap.delete(identifier);
-            this.emit("nodeDestroy", node);
-        } catch (error) {
-            console.error(`Error destroying node ${identifier}:`, error);
-        }
+
+        node.disconnect()
+            .then(() => {
+                node.removeAllListeners();
+                this.nodeMap.delete(identifier);
+                this.emit("nodeDestroy", node);
+            })
+            .catch(error => console.error(`Error destroying node ${identifier}:`, error));
     }
 
     updateVoiceState({ d, t }) {
         const player = this.players.get(d.guild_id);
-        if (player && (t === "VOICE_SERVER_UPDATE" || t === "VOICE_STATE_UPDATE" && d.user_id === this.clientId)) {
+        if (player && (t === "VOICE_SERVER_UPDATE" || (t === "VOICE_STATE_UPDATE" && d.user_id === this.clientId))) {
             player.connection[t === "VOICE_SERVER_UPDATE" ? "setServerUpdate" : "setStateUpdate"](d);
             if (d.status === "disconnected") this.cleanupPlayer(player);
         }
     }
+
     fetchRegion(region) {
         if (!region) return this.leastUsedNodes;
         const lowerRegion = region.toLowerCase();
-        const eligibleNodes = [...this.nodeMap.values()].filter(node => node.connected && node.regions?.includes(lowerRegion));
-        return eligibleNodes.sort((a, b) => this.calculateLoad(a) - this.calculateLoad(b));
+        return [...this.nodeMap.values()]
+            .filter(node => node.connected && node.regions?.includes(lowerRegion))
+            .sort((a, b) => this.calculateLoad(a) - this.calculateLoad(b));
     }
 
     calculateLoad(node) {
@@ -125,6 +125,7 @@ class Aqua extends EventEmitter {
         this.ensureInitialized();
         const player = this.players.get(options.guildId);
         if (player && player.voiceChannel) return player;
+
         const node = options.region ? this.fetchRegion(options.region)[0] : this.leastUsedNodes[0];
         if (!node) throw new Error("No nodes are available");
         return this.createPlayer(node, options);
@@ -140,22 +141,21 @@ class Aqua extends EventEmitter {
         return player;
     }
 
-async destroyPlayer(guildId) {
-    const player = this.players.get(guildId);
-    if (!player) return;
+    async destroyPlayer(guildId) {
+        const player = this.players.get(guildId);
+        if (!player) return;
 
-    try {
-        // Ensure that clearData and destroy are awaited if they are async
-        await player.clearData(); // Assuming clearData is an async function
-        player.removeAllListeners(); // This should not cause an infinite loop
-        this.players.delete(guildId);
-        this.emit("playerDestroy", player);
-    } catch (error) {
-        console.error(`Error destroying player for guild ${guildId}:`, error);
+        try {
+            await player.clearData(); // Assuming clearData is an async function
+            player.removeAllListeners();
+            this.players.delete(guildId);
+            this.emit("playerDestroy", player);
+        } catch (error) {
+            console.error(`Error destroying player for guild ${guildId}:`, error);
+        }
     }
-}
 
-    async resolve({ query, source = this.defaultSearchPlatform , requester, nodes }) {
+    async resolve({ query, source = this.defaultSearchPlatform, requester, nodes }) {
         this.ensureInitialized();
         const requestNode = this.getRequestNode(nodes);
         const formattedQuery = this.formatQuery(query, source);
@@ -188,11 +188,11 @@ async destroyPlayer(guildId) {
         return URL_REGEX.test(query) ? query : `${source}:${query}`;
     }
 
-     handleNoMatches(rest, query) {
+    async handleNoMatches(rest, query) {
         try {
-            const youtubeResponse =  rest.makeRequest("GET", `/v4/loadtracks?identifier=https://www.youtube.com/watch?v=${query}`, { signal: controller.signal });
+            const youtubeResponse = await rest.makeRequest("GET", `/v4/loadtracks?identifier=https://www.youtube.com/watch?v=${query}`);
             if (["empty", "NO_MATCHES"].includes(youtubeResponse.loadType)) {
-                return  rest.makeRequest("GET", `/v4/loadtracks?identifier=https://open.spotify.com/track/${query}`, { signal: controller.signal });
+                return await rest.makeRequest("GET", `/v4/loadtracks?identifier=https://open.spotify.com/track/${query}`);
             }
             return youtubeResponse;
         } catch (error) {
@@ -208,10 +208,12 @@ async destroyPlayer(guildId) {
             pluginInfo: response.pluginInfo ?? {},
             tracks: [],
         };
+
         if (response.loadType === "error" || response.loadType === "LOAD_FAILED") {
             baseResponse.exception = response.data ?? response.exception;
             return baseResponse;
         }
+
         const trackFactory = (trackData) => new Track(trackData, requester, requestNode);
         switch (response.loadType) {
             case "track":
