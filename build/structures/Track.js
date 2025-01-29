@@ -13,22 +13,22 @@ class Track {
    * @param {Node} nodes
    */
   constructor(data, requester, nodes) {
-    const info = data?.info || {};
+    const { info = {}, encoded = null, playlist = null } = data || {};
     
-    this.info = {
+    this.info = Object.freeze({
       identifier: info.identifier || '',
-      isSeekable: !!info.isSeekable,
+      isSeekable: Boolean(info.isSeekable),
       author: info.author || '',
-      length: ~~info.length,
-      isStream: !!info.isStream,
+      length: info.length | 0,
+      isStream: Boolean(info.isStream),
       title: info.title || '',
       uri: info.uri || '',
       sourceName: info.sourceName || '',
       artworkUrl: info.artworkUrl || ''
-    };
+    });
 
-    this.track = data?.encoded || null;
-    this.playlist = data?.playlist || null;
+    this.track = encoded;
+    this.playlist = playlist;
     this.requester = requester;
     this.nodes = nodes;
   }
@@ -38,8 +38,9 @@ class Track {
    * @returns {string|null}
    */
   resolveThumbnail(thumbnail) {
-    if (!thumbnail) return null;
-    return thumbnail.startsWith("http") ? thumbnail : getImageUrl(thumbnail, this.nodes);
+    return thumbnail && thumbnail.startsWith("http") ? 
+      thumbnail : 
+      thumbnail ? getImageUrl(thumbnail, this.nodes) : null;
   }
 
   /**
@@ -47,12 +48,14 @@ class Track {
    * @returns {Promise<Track|null>}
    */
   async resolve(aqua) {
-    if (!aqua?.options?.defaultSearchPlatform) return null;
+    const searchPlatform = aqua?.options?.defaultSearchPlatform;
+    if (!searchPlatform) return null;
 
     try {
+      const query = `${this.info.author} - ${this.info.title}`;
       const result = await aqua.resolve({
-        query: this.info.author + ' - ' + this.info.title,
-        source: aqua.options.defaultSearchPlatform,
+        query,
+        source: searchPlatform,
         requester: this.requester,
         node: this.nodes
       });
@@ -62,7 +65,10 @@ class Track {
       const track = this._findMatchingTrack(result.tracks);
       if (!track) return null;
 
-      this._updateTrack(track);
+      this.info.identifier = track.info.identifier;
+      this.track = track.track;
+      this.playlist = track.playlist || null;
+
       return this;
     } catch {
       return null;
@@ -74,39 +80,23 @@ class Track {
    */
   _findMatchingTrack(tracks) {
     const { author, title, length } = this.info;
-
-    for (let i = 0; i < tracks.length; i++) {
-      const track = tracks[i];
+    
+    for (const track of tracks) {
       const tInfo = track.info;
       
-      if (tInfo.author === author && 
-          tInfo.title === title && 
-          (!length || Math.abs(tInfo.length - length) <= 2000)) {
+      if (!author || !title || author !== tInfo.author || title !== tInfo.title) {
+        continue;
+      }
+      
+      if (!length || Math.abs(tInfo.length - length) <= 2000) {
         return track;
       }
     }
 
     return tracks[0];
   }
-
-  /**
-   * @private
-   */
-  _updateTrack(track) {
-    this.info.identifier = track.info.identifier;
-    this.track = track.track;
-    this.playlist = track.playlist || null;
-  }
-
-  /**
-   * Fast cleanup
-   */
   destroy() {
-    this.requester = null;
-    this.nodes = null;
-    this.track = null;
-    this.playlist = null;
-    this.info = null;
+    Object.keys(this).forEach(key => this[key] = null);
   }
 }
 
