@@ -1,6 +1,6 @@
 {
   "name": "aqualink",
-  "version": "1.7.0-beta1",
+  "version": "1.7.0-beta5",
   "description": "An Lavalink wrapper, focused in speed, performance, and features, Based in Riffy!",
   "main": "build/index.js",
   "scripts": {
@@ -36,7 +36,7 @@
   "author": "mushroom0162 (https://github.com/ToddyTheNoobDud)",
   "license": "ISC",
   "dependencies": {
-    "undici": "^7.2.0",
+    "undici": "^7.3.0",
     "ws": "^8.18.0"
   },
   "repository": {
