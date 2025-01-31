@@ -7,6 +7,8 @@ class Node {
     #lastStatsRequest = 0;
     #reconnectAttempted = 0;
     #reconnectTimeoutId = null;
+    #heartbeatInterval = null;
+    #connectionState = "DISCONNECTED"; // DISCONNECTED, CONNECTING, CONNECTED, RECONNECTING
 
     constructor(aqua, nodes, options) {
         const {
@@ -35,7 +37,7 @@ class Node {
         this.reconnectTimeout = options?.reconnectTimeout ?? 2000;
         this.reconnectTries = options?.reconnectTries ?? 3;
         this.infiniteReconnects = options?.infiniteReconnects ?? false;
-        this.connected = false;
+        this.heartbeatInterval = options?.heartbeatInterval ?? 45000;
         this.info = null;
         this.stats = Object.freeze(this.#createStats());
     }
@@ -52,8 +54,22 @@ class Node {
         };
     }
 
+    get connected() {
+        return this.#connectionState === "CONNECTED";
+    }
+
+    set connected(value) {
+        this.#connectionState = value ? "CONNECTED" : "DISCONNECTED";
+    }
+
     async connect() {
+        if (this.#connectionState === "CONNECTING" || this.#connectionState === "CONNECTED") {
+            return;
+        }
+
         this.#cleanup();
+        this.#connectionState = "CONNECTING";
+
         try {
             this.#ws = new WebSocket(this.wsUrl.href, {
                 headers: this.#constructHeaders(),
@@ -63,14 +79,22 @@ class Node {
             this.aqua.emit('debug', this.name, 'Connecting...');
         } catch (err) {
             this.aqua.emit('debug', this.name, `Connection failed: ${err.message}`);
-            this.#reconnect();
+            this.#handleConnectionFailure();
         }
     }
 
     #cleanup() {
+        clearInterval(this.#heartbeatInterval);
+        clearTimeout(this.#reconnectTimeoutId);
+        
         if (this.#ws) {
             this.#ws.removeAllListeners();
-            this.#ws.terminate();
+            if (this.#ws.readyState === WebSocket.OPEN) {
+                this.#ws.close(1000, "Clean shutdown");
+            } else {
+                this.#ws.terminate();
+            }
+            
             this.#ws = null;
         }
     }
@@ -88,15 +112,30 @@ class Node {
 
     #setupWebSocketListeners() {
         if (!this.#ws) return;
+        
         this.#ws.once("open", this.#onOpen.bind(this));
         this.#ws.once("error", this.#onError.bind(this));
         this.#ws.on("message", this.#onMessage.bind(this));
         this.#ws.once("close", this.#onClose.bind(this));
+        
+        const connectionTimeout = setTimeout(() => {
+            if (this.#connectionState === "CONNECTING") {
+                this.aqua.emit('debug', this.name, 'Connection timed out');
+                this.#handleConnectionFailure();
+            }
+        }, 10000);
+
+        this.#ws.once("open", () => clearTimeout(connectionTimeout));
     }
 
+
     async #onOpen() {
-        this.connected = true;
+        this.#connectionState = "CONNECTED";
+        this.#reconnectAttempted = 0;
         this.aqua.emit('debug', this.name, `Connected to ${this.wsUrl.href}`);
+
+        this.#setupHeartbeat();
+
         try {
             this.info = await this.rest.makeRequest("GET", "/v4/info");
             if (this.autoResume) await this.resumePlayers();
@@ -106,6 +145,30 @@ class Node {
                 this.aqua.emit('error', `Failed to fetch node info: ${err.message}`);
             }
         }
+    }
+
+    #setupHeartbeat() {
+        clearInterval(this.#heartbeatInterval);
+        this.#heartbeatInterval = setInterval(() => {
+            if (this.#ws && this.#ws.readyState === WebSocket.OPEN) {
+                this.#ws.ping().catch(() => {
+                    this.aqua.emit('debug', this.name, 'Heartbeat failed');
+                    this.#handleConnectionFailure();
+                });
+            }
+        }, this.heartbeatInterval);
+    }
+
+    #handleConnectionFailure() {
+        const wasConnected = this.#connectionState === "CONNECTED";
+        this.#connectionState = "DISCONNECTED";
+        this.#cleanup();
+
+        if (wasConnected) {
+            this.aqua.emit("nodeDisconnect", this, { code: 1006, reason: "Connection failed" });
+        }
+
+        this.#reconnect();
     }
 
     async getStats() {
@@ -207,31 +270,48 @@ class Node {
 
     #onError(error) {
         this.aqua.emit("nodeError", this, error);
+        if (this.#connectionState === "CONNECTING") {
+            this.#handleConnectionFailure();
+        }
     }
 
     #onClose(code, reason) {
-        this.connected = false;
-        this.aqua.emit("nodeDisconnect", this, { code, reason });
-        this.#reconnect();
+        const wasConnected = this.#connectionState === "CONNECTED";
+        this.#connectionState = "DISCONNECTED";
+        
+        if (wasConnected) {
+            this.aqua.emit("nodeDisconnect", this, { code, reason });
+        }
+        
+        if (code !== 1000) {
+            this.#reconnect();
+        }
     }
 
     #reconnect() {
-        if (this.infiniteReconnects) {
-            this.aqua.emit("nodeReconnect", this, "Experimental infinite reconnects enabled, will be trying non-stop...");
-            setTimeout(() => this.connect(), 10000);
+        if (this.#connectionState === "RECONNECTING") {
             return;
         }
 
-        clearTimeout(this.#reconnectTimeoutId);
+        this.#connectionState = "RECONNECTING";
+
+        if (this.infiniteReconnects) {
+            this.aqua.emit("nodeReconnect", this, "Infinite reconnects enabled, attempting reconnection...");
+            this.#reconnectTimeoutId = setTimeout(() => this.connect(), 10000);
+            return;
+        }
+
         if (++this.#reconnectAttempted >= this.reconnectTries) {
             this.aqua.emit("nodeError", this, new Error(`Max reconnection attempts reached (${this.reconnectTries})`));
             return this.destroy();
         }
 
+        const delay = this.reconnectTimeout * Math.pow(2, this.#reconnectAttempted - 1);
+        this.aqua.emit("nodeReconnect", this, `Attempt ${this.#reconnectAttempted}/${this.reconnectTries} in ${delay}ms`);
+
         this.#reconnectTimeoutId = setTimeout(() => {
-            this.aqua.emit("nodeReconnect", this, this.#reconnectAttempted);
             this.connect();
-        }, this.reconnectTimeout * Math.pow(2, this.#reconnectAttempted)); // Exponential backoff
+        }, delay);
     }
 
     get penalties() {
