@@ -3,7 +3,7 @@ const { Rest } = require("./Rest");
 
 class Node {
     #ws = null;
-    #statsCache = {};
+    #statsCache = {}; 
     #lastStatsRequest = 0;
     #reconnectAttempted = 0;
     #reconnectTimeoutId = null;
@@ -74,6 +74,14 @@ class Node {
             this.#ws.terminate();
             this.#ws = null;
         }
+        
+        this.info = null;
+        this.#statsCache = {};
+
+        this.aqua.removeAllListeners('debug');
+        this.aqua.removeAllListeners('error');
+        this.aqua.removeAllListeners('nodeConnect');
+        this.aqua.removeAllListeners('nodeDisconnect');
     }
 
     #constructHeaders() {
@@ -109,18 +117,16 @@ class Node {
     }
 
     async getStats() {
-        const now = Date.now();
-        const STATS_COOLDOWN = 60000;
-        
-        if (now - this.#lastStatsRequest < STATS_COOLDOWN) {
-            return this.#statsCache[this.name] ?? this.stats;
-        }
+        if (!this.connected) return this.stats;
         
         try {
             const stats = await this.rest.makeRequest("GET", "/v4/stats");
-            this.stats = Object.freeze(Object.assign({}, this.stats, stats));
-            this.#lastStatsRequest = now;
-            this.#statsCache[this.name] = this.stats;
+            
+            this.stats = Object.freeze({
+                ...this.#createStats(),
+                ...stats
+            });
+            
             return this.stats;
         } catch (err) {
             this.aqua.emit('debug', `Stats fetch error: ${err.message}`);
@@ -131,16 +137,13 @@ class Node {
     #updateStats(payload) {
         if (!payload) return;
         this.stats = Object.freeze({
-            players: payload.players ?? 0,
-            playingPlayers: payload.playingPlayers ?? 0,
-            uptime: payload.uptime ?? 0,
-            ping: payload.ping ?? 0,
-            memory: this.#updateMemoryStats(payload.memory),
-            cpu: this.#updateCpuStats(payload.cpu),
-            frameStats: this.#updateFrameStats(payload.frameStats)
+          ...this.stats,
+          ...payload,
+          memory: this.#updateMemoryStats(payload.memory),
+          cpu: this.#updateCpuStats(payload.cpu),
+          frameStats: this.#updateFrameStats(payload.frameStats)
         });
-    }
-
+      }
     #updateMemoryStats(memory = {}) {
         const allocated = memory.allocated ?? 0;
         const free = memory.free ?? 0;
@@ -184,16 +187,14 @@ class Node {
         try {
             const payload = JSON.parse(msg.toString());
             if (!payload?.op) return;
-            switch (payload.op) {
-                case "stats":
-                    this.#updateStats(payload);
-                    break;
-                case "ready":
-                    this.#handleReadyOp(payload);
-                    break;
-                default:
-                    this.#handlePlayerOp(payload);
-            }
+
+            const handlers = {
+                'stats': () => this.#updateStats(payload),
+                'ready': () => this.#handleReadyOp(payload),
+                'default': () => this.#handlePlayerOp(payload)
+            };
+
+            (handlers[payload.op] || handlers['default'])();
         } catch (err) {
             this.aqua.emit('debug', `Message parse error: ${err.message}`);
         }
@@ -223,23 +224,44 @@ class Node {
     }
 
     #reconnect() {
+
         if (this.infiniteReconnects) {
             this.aqua.emit("nodeReconnect", this, "Experimental infinite reconnects enabled, will be trying non-stop...");
             setTimeout(() => this.connect(), 10000);
             return;
         }
+        // Implement exponential backoff with jitter for more robust reconnection
+        const jitter = Math.random() * 1000; // Random jitter up to 1 second
+        const backoffTime = Math.min(
+            this.reconnectTimeout * Math.pow(1.5, this.#reconnectAttempted) + jitter, 
+            30000
+        );
 
-        clearTimeout(this.#reconnectTimeoutId);
-        if (++this.#reconnectAttempted >= this.reconnectTries) {
+        // Use a more robust reconnection approach
+        if (this.#reconnectAttempted >= this.reconnectTries && !this.infiniteReconnects) {
             this.aqua.emit("nodeError", this, new Error(`Max reconnection attempts reached (${this.reconnectTries})`));
-            return this.destroy();
+            this.destroy(true);
+            return;
         }
-        this.#reconnectTimeoutId = setTimeout(() => {
-            this.aqua.emit("nodeReconnect", this, this.#reconnectAttempted);
-            this.connect();
-        }, Math.min(this.reconnectTimeout * Math.pow(1.5, this.#reconnectAttempted), 30000));
-    }
 
+        // Clear any existing timeout to prevent multiple reconnection attempts
+        clearTimeout(this.#reconnectTimeoutId);
+
+        this.#reconnectTimeoutId = setTimeout(() => {
+            this.#reconnectAttempted++;
+            
+            // Emit reconnection attempt with more detailed info
+            this.aqua.emit("nodeReconnect", {
+                nodeName: this.name,
+                attempt: this.#reconnectAttempted,
+                backoffTime
+            });
+
+            // Attempt to connect with a clean slate
+            this.#cleanup();
+            this.connect();
+        }, backoffTime);
+    }
     get penalties() {
         if (!this.connected) return Number.MAX_SAFE_INTEGER;
         let penalties = this.stats.players;
