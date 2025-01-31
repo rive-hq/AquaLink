@@ -7,8 +7,6 @@ class Node {
     #lastStatsRequest = 0;
     #reconnectAttempted = 0;
     #reconnectTimeoutId = null;
-    #heartbeatInterval = null;
-    #connectionState = "DISCONNECTED"; // DISCONNECTED, CONNECTING, CONNECTED, RECONNECTING
 
     constructor(aqua, nodes, options) {
         const {
@@ -37,7 +35,7 @@ class Node {
         this.reconnectTimeout = options?.reconnectTimeout ?? 2000;
         this.reconnectTries = options?.reconnectTries ?? 3;
         this.infiniteReconnects = options?.infiniteReconnects ?? false;
-        this.heartbeatInterval = options?.heartbeatInterval ?? 45000;
+        this.connected = false;
         this.info = null;
         this.stats = Object.freeze(this.#createStats());
     }
@@ -54,88 +52,51 @@ class Node {
         };
     }
 
-    get connected() {
-        return this.#connectionState === "CONNECTED";
-    }
-
-    set connected(value) {
-        this.#connectionState = value ? "CONNECTED" : "DISCONNECTED";
-    }
-
     async connect() {
-        if (this.#connectionState === "CONNECTING" || this.#connectionState === "CONNECTED") {
-            return;
-        }
-
         this.#cleanup();
-        this.#connectionState = "CONNECTING";
-
-        try {
-            this.#ws = new WebSocket(this.wsUrl.href, {
-                headers: this.#constructHeaders(),
-                perMessageDeflate: false
-            });
-            this.#setupWebSocketListeners();
-            this.aqua.emit('debug', this.name, 'Connecting...');
-        } catch (err) {
-            this.aqua.emit('debug', this.name, `Connection failed: ${err.message}`);
-            this.#handleConnectionFailure();
-        }
+        const connectionTimeout = setTimeout(() => !this.connected && this.#reconnect(), 10000);
+        this.#ws = new WebSocket(this.wsUrl.href, {
+            headers: this.#constructHeaders(),
+            perMessageDeflate: false,
+            handshakeTimeout: 5000
+        });
+        this.#ws.on('open', () => {
+            clearTimeout(connectionTimeout);
+            this.#onOpen();
+        });
+        this.#setupWebSocketListeners();
+        this.aqua.emit('debug', this.name, 'Connecting...');
     }
 
     #cleanup() {
-        clearInterval(this.#heartbeatInterval);
-        clearTimeout(this.#reconnectTimeoutId);
-        
         if (this.#ws) {
             this.#ws.removeAllListeners();
-            if (this.#ws.readyState === WebSocket.OPEN) {
-                this.#ws.close(1000, "Clean shutdown");
-            } else {
-                this.#ws.terminate();
-            }
-            
+            this.#ws.terminate();
             this.#ws = null;
         }
     }
 
     #constructHeaders() {
-        const headers = {
+        return {
             Authorization: this.password,
             "User-Id": this.aqua.clientId,
             "Client-Name": `Aqua/${this.aqua.version}`,
+            ...(this.sessionId && { "Session-Id": this.sessionId }),
+            ...(this.resumeKey && { "Resume-Key": this.resumeKey })
         };
-        if (this.sessionId) headers["Session-Id"] = this.sessionId;
-        if (this.resumeKey) headers["Resume-Key"] = this.resumeKey;
-        return Object.freeze(headers);
     }
 
     #setupWebSocketListeners() {
         if (!this.#ws) return;
-        
         this.#ws.once("open", this.#onOpen.bind(this));
         this.#ws.once("error", this.#onError.bind(this));
         this.#ws.on("message", this.#onMessage.bind(this));
         this.#ws.once("close", this.#onClose.bind(this));
-        
-        const connectionTimeout = setTimeout(() => {
-            if (this.#connectionState === "CONNECTING") {
-                this.aqua.emit('debug', this.name, 'Connection timed out');
-                this.#handleConnectionFailure();
-            }
-        }, 10000);
-
-        this.#ws.once("open", () => clearTimeout(connectionTimeout));
     }
 
-
     async #onOpen() {
-        this.#connectionState = "CONNECTED";
-        this.#reconnectAttempted = 0;
+        this.connected = true;
         this.aqua.emit('debug', this.name, `Connected to ${this.wsUrl.href}`);
-
-        this.#setupHeartbeat();
-
         try {
             this.info = await this.rest.makeRequest("GET", "/v4/info");
             if (this.autoResume) await this.resumePlayers();
@@ -147,39 +108,17 @@ class Node {
         }
     }
 
-    #setupHeartbeat() {
-        clearInterval(this.#heartbeatInterval);
-        this.#heartbeatInterval = setInterval(() => {
-            if (this.#ws && this.#ws.readyState === WebSocket.OPEN) {
-                this.#ws.ping().catch(() => {
-                    this.aqua.emit('debug', this.name, 'Heartbeat failed');
-                    this.#handleConnectionFailure();
-                });
-            }
-        }, this.heartbeatInterval);
-    }
-
-    #handleConnectionFailure() {
-        const wasConnected = this.#connectionState === "CONNECTED";
-        this.#connectionState = "DISCONNECTED";
-        this.#cleanup();
-
-        if (wasConnected) {
-            this.aqua.emit("nodeDisconnect", this, { code: 1006, reason: "Connection failed" });
-        }
-
-        this.#reconnect();
-    }
-
     async getStats() {
         const now = Date.now();
         const STATS_COOLDOWN = 60000;
+        
         if (now - this.#lastStatsRequest < STATS_COOLDOWN) {
             return this.#statsCache[this.name] ?? this.stats;
         }
+        
         try {
             const stats = await this.rest.makeRequest("GET", "/v4/stats");
-            this.#updateStats(stats);
+            this.stats = Object.freeze(Object.assign({}, this.stats, stats));
             this.#lastStatsRequest = now;
             this.#statsCache[this.name] = this.stats;
             return this.stats;
@@ -234,6 +173,11 @@ class Node {
                 deficit: 0
             });
         }
+        return Object.freeze({
+            sent: frameStats.sent ?? 0,
+            nulled: frameStats.nulled ?? 0,
+            deficit: frameStats.deficit ?? 0
+        })
     }
 
     #onMessage(msg) {
@@ -270,48 +214,30 @@ class Node {
 
     #onError(error) {
         this.aqua.emit("nodeError", this, error);
-        if (this.#connectionState === "CONNECTING") {
-            this.#handleConnectionFailure();
-        }
     }
 
     #onClose(code, reason) {
-        const wasConnected = this.#connectionState === "CONNECTED";
-        this.#connectionState = "DISCONNECTED";
-        
-        if (wasConnected) {
-            this.aqua.emit("nodeDisconnect", this, { code, reason });
-        }
-        
-        if (code !== 1000) {
-            this.#reconnect();
-        }
+        this.connected = false;
+        this.aqua.emit("nodeDisconnect", this, { code, reason });
+        this.#reconnect();
     }
 
     #reconnect() {
-        if (this.#connectionState === "RECONNECTING") {
-            return;
-        }
-
-        this.#connectionState = "RECONNECTING";
-
         if (this.infiniteReconnects) {
-            this.aqua.emit("nodeReconnect", this, "Infinite reconnects enabled, attempting reconnection...");
-            this.#reconnectTimeoutId = setTimeout(() => this.connect(), 10000);
+            this.aqua.emit("nodeReconnect", this, "Experimental infinite reconnects enabled, will be trying non-stop...");
+            setTimeout(() => this.connect(), 10000);
             return;
         }
 
+        clearTimeout(this.#reconnectTimeoutId);
         if (++this.#reconnectAttempted >= this.reconnectTries) {
             this.aqua.emit("nodeError", this, new Error(`Max reconnection attempts reached (${this.reconnectTries})`));
             return this.destroy();
         }
-
-        const delay = this.reconnectTimeout * Math.pow(2, this.#reconnectAttempted - 1);
-        this.aqua.emit("nodeReconnect", this, `Attempt ${this.#reconnectAttempted}/${this.reconnectTries} in ${delay}ms`);
-
         this.#reconnectTimeoutId = setTimeout(() => {
+            this.aqua.emit("nodeReconnect", this, this.#reconnectAttempted);
             this.connect();
-        }, delay);
+        }, Math.min(this.reconnectTimeout * Math.pow(1.5, this.#reconnectAttempted), 30000));
     }
 
     get penalties() {
