@@ -6,28 +6,27 @@ const { version: pkgVersion } = require("../../package.json");
 const URL_REGEX = /^https?:\/\//;
 
 class Aqua extends EventEmitter {
-        /**
-     * @param {Object} client - The client instance.
-     * @param {Array<Object>} nodes - An array of node configurations.
-     * @param {Object} options - Configuration options for Aqua.
-     * @param {Function} options.send - Function to send data.
-     * @param {string} [options.defaultSearchPlatform="ytsearch"] - Default search platform. Options include:
-     *     - "youtube music": "ytmsearch"
-     *     - "youtube": "ytsearch"
-     *     - "spotify": "spsearch"
-     *     - "jiosaavn": "jssearch"
-     *     - "soundcloud": "scsearch"
-     *     - "deezer": "dzsearch"
-     *     - "tidal": "tdsearch"
-     *     - "applemusic": "amsearch"
-     *     - "bandcamp": "bcsearch"
-     * @param {string} [options.restVersion="v4"] - Version of the REST API.
-     * @param {Array<Object>} [options.plugins=[]] - Plugins to load.
-     * @param {string} [options.shouldDeleteMessage='none'] - Should delete your message? (true, false)
-     * @param {boolean} [options.autoResume=false] - Automatically resume tracks on reconnect.
-     * @param {boolean} [options.infiniteReconnects=false] - Reconnect infinitely (default: false).
-     */
-    constructor(client, nodes, options) {
+    /**
+ * @param {Object} client - The client instance.
+ * @param {Array<Object>} nodes - An array of node configurations.
+ * @param {Object} options - Configuration options for Aqua.
+ * @param {Function} options.send - Function to send data.
+ * @param {string} [options.defaultSearchPlatform="ytsearch"] - Default search platform. Options include:
+ *     - "youtube music": "ytmsearch"
+ *     - "youtube": "ytsearch"
+ *     - "spotify": "spsearch"
+ *     - "jiosaavn": "jssearch"
+ *     - "soundcloud": "scsearch"
+ *     - "deezer": "dzsearch"
+ *     - "tidal": "tdsearch"
+ *     - "applemusic": "amsearch"
+ *     - "bandcamp": "bcsearch"
+ * @param {string} [options.restVersion="v4"] - Version of the REST API.
+ * @param {Array<Object>} [options.plugins=[]] - Plugins to load.
+ * @param {boolean} [options.autoResume=false] - Automatically resume tracks on reconnect.
+ * @param {boolean} [options.infiniteReconnects=false] - Reconnect infinitely (default: false).
+ */
+    constructor(client, nodes, options = {}) {
         super();
         this.validateInputs(client, nodes, options);
         this.client = client;
@@ -36,22 +35,33 @@ class Aqua extends EventEmitter {
         this.players = new Map();
         this.clientId = null;
         this.initiated = false;
-        this.shouldDeleteMessage = options.shouldDeleteMessage || false;
-        this.defaultSearchPlatform = options.defaultSearchPlatform || "ytsearch";
-        this.restVersion = options.restVersion || "v4";
-        this.plugins = options.plugins || [];
-        this.version = pkgVersion;
         this.options = options;
-        this.send = options.send;
-        this.autoResume = options.autoResume || false;
-        this.infiniteReconnects = options.infiniteReconnects || false;
+
+        this.shouldDeleteMessage = this.getOption(options, 'shouldDeleteMessage', false);
+        this.defaultSearchPlatform = this.getOption(options, 'defaultSearchPlatform', 'ytsearch');
+        this.leaveOnEnd =  this.getOption(options, 'leaveOnEnd', true);
+        this.restVersion = this.getOption(options, 'restVersion', 'v4');
+        this.plugins = this.getOption(options, 'plugins', []);
+        this.version = pkgVersion;
+        this.send = options.send || this.defaultSendFunction;
+        this.autoResume = this.getOption(options, 'autoResume', false);
+        this.infiniteReconnects = this.getOption(options, 'infiniteReconnects', false);
+        
         this.setMaxListeners(0);
+    }
+
+    getOption(options, key, defaultValue) {
+        return options.hasOwnProperty(key) ? options[key] : defaultValue;
+    }
+
+    defaultSendFunction(payload) {
+        const guild = this.client.guilds.cache.get(payload.d.guild_id);
+        if (guild) guild.shard.send(payload);
     }
 
     validateInputs(client, nodes, options) {
         if (!client) throw new Error("Client is required to initialize Aqua");
         if (!Array.isArray(nodes) || !nodes.length) throw new Error(`Nodes must be a non-empty Array (Received ${typeof nodes})`);
-        if (typeof options?.send !== "function") throw new Error("Send function is required to initialize Aqua");
     }
 
     get leastUsedNodes() {
