@@ -33,7 +33,8 @@ class Player extends EventEmitter {
         this.ping = 0;
         this.nowPlayingMessage = null;
         this.previousTracks = [];
-        this.shouldDeleteMessage = options.shouldDeleteMessage ?? true;
+        this.shouldDeleteMessage = options.shouldDeleteMessage; 
+        this.leaveOnEnd = options.leaveOnEnd
 
         this.boundHandleEvent = this.handleEvent.bind(this);
         this.boundOnPlayerUpdate = this.onPlayerUpdate.bind(this);
@@ -277,9 +278,12 @@ class Player extends EventEmitter {
 
         if (player.queue.isEmpty()) {
             this.playing = false;
-            this.aqua.emit("queueEnd", player);
-            return this.cleanup();
+            if (this.leaveOnEnd) {
+                await this.cleanup();
+            }
+            return this.aqua.emit("queueEnd", player);
         }
+    
 
         return player.play();
     }
