@@ -33,8 +33,8 @@ class Player extends EventEmitter {
         this.ping = 0;
         this.nowPlayingMessage = null;
         this.previousTracks = [];
-        this.shouldDeleteMessage = options.shouldDeleteMessage; 
-        this.leaveOnEnd = options.leaveOnEnd
+        this.shouldDeleteMessage = options.shouldDeleteMessage ?? false;
+        this.leaveOnEnd = options.leaveOnEnd ?? true;
 
         this.boundHandleEvent = this.handleEvent.bind(this);
         this.boundOnPlayerUpdate = this.onPlayerUpdate.bind(this);
@@ -140,9 +140,6 @@ class Player extends EventEmitter {
     seek(position) {
         if (!this.playing) return this;
         const newPosition = this.position + position;
-        if (newPosition < 0) {
-            throw new Error("Seek position cannot be negative.");
-        }
         this.position = newPosition;
         this.updatePlayer({ position: this.position });
         return this;
@@ -212,7 +209,8 @@ class Player extends EventEmitter {
     }
 
     replay() {
-        return this.seek(0);
+        this.seek(-this.position);
+        return this;
     }
 
     skip() {
