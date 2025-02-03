@@ -57,13 +57,10 @@ class Node {
         this.#ws = new WebSocket(this.wsUrl.href, {
             headers: this.#constructHeaders(),
             perMessageDeflate: false,
-            handshakeTimeout: 5000
+            handshakeTimeout: 30000
         });
 
-        this.#ws.once('open', () => {
-            this.#onOpen();
-        });
-
+        this.#ws.once('open', this.#onOpen.bind(this));
         this.#setupWebSocketListeners();
         this.aqua.emit('debug', this.name, 'Connecting...');
     }
@@ -91,11 +88,7 @@ class Node {
     #setupWebSocketListeners() {
         if (!this.#ws) return;
         
-        this.#ws.removeAllListeners('open');
-        this.#ws.removeAllListeners('error');
-        this.#ws.removeAllListeners('message');
-        this.#ws.removeAllListeners('close');
-    
+        this.#ws.removeAllListeners();
         this.#ws.once("open", this.#onOpen.bind(this));
         this.#ws.once("error", this.#onError.bind(this));
         this.#ws.on("message", this.#onMessage.bind(this));
@@ -115,16 +108,16 @@ class Node {
             }
         }
     }
+
     async getStats() {
         if (!this.connected) return this.stats;
-    
+
         const now = Date.now();
         const STATS_COOLDOWN = 60000;
-    
         if (now - this.#lastStatsRequest < STATS_COOLDOWN) {
             return this.stats;
         }
-    
+
         try {
             const stats = await this.rest.makeRequest("GET", "/v4/stats");
             this.stats = { ...this.#createStats(), ...stats };
@@ -184,7 +177,6 @@ class Node {
         try {
             const payload = JSON.parse(msg.toString());
             if (!payload?.op) return;
-
             switch (payload.op) {
                 case 'stats':
                     this.#updateStats(payload);
@@ -236,7 +228,7 @@ class Node {
             30000
         );
 
-        if (this.#reconnectAttempted >= this.reconnectTries && !this.infiniteReconnects) {
+        if (this.#reconnectAttempted >= this.reconnectTries) {
             this.aqua.emit("nodeError", this, new Error(`Max reconnection attempts reached (${this.reconnectTries})`));
             this.destroy(true);
             return;
@@ -272,6 +264,7 @@ class Node {
             this.aqua.nodes.delete(this.name);
             return;
         }
+
         if (this.connected) {
             for (const player of this.aqua.players.values()) {
                 if (player.node === this) {
@@ -279,6 +272,7 @@ class Node {
                 }
             }
         }
+
         this.#cleanup();
         this.connected = false;
         this.aqua.nodeMap.delete(this.name);
