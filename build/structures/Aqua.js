@@ -7,25 +7,16 @@ const URL_REGEX = /^https?:\/\//;
 
 class Aqua extends EventEmitter {
     /**
- * @param {Object} client - The client instance.
- * @param {Array<Object>} nodes - An array of node configurations.
- * @param {Object} options - Configuration options for Aqua.
- * @param {Function} options.send - Function to send data.
- * @param {string} [options.defaultSearchPlatform="ytsearch"] - Default search platform. Options include:
- *     - "youtube music": "ytmsearch"
- *     - "youtube": "ytsearch"
- *     - "spotify": "spsearch"
- *     - "jiosaavn": "jssearch"
- *     - "soundcloud": "scsearch"
- *     - "deezer": "dzsearch"
- *     - "tidal": "tdsearch"
- *     - "applemusic": "amsearch"
- *     - "bandcamp": "bcsearch"
- * @param {string} [options.restVersion="v4"] - Version of the REST API.
- * @param {Array<Object>} [options.plugins=[]] - Plugins to load.
- * @param {boolean} [options.autoResume=false] - Automatically resume tracks on reconnect.
- * @param {boolean} [options.infiniteReconnects=false] - Reconnect infinitely (default: false).
- */
+     * @param {Object} client - The client instance.
+     * @param {Array<Object>} nodes - An array of node configurations.
+     * @param {Object} options - Configuration options for Aqua.
+     * @param {Function} options.send - Function to send data.
+     * @param {string} [options.defaultSearchPlatform="ytsearch"] - Default search platform.
+     * @param {string} [options.restVersion="v4"] - Version of the REST API.
+     * @param {Array<Object>} [options.plugins=[]] - Plugins to load.
+     * @param {boolean} [options.autoResume=false] - Automatically resume tracks on reconnect.
+     * @param {boolean} [options.infiniteReconnects=false] - Reconnect infinitely.
+     */
     constructor(client, nodes, options = {}) {
         super();
         this.validateInputs(client, nodes, options);
@@ -36,22 +27,21 @@ class Aqua extends EventEmitter {
         this.clientId = null;
         this.initiated = false;
         this.options = options;
-
         this.shouldDeleteMessage = this.getOption(options, 'shouldDeleteMessage', false);
         this.defaultSearchPlatform = this.getOption(options, 'defaultSearchPlatform', 'ytsearch');
-        this.leaveOnEnd =  this.getOption(options, 'leaveOnEnd', true);
+        this.leaveOnEnd = this.getOption(options, 'leaveOnEnd', true);
         this.restVersion = this.getOption(options, 'restVersion', 'v4');
         this.plugins = this.getOption(options, 'plugins', []);
         this.version = pkgVersion;
         this.send = options.send || this.defaultSendFunction;
         this.autoResume = this.getOption(options, 'autoResume', false);
         this.infiniteReconnects = this.getOption(options, 'infiniteReconnects', false);
-        
         this.setMaxListeners(0);
+        this._leastUsedCache = { nodes: [], timestamp: 0 };
     }
 
     getOption(options, key, defaultValue) {
-        return options.hasOwnProperty(key) ? options[key] : defaultValue;
+        return Object.prototype.hasOwnProperty.call(options, key) ? options[key] : defaultValue;
     }
 
     defaultSendFunction(payload) {
@@ -59,13 +49,23 @@ class Aqua extends EventEmitter {
         if (guild) guild.shard.send(payload);
     }
 
-    validateInputs(client, nodes, options) {
+    validateInputs(client, nodes) {
         if (!client) throw new Error("Client is required to initialize Aqua");
-        if (!Array.isArray(nodes) || !nodes.length) throw new Error(`Nodes must be a non-empty Array (Received ${typeof nodes})`);
+        if (!Array.isArray(nodes) || !nodes.length) {
+            throw new Error(`Nodes must be a non-empty Array (Received ${typeof nodes})`);
+        }
     }
 
     get leastUsedNodes() {
-        return [...this.nodeMap.values()].filter(node => node.connected).sort((a, b) => a.rest.calls - b.rest.calls);
+        const now = Date.now();
+        if (now - this._leastUsedCache.timestamp < 50) return this._leastUsedCache.nodes;
+        const nodes = [];
+        for (const node of this.nodeMap.values()) {
+            if (node.connected) nodes.push(node);
+        }
+        nodes.sort((a, b) => a.rest.calls - b.rest.calls);
+        this._leastUsedCache = { nodes, timestamp: now };
+        return nodes;
     }
 
     init(clientId) {
@@ -84,45 +84,55 @@ class Aqua extends EventEmitter {
 
     createNode(options) {
         const nodeId = options.name || options.host;
-        this.destroyNode(nodeId); // Ensure no duplicate nodes
+        this.destroyNode(nodeId);
         const node = new Node(this, options, this.options);
         this.nodeMap.set(nodeId, node);
-        node.connect()
-            .then(() => this.emit("nodeCreate", node))
-            .catch(error => {
-                this.nodeMap.delete(nodeId);
-                throw error;
-            });
+        this._leastUsedCache.timestamp = 0;
+        node.connect().then(() => {
+            this.emit("nodeCreate", node);
+        }).catch(error => {
+            this.nodeMap.delete(nodeId);
+            throw error;
+        });
         return node;
     }
 
     destroyNode(identifier) {
         const node = this.nodeMap.get(identifier);
         if (!node) return;
-
-        node.disconnect()
-            .then(() => {
-                node.removeAllListeners();
-                this.nodeMap.delete(identifier);
-                this.emit("nodeDestroy", node);
-            })
-            .catch(error => console.error(`Error destroying node ${identifier}:`, error));
+        node.disconnect().then(() => {
+            node.removeAllListeners();
+            this.nodeMap.delete(identifier);
+            this._leastUsedCache.timestamp = 0;
+            this.emit("nodeDestroy", node);
+        }).catch(error => console.error(`Error destroying node ${identifier}:`, error));
     }
 
     updateVoiceState({ d, t }) {
         const player = this.players.get(d.guild_id);
-        if (player && (t === "VOICE_SERVER_UPDATE" || (t === "VOICE_STATE_UPDATE" && d.user_id === this.clientId))) {
-            player.connection[t === "VOICE_SERVER_UPDATE" ? "setServerUpdate" : "setStateUpdate"](d);
-            if (d.status === "disconnected") this.cleanupPlayer(player);
+        if (!player) return;
+        if (t === "VOICE_SERVER_UPDATE" || (t === "VOICE_STATE_UPDATE" && d.user_id === this.clientId)) {
+            const updateMethod = t === "VOICE_SERVER_UPDATE" ? "setServerUpdate" : "setStateUpdate";
+            if (player.connection && typeof player.connection[updateMethod] === "function") {
+                player.connection[updateMethod](d);
+            }
+            if (d.status === "disconnected") {
+                this.cleanupPlayer(player);
+            }
         }
     }
 
     fetchRegion(region) {
         if (!region) return this.leastUsedNodes;
         const lowerRegion = region.toLowerCase();
-        return [...this.nodeMap.values()]
-            .filter(node => node.connected && node.regions?.includes(lowerRegion))
-            .sort((a, b) => this.calculateLoad(a) - this.calculateLoad(b));
+        const regionNodes = [];
+        for (const node of this.nodeMap.values()) {
+            if (node.connected && node.regions?.includes(lowerRegion)) {
+                regionNodes.push(node);
+            }
+        }
+        regionNodes.sort((a, b) => this.calculateLoad(a) - this.calculateLoad(b));
+        return regionNodes;
     }
 
     calculateLoad(node) {
@@ -133,10 +143,10 @@ class Aqua extends EventEmitter {
 
     createConnection(options) {
         this.ensureInitialized();
-        const player = this.players.get(options.guildId);
-        if (player && player.voiceChannel) return player;
-
-        const node = options.region ? this.fetchRegion(options.region)[0] : this.leastUsedNodes[0];
+        const existingPlayer = this.players.get(options.guildId);
+        if (existingPlayer && existingPlayer.voiceChannel) return existingPlayer;
+        const availableNodes = options.region ? this.fetchRegion(options.region) : this.leastUsedNodes;
+        const node = availableNodes[0];
         if (!node) throw new Error("No nodes are available");
         return this.createPlayer(node, options);
     }
@@ -154,9 +164,8 @@ class Aqua extends EventEmitter {
     async destroyPlayer(guildId) {
         const player = this.players.get(guildId);
         if (!player) return;
-
         try {
-            await player.clearData(); // Assuming clearData is an async function
+            await player.clearData();
             player.removeAllListeners();
             this.players.delete(guildId);
             this.emit("playerDestroy", player);
@@ -169,6 +178,7 @@ class Aqua extends EventEmitter {
         this.ensureInitialized();
         const requestNode = this.getRequestNode(nodes);
         const formattedQuery = this.formatQuery(query, source);
+
         try {
             const response = await requestNode.rest.makeRequest("GET", `/v4/loadtracks?identifier=${encodeURIComponent(formattedQuery)}`);
             if (["empty", "NO_MATCHES"].includes(response.loadType)) {
@@ -176,7 +186,7 @@ class Aqua extends EventEmitter {
             }
             return this.constructorResponse(response, requester, requestNode);
         } catch (error) {
-            if (error.name === 'AbortError') {
+            if (error.name === "AbortError") {
                 throw new Error("Request timed out");
             }
             throw new Error(`Failed to resolve track: ${error.message}`);
@@ -187,7 +197,7 @@ class Aqua extends EventEmitter {
         if (nodes && !(typeof nodes === "string" || nodes instanceof Node)) {
             throw new TypeError(`'nodes' must be a string or Node instance, received: ${typeof nodes}`);
         }
-        return (typeof nodes === 'string' ? this.nodeMap.get(nodes) : nodes) ?? this.leastUsedNodes[0];
+        return (typeof nodes === "string" ? this.nodeMap.get(nodes) : nodes) ?? this.leastUsedNodes[0];
     }
 
     ensureInitialized() {
@@ -200,9 +210,11 @@ class Aqua extends EventEmitter {
 
     async handleNoMatches(rest, query) {
         try {
-            const youtubeResponse = await rest.makeRequest("GET", `/v4/loadtracks?identifier=https://www.youtube.com/watch?v=${query}`);
+            const ytIdentifier = `/v4/loadtracks?identifier=https://www.youtube.com/watch?v=${query}`;
+            const youtubeResponse = await rest.makeRequest("GET", ytIdentifier);
             if (["empty", "NO_MATCHES"].includes(youtubeResponse.loadType)) {
-                return await rest.makeRequest("GET", `/v4/loadtracks?identifier=https://open.spotify.com/track/${query}`);
+                const spotifyIdentifier = `/v4/loadtracks?identifier=https://open.spotify.com/track/${query}`;
+                return await rest.makeRequest("GET", spotifyIdentifier);
             }
             return youtubeResponse;
         } catch (error) {
@@ -216,7 +228,7 @@ class Aqua extends EventEmitter {
             exception: null,
             playlistInfo: null,
             pluginInfo: response.pluginInfo ?? {},
-            tracks: [],
+            tracks: []
         };
 
         if (response.loadType === "error" || response.loadType === "LOAD_FAILED") {
@@ -224,7 +236,8 @@ class Aqua extends EventEmitter {
             return baseResponse;
         }
 
-        const trackFactory = (trackData) => new Track(trackData, requester, requestNode);
+        const trackFactory = trackData => new Track(trackData, requester, requestNode);
+
         switch (response.loadType) {
             case "track":
                 if (response.data) {
@@ -235,7 +248,7 @@ class Aqua extends EventEmitter {
                 if (response.data?.info) {
                     baseResponse.playlistInfo = {
                         name: response.data.info.name ?? response.data.info.title,
-                        ...response.data.info,
+                        ...response.data.info
                     };
                 }
                 baseResponse.tracks = (response.data?.tracks ?? []).map(trackFactory);
@@ -253,45 +266,10 @@ class Aqua extends EventEmitter {
         return player;
     }
 
-    cleanupIdle() {
-        const now = Date.now();
-        for (const [guildId, player] of this.players) {
-            if (!player.playing && !player.paused && player.queue.isEmpty() && (now - player.lastActivity) > this.options.idleTimeout) {
-                this.cleanupPlayer(player);
-            }
-        }
-    }
-
     cleanupPlayer(player) {
-        if (!player) return;
-        try {
-            player.clearData();
-            player.removeAllListeners();
-            player.destroy();
+        if (player && this.players.has(player.guildId)) {
             this.players.delete(player.guildId);
-            this.emit("playerDestroy", player);
-        } catch (error) {
-            console.error(`Error during player cleanup: ${error.message}`);
         }
-    }
-
-    cleanup() {
-        for (const player of this.players.values()) {
-            this.cleanupPlayer(player);
-        }
-        for (const node of this.nodeMap.values()) {
-            this.destroyNode(node.name || node.host);
-        }
-        this.nodeMap.clear();
-        this.players.clear();
-        this.client = null;
-        this.nodes = null;
-        this.plugins?.forEach(plugin => plugin.unload?.(this));
-        this.plugins = null;
-        this.options = null;
-        this.send = null;
-        this.version = null;
-        this.removeAllListeners();
     }
 }
 
