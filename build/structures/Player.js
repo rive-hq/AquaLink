@@ -73,7 +73,7 @@ class Player extends EventEmitter {
 
     addToPreviousTrack(track) {
         if (this.previousTracks.length >= 50) {
-            this.previousTracks = this.previousTracks.slice(0, 49);
+            this.previousTracks.pop();
         }
         this.previousTracks.unshift(track);
     }
