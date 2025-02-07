@@ -44,6 +44,7 @@ class Player extends EventEmitter {
         this.previousTracks = [];
         this.shouldDeleteMessage = options.shouldDeleteMessage ?? false;
         this.leaveOnEnd = options.leaveOnEnd ?? true;
+        
         this.onPlayerUpdate = ({ state } = {}) => {
             if (!state) return;
             Object.assign(this, state);
@@ -61,7 +62,7 @@ class Player extends EventEmitter {
         };
         this.on("playerUpdate", this.onPlayerUpdate);
         this.on("event", this.handleEvent);
-        this.#dataStore = new WeakMap();
+        this.#dataStore = new Map();
     }
 
     get previous() {
@@ -73,7 +74,7 @@ class Player extends EventEmitter {
 
     addToPreviousTrack(track) {
         if (this.previousTracks.length >= 50) {
-            this.previousTracks.pop();
+            this.previousTracks.length = 49;
         }
         this.previousTracks.unshift(track);
     }
@@ -81,10 +82,12 @@ class Player extends EventEmitter {
     async play() {
         if (!this.connected) throw new Error("Player must be connected first.");
         if (!this.queue.length) return;
+
         const item = this.queue.shift();
         this.current = item.track ? item : await item.resolve(this.aqua);
         this.playing = true;
         this.position = 0;
+        
         this.aqua.emit("debug", this.guildId, `Playing track: ${this.current.track}`);
         return this.updatePlayer({ track: { encoded: this.current.track } });
     }
@@ -194,15 +197,20 @@ class Player extends EventEmitter {
         this.updatePlayer({ track: { encoded: null } });
         this.connected = false;
         this.send({ guild_id: this.guildId, channel_id: null });
-        this.aqua.emit("debug", this.guildId, "Player disconnected.");
+        this.aqua?.emit("debug", this.guildId, "Player disconnected.");
         return this;
     }
 
     shuffle() {
-        for (let i = this.queue.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [this.queue[i], this.queue[j]] = [this.queue[j], this.queue[i]];
+        const array = this.queue;
+        let currentIndex = array.length;
+        
+        while (currentIndex > 0) {
+            const randomIndex = Math.floor(Math.random() * currentIndex);
+            currentIndex--;
+            [array[currentIndex], array[randomIndex]] = [array[randomIndex], array[currentIndex]];
         }
+        
         return this;
     }
 
@@ -232,10 +240,12 @@ class Player extends EventEmitter {
 
     async trackEnd(player, track, payload) {
         if (this.shouldDeleteMessage && this.nowPlayingMessage) {
-            await this.nowPlayingMessage.delete().catch(() => { });
+            await this.nowPlayingMessage.delete().catch(() => {});
             this.nowPlayingMessage = null;
         }
-        const reason = (payload.reason || "").replace("_", "").toLowerCase();
+
+        const reason = payload.reason?.replace("_", "").toLowerCase();
+        
         if (reason === "loadfailed" || reason === "cleanup") {
             if (player.queue.isEmpty()) {
                 this.aqua.emit("queueEnd", player);
@@ -244,6 +254,7 @@ class Player extends EventEmitter {
             }
             return;
         }
+
         switch (this.loop) {
             case Player.LOOP_MODES.TRACK:
                 this.aqua.emit("trackRepeat", player, track);
@@ -254,6 +265,7 @@ class Player extends EventEmitter {
                 player.queue.push(track);
                 break;
         }
+
         if (player.queue.isEmpty()) {
             this.playing = false;
             if (this.leaveOnEnd) {
@@ -262,6 +274,7 @@ class Player extends EventEmitter {
             this.aqua.emit("queueEnd", player);
             return;
         }
+
         await player.play();
     }
 
@@ -293,20 +306,21 @@ class Player extends EventEmitter {
         this.aqua.send({ op: 4, d: data });
     }
 
-    #dataStore;
+     // Optimize data storage
+     #dataStore;
 
-    set(key, value) {
-        this.#dataStore.set(key, value);
-    }
-
-    get(key) {
-        return this.#dataStore.get(key);
-    }
-
-    clearData() {
-        this.#dataStore = new WeakMap();
-        return this;
-    }
+     set(key, value) {
+         this.#dataStore.set(key, value);
+     }
+ 
+     get(key) {
+         return this.#dataStore.get(key);
+     }
+ 
+     clearData() {
+         this.#dataStore.clear(); 
+         return this;
+     }
 
     async updatePlayer(data) {
         return this.nodes.rest.updatePlayer({
