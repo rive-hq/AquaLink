@@ -33,17 +33,15 @@ async function fetchThumbnail(url) {
 }
 
 async function fetchYouTubeThumbnail(identifier) {
-    const fetchPromises = YOUTUBE_QUALITIES.map(urlFunc => fetchThumbnail(urlFunc(identifier)));
-    const results = await Promise.allSettled(fetchPromises);
-
-    for (const result of results) {
-        if (result.status === 'fulfilled' && result.value) {
-            return result.value;
-        }
+    try {
+        const thumbnail = await Promise.race(
+            YOUTUBE_QUALITIES.map(urlFunc => fetchThumbnail(urlFunc(identifier)))
+        );
+        return thumbnail || null;
+    } catch (error) {
+        console.error('No valid YouTube thumbnail found:', error);
+        return null;
     }
-    
-    console.error('No valid YouTube thumbnail found.');
-    return null;
 }
 
 module.exports = { getImageUrl };
