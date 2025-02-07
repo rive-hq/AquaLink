@@ -1,11 +1,9 @@
 const { getImageUrl } = require("../handlers/fetchImage");
-
 /**
  * @typedef {import("../Aqua")} Aqua
  * @typedef {import("../structures/Player")} Player
  * @typedef {import("../structures/Node")} Node
  */
-
 class Track {
   /**
    * @param {Object} data
@@ -14,19 +12,17 @@ class Track {
    */
   constructor(data, requester, nodes) {
     const { info = {}, encoded = null, playlist = null } = data || {};
-    
     this.info = Object.freeze({
       identifier: info.identifier || '',
-      isSeekable: Boolean(info.isSeekable),
+      isSeekable: !!info.isSeekable,
       author: info.author || '',
       length: info.length | 0,
-      isStream: Boolean(info.isStream),
+      isStream: !!info.isStream,
       title: info.title || '',
       uri: info.uri || '',
       sourceName: info.sourceName || '',
       artworkUrl: info.artworkUrl || ''
     });
-
     this.track = encoded;
     this.playlist = playlist;
     this.requester = requester;
@@ -38,9 +34,8 @@ class Track {
    * @returns {string|null}
    */
   resolveThumbnail(thumbnail) {
-    return thumbnail && thumbnail.startsWith("http") ? 
-      thumbnail : 
-      thumbnail ? getImageUrl(thumbnail, this.nodes) : null;
+    if (!thumbnail) return null;
+    return thumbnail.startsWith("http") ? thumbnail : getImageUrl(thumbnail, this.nodes);
   }
 
   /**
@@ -70,7 +65,8 @@ class Track {
       this.playlist = track.playlist || null;
 
       return this;
-    } catch {
+    } catch (error) {
+      console.error("Error resolving track:", error);
       return null;
     }
   }
@@ -80,23 +76,18 @@ class Track {
    */
   _findMatchingTrack(tracks) {
     const { author, title, length } = this.info;
-    
+
     for (const track of tracks) {
       const tInfo = track.info;
-      
-      if (!author || !title || author !== tInfo.author || title !== tInfo.title) {
-        continue;
-      }
-      
-      if (!length || Math.abs(tInfo.length - length) <= 2000) {
-        return track;
+
+      if (author && title && author === tInfo.author && title === tInfo.title) {
+        if (!length || Math.abs(tInfo.length - length) <= 2000) {
+          return track;
+        }
       }
     }
 
     return tracks[0];
-  }
-  destroy() {
-    Object.keys(this).forEach(key => this[key] = null);
   }
 }
 
