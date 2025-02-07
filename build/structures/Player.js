@@ -17,7 +17,7 @@ class Player extends EventEmitter {
         TrackChangeEvent: "trackChange",
         WebSocketClosedEvent: "socketClosed"
     });
-    static validModes = new Set(["none", "track", "queue"]);
+    static validModes = ["none", "track", "queue"]
 
     constructor(aqua, nodes, options = {}) {
         super();
@@ -167,7 +167,7 @@ class Player extends EventEmitter {
     }
 
     setLoop(mode) {
-        if (!Player.validModes.has(mode)) throw new Error("Loop mode must be 'none', 'track', or 'queue'.");
+        if (!Player.validModes.includes(mode)) throw new Error("Loop mode must be 'none', 'track', or 'queue'.");
         this.loop = mode;
         this.updatePlayer({ loop: mode });
         return this;
