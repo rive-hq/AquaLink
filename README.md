@@ -11,67 +11,63 @@ This code is based in riffy, but its an 100% Rewrite made from scratch...
 - Lowest CPU Usage
 - Very fast (mine take less than 1 second to load an song!)
 - 1 Player created = ~1 - 0,5 mb per player
-- Auto clean Up memory when song finishes / bot leave the vc
+- Auto clean Up memory when song finishes / bot leave the vc (Now Options supported!)
 - Plugin system
 - Lavalink v4 support (din't test v3)
-- Youtube and Spotify support
+- Youtube and Spotify support (Soundcloud, deezer, vimeo, etc also works...)
 - Minimal Requests to the lavalink server (helps the lavalink recourses!)
-- Easy player, node, aqua managing
+- Easy player, node, aqua manager 
 - Fast responses from rest and node
-- Playlist support (My mix playlists, youtube playlists, spotify playlists)
+- Playlist support (My mix playlists, youtube playlists, spotify playlists, etc)
 - Lyrics Support by Lavalink
   - https://github.com/topi314/LavaLyrics (RECOMMENDED)
   - https://github.com/DRSchlaubi/lyrics.kt (?)
   - https://github.com/DuncteBot/java-timed-lyrics (RECOMMENDED)
+
 # Docs (Wiki)
 - https://github.com/ToddyTheNoobDud/AquaLink/wiki
 
 - Example bot: https://github.com/ToddyTheNoobDud/Thorium-Music
 
-# Real changelog for 1.7.0-beta1
-Note: Not features are widely tested / Not fully Complete
+# Brick by brick, 1.8.0 Update (yay)
 
-- Reformated the `PLAYER` System (removed Documentation for now)
-  - Notable Changes:
-  - New WeakMap System (Properly handling, deleting, setting)
-  - Around 2x faster (by my tests, taked 0ms to resolve an song)
-  - Uses less recourses (reduced by around ~0,5mb, also less cpu instensive)
+- Misc changes on FetchImage (improves the overall checking and speed)
 
-- Fix Some errors in `REST`, Now destroyPlayer, etc, should work as expected.
-- Rewrited out the `TRACK` System
-  - Reduced object creation
-  - Use direct acess
-  - use direct destroy() instead of Object.assing()
-  - Separate _findMatchingTrack()
-  - Rewrite the search system, Removed useless caching, Improved speed, use traditional for ... of instead of find() - Experimental
+- Rewrite `AQUA` module
+  - Remade the resolve logic (improves the speed by a lot)
+  - Fixes many memory usages related to nodes
+  - send is no longer required to be Applied (Applied by default now.)
+  - Remade some stuff with discord VoiceGateway
 
-- Rewrited out the `NODE` System
-  - Implement the InfiniteReconnects Option (this will make the code try to connect to an node non-stop.)
-  - WeakMap has been replaced with statsCache (experimental)
-  - Optimized by using free, used and allocated direct.
-  - Backoff in reconnect logic (by using Math)
-  - Clear reconnectTimeoutId (prevent memory leaks)
-  - Improve the overall speed by a bit
+- Remade `CONNECTION` module
+  - Way faster connections (Joining, reconnecting, connected, disconnect)
+  - Reduced memory overload by removing useless code
+  - Improved early Returns
 
-- Rewrited the `CONNECTION` System
-  - Improved the Connecting, Resolving, Reconnecting Speed (around 1,5x faster now)
-  - Improved checking
-  - Cached frequently used Code
-  - Object.assign Implemented for Batch updates
-  - Still in testing, pls report bugs
+- Remade `NODE` module
+  - MANY fixes for the connection logic (fixes reconnection, etc)
+  - Fixed memory leaks in heartbeat system (hopefully, reduced memory by a lot.)
+  - Faster connection speed and checkings
+  - Remade the Options system, improve JSON parsing
 
-- Some Additions for `AQUA`
-  - Implement the InfiniteReconnects Options
-  - Re-added our DOCS (Now autocomplete works again!)
-  - Add platforms + search system on DefaultPlatform
+- Rewrite `PLAYER` module
+  - Many memory related fixes
+  - Improved the overall code speed by a lot
+  - Rewrote setLoop, play, shuffle, replay methods (fixes + performance)
+  - Added 2 new options: 
 
-  - Rewrited the updateVoiceState System
-  - Misc changes to createConnection
-  - Document + fix destroyPlayer
+      leaveOnEnd: false, // Optional
+      
+      shouldDeleteMessage: true // Optional
+    
+  - Uses array for better performance and less memory allocation
+  - Rewrite the Events handling (speed and recourses fixes)
 
-- Remade some stuff in `FetchImage`
-  - Use promise.race since only first sucess is required. (will be tested, may revert to promise.any)
-  - Use map cuz its faster and more efficient than Objects.
+- Updated `TRACK` module
+  - Better object handling for internal code.
+  - Removed an useless method
+
+Thats all for now, im lazy, help me fix code and improve this on github... i can't test properly 😭😭😭
 
 # How to install
 
@@ -114,14 +110,11 @@ const nodes = [
 ];
 
 const aqua = new Aqua(client, nodes, {
-    send: (payload) => {
-        const guild = client.guilds.cache.get(payload.d.guild_id);
-        if (guild) guild.shard.send(payload);
-    },
-    defaultSearchPlatform: "ytsearch",
-    restVersion: "v4"
+  defaultSearchPlatform: "ytsearch",
+  restVersion: "v4",
+  autoResume: false,
+  infiniteReconnects: true,
 });
-
 
 client.aqua = aqua;
 
