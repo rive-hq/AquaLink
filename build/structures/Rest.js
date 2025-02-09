@@ -86,7 +86,7 @@ class Rest {
     }
 
     async getStats() {
-        const endpoint = this.version !== "v3" ? `/${this.version}/stats/all` : `/${this.version}/stats`;
+        const endpoint = `/${this.version}/stats/all`;
         return this.makeRequest("GET", endpoint);
     }
 
