@@ -1,5 +1,4 @@
 "use strict";
-
 const { request } = require("undici");
 
 class Rest {
@@ -7,8 +6,7 @@ class Rest {
         this.aqua = aqua;
         this.sessionId = sessionId;
         this.version = "v4";
-        this.url = `http${secure ? "s" : ""}://${host}:${port}`;
-        this.calls = 0;
+        this.baseUrl = `http${secure ? "s" : ""}://${host}:${port}`;
         this.headers = {
             "Content-Type": "application/json",
             Authorization: password,
@@ -23,11 +21,11 @@ class Rest {
         const options = {
             method,
             headers: this.headers,
-            body: body ? (typeof body === "string" ? body : JSON.stringify(body)) : undefined,
+            body: body ? JSON.stringify(body) : undefined,
         };
 
         try {
-            const { statusCode, headers, body: responseBody } = await request(`${this.url}${endpoint}`, options);
+            const { statusCode, headers, body: responseBody } = await request(`${this.baseUrl}${endpoint}`, options);
             this.aqua.emit("apiResponse", endpoint, { status: statusCode, headers: headers });
 
             if (statusCode === 204) {
@@ -42,11 +40,9 @@ class Rest {
     }
 
     buildEndpoint(...segments) {
-        return "/" + segments
-            .map(segment => segment.toString().trim().replace(/^\/+|\/+$/g, ""))
-            .join("/");
+        const validSegments = segments.filter(segment => segment && segment.trim());
+        return '/' + validSegments.join('/');
     }
-
     validateSessionId() {
         if (!this.sessionId) {
             throw new Error("Session ID is not set.");
@@ -54,8 +50,7 @@ class Rest {
     }
 
     updatePlayer({ guildId, data }) {
-        if ((data.track?.encoded && data.track?.identifier) ||
-            (data.encodedTrack && data.identifier)) {
+        if ((data.track?.encoded && data.track?.identifier) || (data.encodedTrack && data.identifier)) {
             throw new Error("Cannot provide both 'encoded' and 'identifier' for track");
         }
         this.validateSessionId();
@@ -91,9 +86,7 @@ class Rest {
     }
 
     async getStats() {
-        const endpoint = this.version !== "v3"
-            ? `/${this.version}/stats/all`
-            : `/${this.version}/stats`;
+        const endpoint = this.version !== "v3" ? `/${this.version}/stats/all` : `/${this.version}/stats`;
         return this.makeRequest("GET", endpoint);
     }
 
@@ -119,17 +112,9 @@ class Rest {
             if (res) return res;
         }
         this.validateSessionId();
-        const endpoint = this.buildEndpoint(
-            this.version,
-            "sessions",
-            this.sessionId,
-            "players",
-            track.guild_id,
-            "track",
-            "lyrics"
-        ) + "?skipTrackSource=false";
+        const endpoint = this.buildEndpoint(this.version, "sessions", this.sessionId, "players", track.guild_id, "track", "lyrics") + "?skipTrackSource=false";
         return this.makeRequest("GET", endpoint);
     }
 }
 
-module.exports = Rest 
+module.exports = Rest;
