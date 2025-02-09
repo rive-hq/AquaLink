@@ -113,12 +113,13 @@ class Aqua extends EventEmitter {
     updateVoiceState({ d, t }) {
         const player = this.players.get(d.guild_id);
         if (!player) return;
+
         if (t === "VOICE_SERVER_UPDATE" || (t === "VOICE_STATE_UPDATE" && d.user_id === this.clientId)) {
             const updateMethod = t === "VOICE_SERVER_UPDATE" ? "setServerUpdate" : "setStateUpdate";
             if (player.connection && typeof player.connection[updateMethod] === "function") {
                 player.connection[updateMethod](d);
             }
-            if (d.status === "disconnected") {
+            if (d.channel_id === null) {
                 this.cleanupPlayer(player);
             }
         }
