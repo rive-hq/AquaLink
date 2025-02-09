@@ -1,3 +1,5 @@
+"use strict";
+
 class Filters {
     constructor(player, options = {}) {
         this.player = player;
@@ -166,4 +168,4 @@ class Filters {
     }
 }
 
-module.exports =  {Filters} 
+module.exports = Filters

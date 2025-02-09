@@ -1,16 +1,17 @@
+"use strict";
+
 const { request } = require("undici");
 
 class Rest {
-    constructor(aqua, options) {
+    constructor(aqua, { secure, host, port, sessionId, password }) {
         this.aqua = aqua;
-        this.url = `http${options.secure ? "s" : ""}://${options.host}:${options.port}`;
-        this.sessionId = options.sessionId;
-        this.password = options.password;
-        this.version = options.restVersion || "v4";
+        this.sessionId = sessionId;
+        this.version = "v4";
+        this.url = `http${secure ? "s" : ""}://${host}:${port}`;
         this.calls = 0;
         this.headers = {
             "Content-Type": "application/json",
-            Authorization: this.password,
+            Authorization: password,
         };
     }
 
@@ -22,90 +23,113 @@ class Rest {
         const options = {
             method,
             headers: this.headers,
+            body: body ? (typeof body === "string" ? body : JSON.stringify(body)) : undefined,
         };
 
-        if (body) {
-            options.body = JSON.stringify(body);
-        }
+        try {
+            const { statusCode, headers, body: responseBody } = await request(`${this.url}${endpoint}`, options);
+            this.aqua.emit("apiResponse", endpoint, { status: statusCode, headers: headers });
 
-        const response = await request(`${this.url}${endpoint}`, options);
-        if (response.statusCode === 204) return null;
-        this.calls++;
-        const data = await response.body.json();
-        this.aqua.emit("apiResponse", endpoint, {
-            status: response.statusCode,
-            headers: response.headers,
-        });
-        response.body.destroy();
-        return data;
+            if (statusCode === 204) {
+                return null;
+            }
+
+            const data = await responseBody.text();
+            return data ? JSON.parse(data) : null;
+        } catch (error) {
+            throw new Error(`Request to ${endpoint} failed: ${error.message}`);
+        }
     }
 
-     updatePlayer(options) {
-        const requestBody = { ...options.data };
+    buildEndpoint(...segments) {
+        return "/" + segments
+            .map(segment => segment.toString().trim().replace(/^\/+|\/+$/g, ""))
+            .join("/");
+    }
 
-        if ((requestBody.track?.encoded && requestBody.track?.identifier) ||
-            (requestBody.encodedTrack && requestBody.identifier)) {
+    validateSessionId() {
+        if (!this.sessionId) {
+            throw new Error("Session ID is not set.");
+        }
+    }
+
+    updatePlayer({ guildId, data }) {
+        if ((data.track?.encoded && data.track?.identifier) ||
+            (data.encodedTrack && data.identifier)) {
             throw new Error("Cannot provide both 'encoded' and 'identifier' for track");
         }
-
-        if (this.version === "v3" && requestBody.track) {
-            const { track } = requestBody;
-            delete requestBody.track;
-            requestBody[track.encoded ? 'encodedTrack' : 'identifier'] = track.encoded || track.identifier;
-        }
-
-        return this.makeRequest(
-            "PATCH",
-            `/${this.version}/sessions/${this.sessionId}/players/${options.guildId}?noReplace=false`,
-            requestBody
-        );
+        this.validateSessionId();
+        const endpoint = this.buildEndpoint(this.version, "sessions", this.sessionId, "players", guildId) + "?noReplace=false";
+        return this.makeRequest("PATCH", endpoint, data);
     }
 
-    getPlayers() {
-        return this.makeRequest("GET", `/${this.version}/sessions/${this.sessionId}/players`);
+    async getPlayers() {
+        this.validateSessionId();
+        const endpoint = this.buildEndpoint(this.version, "sessions", this.sessionId, "players");
+        return this.makeRequest("GET", endpoint);
     }
 
-    destroyPlayer(guildId) {
-        return this.makeRequest("DELETE", `/${this.version}/sessions/${this.sessionId}/players/${guildId}`);
+    async destroyPlayer(guildId) {
+        this.validateSessionId();
+        const endpoint = this.buildEndpoint(this.version, "sessions", this.sessionId, "players", guildId);
+        return this.makeRequest("DELETE", endpoint);
     }
 
-    getTracks(identifier) {
-        return this.makeRequest("GET", `/${this.version}/loadtracks?identifier=${encodeURIComponent(identifier)}`);
+    async getTracks(identifier) {
+        const endpoint = `/${this.version}/loadtracks?identifier=${encodeURIComponent(identifier)}`;
+        return this.makeRequest("GET", endpoint);
     }
 
-    decodeTrack(track) {
-        return this.makeRequest("GET", `/${this.version}/decodetrack?encodedTrack=${encodeURIComponent(track)}`);
+    async decodeTrack(track) {
+        const endpoint = `/${this.version}/decodetrack?encodedTrack=${encodeURIComponent(track)}`;
+        return this.makeRequest("GET", endpoint);
     }
 
-    decodeTracks(tracks) {
-        return this.makeRequest("POST", `/${this.version}/decodetracks`, tracks);
+    async decodeTracks(tracks) {
+        const endpoint = `/${this.version}/decodetracks`;
+        return this.makeRequest("POST", endpoint, tracks);
     }
 
-    getStats() {
-        return this.makeRequest("GET", `/${this.version}/stats${this.version !== "v3" ? "/all" : ""}`);
+    async getStats() {
+        const endpoint = this.version !== "v3"
+            ? `/${this.version}/stats/all`
+            : `/${this.version}/stats`;
+        return this.makeRequest("GET", endpoint);
     }
 
-    getInfo() {
-        return this.makeRequest("GET", `/${this.version}/info`);
+    async getInfo() {
+        const endpoint = `/${this.version}/info`;
+        return this.makeRequest("GET", endpoint);
     }
 
-    getRoutePlannerStatus() {
-        return this.makeRequest("GET", `/${this.version}/routeplanner/status`);
+    async getRoutePlannerStatus() {
+        const endpoint = `/${this.version}/routeplanner/status`;
+        return this.makeRequest("GET", endpoint);
     }
 
-    getRoutePlannerAddress(address) {
-        return this.makeRequest("POST", `/${this.version}/routeplanner/free/address`, { address });
+    async getRoutePlannerAddress(address) {
+        const endpoint = `/${this.version}/routeplanner/free/address`;
+        return this.makeRequest("POST", endpoint, { address });
     }
+
     async getLyrics({ track }) {
         if (track.search) {
-            const v2 = await this.makeRequest("GET", `/v4/lyrics/search?query=${track.encoded.info.title}&source=genius`);
-            if (v2) {
-                return v2;
-            }
+            const endpoint = `/v4/lyrics/search?query=${encodeURIComponent(track.encoded.info.title)}&source=genius`;
+            const res = await this.makeRequest("GET", endpoint);
+            if (res) return res;
         }
-        const v4 = await this.makeRequest("GET", `/v4/sessions/${this.sessionId}/players/${track.guild_id}/track/lyrics?skipTrackSource=false`);
-        return  v4; 
+        this.validateSessionId();
+        const endpoint = this.buildEndpoint(
+            this.version,
+            "sessions",
+            this.sessionId,
+            "players",
+            track.guild_id,
+            "track",
+            "lyrics"
+        ) + "?skipTrackSource=false";
+        return this.makeRequest("GET", endpoint);
     }
 }
 
-module.exports = { Rest };
+module.exports = Rest 

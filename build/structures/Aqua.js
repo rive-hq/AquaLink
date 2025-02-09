@@ -1,7 +1,9 @@
-const { EventEmitter } = require("events");
-const { Node } = require("./Node");
-const { Player } = require("./Player");
-const { Track } = require("./Track");
+"use strict";
+
+const { EventEmitter } = require("node:events");
+const  Node = require("./Node");
+const  Player  = require("./Player");
+const  Track  = require("./Track");
 const { version: pkgVersion } = require("../../package.json");
 const URL_REGEX = /^https?:\/\//;
 
@@ -273,4 +275,4 @@ class Aqua extends EventEmitter {
     }
 }
 
-module.exports = { Aqua };
+module.exports = Aqua 
