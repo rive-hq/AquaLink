@@ -1,5 +1,4 @@
 "use strict";
-
 const { getImageUrl } = require("../handlers/fetchImage");
 /**
  * @typedef {import("../Aqua")} Aqua
@@ -12,9 +11,9 @@ class Track {
    * @param {Player} requester
    * @param {Node} nodes
    */
-  constructor(data, requester, nodes) {
-    const { info = {}, encoded = null, playlist = null } = data || {};
-    this.info = Object.freeze({
+  constructor(data = {}, requester, nodes) {
+    const { info = {}, encoded = null, playlist = null } = data;
+    this.info = {
       identifier: info.identifier || '',
       isSeekable: !!info.isSeekable,
       author: info.author || '',
@@ -24,22 +23,20 @@ class Track {
       uri: info.uri || '',
       sourceName: info.sourceName || '',
       artworkUrl: info.artworkUrl || ''
-    });
+    };
     this.track = encoded;
     this.playlist = playlist;
     this.requester = requester;
     this.nodes = nodes;
   }
-
   /**
    * @param {string} thumbnail
    * @returns {string|null}
    */
   resolveThumbnail(thumbnail) {
     if (!thumbnail) return null;
-    return thumbnail.startsWith("http") ? thumbnail : getImageUrl(thumbnail, this.nodes);
+    return getImageUrl(thumbnail);
   }
-
   /**
    * @param {Aqua} aqua
    * @returns {Promise<Track|null>}
@@ -47,7 +44,6 @@ class Track {
   async resolve(aqua) {
     const searchPlatform = aqua?.options?.defaultSearchPlatform;
     if (!searchPlatform) return null;
-
     try {
       const query = `${this.info.author} - ${this.info.title}`;
       const result = await aqua.resolve({
@@ -56,41 +52,29 @@ class Track {
         requester: this.requester,
         node: this.nodes
       });
-
       if (!result?.tracks?.length) return null;
-
       const track = this._findMatchingTrack(result.tracks);
       if (!track) return null;
-
       this.info.identifier = track.info.identifier;
       this.track = track.track;
       this.playlist = track.playlist || null;
-
       return this;
     } catch (error) {
       console.error("Error resolving track:", error);
       return null;
     }
   }
-
-  /**
-   * @private
-   */
   _findMatchingTrack(tracks) {
     const { author, title, length } = this.info;
-
     for (const track of tracks) {
       const tInfo = track.info;
-
-      if (author && title && author === tInfo.author && title === tInfo.title) {
+      if (author === tInfo.author && title === tInfo.title) {
         if (!length || Math.abs(tInfo.length - length) <= 2000) {
           return track;
         }
       }
     }
-
-    return tracks[0];
+    return null;
   }
 }
-
-module.exports = Track 
+module.exports = Track;
