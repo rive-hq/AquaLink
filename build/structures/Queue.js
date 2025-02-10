@@ -1,3 +1,4 @@
+
 class Queue extends Array {
     /**
      * @param {...*} elements - The elements to initialize the queue with.
@@ -93,5 +94,4 @@ class Queue extends Array {
 
 }
 
-module.exports = { Queue };
-
+module.exports =  Queue 
