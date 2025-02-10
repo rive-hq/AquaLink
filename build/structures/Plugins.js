@@ -1,3 +1,4 @@
+
 class Plugin {
     constructor(name) {
         this.name = name;
@@ -7,4 +8,4 @@ class Plugin {
     unload(aqua) { }
 }
 
-module.exports = { Plugin };
+module.exports = Plugin 
