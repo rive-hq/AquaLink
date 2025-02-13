@@ -1,7 +1,6 @@
 "use strict";
-
 const WebSocket = require("ws");
-const  Rest  = require("./Rest");
+const Rest = require("./Rest");
 
 class Node {
     #ws = null;
@@ -38,39 +37,39 @@ class Node {
         this.infiniteReconnects = options.infiniteReconnects || false;
         this.connected = false;
         this.info = null;
-        this.stats = this.#createStats();
-
         this._onOpen = this.#onOpen.bind(this);
         this._onError = this.#onError.bind(this);
         this._onMessage = this.#onMessage.bind(this);
         this._onClose = this.#onClose.bind(this);
     }
 
-    #createStats() {
-        return {
-            players: 0,
-            playingPlayers: 0,
-            uptime: 0,
-            memory: { free: 0, used: 0, allocated: 0, reservable: 0, freePercentage: 0, usedPercentage: 0 },
-            cpu: { cores: 0, systemLoad: 0, lavalinkLoad: 0, lavalinkLoadPercentage: 0 },
-            frameStats: { sent: 0, nulled: 0, deficit: 0 },
-            ping: 0
-        };
+    createStats() {
+        if (!this.defaultStats) {
+            this.defaultStats = {
+                players: 0,
+                playingPlayers: 0,
+                uptime: 0,
+                memory: { free: 0, used: 0, allocated: 0, reservable: 0, freePercentage: 0, usedPercentage: 0 },
+                cpu: { cores: 0, systemLoad: 0, lavalinkLoad: 0, lavalinkLoadPercentage: 0 },
+                frameStats: { sent: 0, nulled: 0, deficit: 0 },
+                ping: 0
+            };
+        }
+        return { ...this.defaultStats }; 
     }
 
     async connect() {
         this.#ws = new WebSocket(this.wsUrl.href, {
             headers: this.#constructHeaders(),
             perMessageDeflate: false,
-            handshakeTimeout: 30000
         });
-
         this.#ws.once("open", this._onOpen);
         this.#ws.once("error", this._onError);
         this.#ws.on("message", this._onMessage);
         this.#ws.once("close", this._onClose);
-        this.aqua.emit("debug", this.name, "Connecting...");
     }
+
+
 
     #constructHeaders() {
         return {
@@ -86,30 +85,46 @@ class Node {
         this.connected = true;
         this.#reconnectAttempted = 0;
         this.aqua.emit("debug", this.name, `Connected to ${this.wsUrl.href}`);
-        try {
-            this.info = await this.rest.makeRequest("GET", "/v4/info");
-            if (this.autoResume) await this.resumePlayers();
-        } catch (err) {
-            this.info = null;
-            if (!this.aqua.bypassChecks?.nodeFetchInfo) {
-                this.aqua.emit("error", `Failed to fetch node info: ${err.message}`);
+        
+        if (this.autoResume) {
+            try {
+                this.info = await this.rest.makeRequest("GET", "/v4/info");
+                await this.resumePlayers();
+            } catch (err) {
+                this.info = null;
+                if (!this.aqua.bypassChecks?.nodeFetchInfo) {
+                    this.aqua.emit("error", `Failed to fetch node info: ${err.message}`);
+                }
             }
         }
     }
 
     async getStats() {
-        if (!this.connected) return this.stats;
-        const now = Date.now();
-        const STATS_COOLDOWN = 60000;
-        if (now - this.#lastStatsRequest < STATS_COOLDOWN) return this.stats;
-        try {
-            const stats = await this.rest.makeRequest("GET", "/v4/stats");
-            this.stats = { ...this.#createStats(), ...stats };
-            this.#lastStatsRequest = now;
-        } catch (err) {
-            this.aqua.emit("debug", `Stats fetch error: ${err.message}`);
-        }
+        const stats = await this.rest.makeRequest("GET", "/v4/stats");
+        this.stats = { ...this.createStats(), ...stats };
         return this.stats;
+    }
+
+    async #onMessage(msg) {
+        let payload;
+        try {
+            payload = JSON.parse(msg);
+        } catch {
+            return;
+        }
+        const op = payload?.op;
+        if (!op) return;
+
+        switch (op) {
+            case "stats":
+                this.#updateStats(payload);
+                break;
+            case "ready":
+                this.#handleReadyOp(payload);
+                break;
+            default:
+                this.#handlePlayerOp(payload);
+        }
     }
 
     #updateStats(payload) {
@@ -120,7 +135,7 @@ class Node {
             memory: this.#updateMemoryStats(payload.memory),
             cpu: this.#updateCpuStats(payload.cpu),
             frameStats: this.#updateFrameStats(payload.frameStats)
-        };
+        }; 
     }
 
     #updateMemoryStats(memory = {}) {
@@ -156,30 +171,6 @@ class Node {
         };
     }
 
- #onMessage(msg) {
-        let payload;
-        try {
-            payload = JSON.parse(msg);
-        } catch {
-            return;
-        }
-
-        const op = payload?.op;
-        if (!op) return;
-
-        // Use switch for better performance with multiple conditions
-        switch (op) {
-            case "stats":
-                this.#updateStats(payload);
-                break;
-            case "ready":
-                this.#handleReadyOp(payload);
-                break;
-            default:
-                this.#handlePlayerOp(payload);
-        }
-    }
-
     #handleReadyOp(payload) {
         if (this.sessionId !== payload.sessionId) {
             this.sessionId = payload.sessionId;
@@ -209,22 +200,18 @@ class Node {
             setTimeout(() => this.connect(), 10000);
             return;
         }
-
         if (this.#reconnectAttempted >= this.reconnectTries) {
             this.aqua.emit("nodeError", this, 
                 new Error(`Max reconnection attempts reached (${this.reconnectTries})`));
             this.destroy(true);
             return;
         }
-
         clearTimeout(this.#reconnectTimeoutId);
-        
         const jitter = Math.random() * 10000;
         const backoffTime = Math.min(
             this.reconnectTimeout * Math.pow(Node.BACKOFF_MULTIPLIER, this.#reconnectAttempted) + jitter,
             Node.MAX_BACKOFF
         );
-
         this.#reconnectTimeoutId = setTimeout(() => {
             this.#reconnectAttempted++;
             this.aqua.emit("nodeReconnect", {
@@ -234,22 +221,6 @@ class Node {
             });
             this.connect();
         }, backoffTime);
-    }
-
-    get penalties() {
-        if (!this.connected) return Number.MAX_SAFE_INTEGER;
-        
-        let penalties = this.stats.players;
-        
-        const { cpu, frameStats } = this.stats;
-        if (cpu?.systemLoad) {
-            penalties += Math.round(Math.pow(1.05, 100 * cpu.systemLoad) * 10 - 10);
-        }
-        if (frameStats) {
-            penalties += frameStats.deficit + (frameStats.nulled * 2);
-        }
-        
-        return penalties;
     }
 
     destroy(clean = false) {
@@ -270,8 +241,7 @@ class Node {
         this.aqua.emit("nodeDestroy", this);
         this.info = null;
         this.#lastStatsRequest = 0;
-        this.stats = this.#createStats();
     }
 }
 
-module.exports = Node 
+module.exports = Node;
