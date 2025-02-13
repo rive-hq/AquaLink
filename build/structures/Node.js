@@ -4,9 +4,10 @@ const Rest = require("./Rest");
 
 class Node {
     #ws = null;
-    #lastStatsRequest = 0;
     #reconnectAttempted = 0;
     #reconnectTimeoutId = null;
+    static BACKOFF_MULTIPLIER = 1.5;
+    static MAX_BACKOFF = 60000;
 
     constructor(aqua, connOptions, options = {}) {
         const {
@@ -37,25 +38,24 @@ class Node {
         this.infiniteReconnects = options.infiniteReconnects || false;
         this.connected = false;
         this.info = null;
+        this.defaultStats = this.#createDefaultStats();
+        this.stats = { ...this.defaultStats };
         this._onOpen = this.#onOpen.bind(this);
         this._onError = this.#onError.bind(this);
         this._onMessage = this.#onMessage.bind(this);
         this._onClose = this.#onClose.bind(this);
     }
 
-    createStats() {
-        if (!this.defaultStats) {
-            this.defaultStats = {
-                players: 0,
-                playingPlayers: 0,
-                uptime: 0,
-                memory: { free: 0, used: 0, allocated: 0, reservable: 0, freePercentage: 0, usedPercentage: 0 },
-                cpu: { cores: 0, systemLoad: 0, lavalinkLoad: 0, lavalinkLoadPercentage: 0 },
-                frameStats: { sent: 0, nulled: 0, deficit: 0 },
-                ping: 0
-            };
-        }
-        return { ...this.defaultStats }; 
+    #createDefaultStats() {
+        return {
+            players: 0,
+            playingPlayers: 0,
+            uptime: 0,
+            memory: { free: 0, used: 0, allocated: 0, reservable: 0, freePercentage: 0, usedPercentage: 0 },
+            cpu: { cores: 0, systemLoad: 0, lavalinkLoad: 0, lavalinkLoadPercentage: 0 },
+            frameStats: { sent: 0, nulled: 0, deficit: 0 },
+            ping: 0
+        };
     }
 
     async connect() {
@@ -68,8 +68,6 @@ class Node {
         this.#ws.on("message", this._onMessage);
         this.#ws.once("close", this._onClose);
     }
-
-
 
     #constructHeaders() {
         return {
@@ -101,7 +99,7 @@ class Node {
 
     async getStats() {
         const stats = await this.rest.makeRequest("GET", "/v4/stats");
-        this.stats = { ...this.createStats(), ...stats };
+        this.stats = { ...this.defaultStats, ...stats };
         return this.stats;
     }
 
@@ -240,7 +238,6 @@ class Node {
         this.aqua.nodeMap.delete(this.name);
         this.aqua.emit("nodeDestroy", this);
         this.info = null;
-        this.#lastStatsRequest = 0;
     }
 }
 
