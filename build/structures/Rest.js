@@ -1,5 +1,5 @@
 "use strict";
-const { request } = require("undici");
+const { Pool } = require("undici");
 
 class Rest {
     constructor(aqua, { secure, host, port, sessionId, password }) {
@@ -11,6 +11,8 @@ class Rest {
             "Content-Type": "application/json",
             Authorization: password,
         };
+
+        this.client = new Pool(this.baseUrl, { connections: 10 });
     }
 
     setSessionId(sessionId) {
@@ -19,21 +21,22 @@ class Rest {
 
     async makeRequest(method, endpoint, body = null) {
         const options = {
+            path: endpoint,
             method,
             headers: this.headers,
-            body: body ? JSON.stringify(body) : undefined,
+            ...(body && { body: JSON.stringify(body) })
         };
 
         try {
-            const { statusCode, headers, body: responseBody } = await request(`${this.baseUrl}${endpoint}`, options);
-            this.aqua.emit("apiResponse", endpoint, { status: statusCode, headers: headers });
+            const response = await this.client.request(options);
+            const { statusCode, headers } = response;
+            this.aqua.emit("apiResponse", endpoint, { status: statusCode, headers });
 
             if (statusCode === 204) {
                 return null;
             }
 
-            const data = await responseBody.text();
-            return data ? JSON.parse(data) : null;
+            return response.body.json();
         } catch (error) {
             throw new Error(`Request to ${endpoint} failed: ${error.message}`);
         }
@@ -43,6 +46,7 @@ class Rest {
         const validSegments = segments.filter(segment => segment && segment.trim());
         return '/' + validSegments.join('/');
     }
+
     validateSessionId() {
         if (!this.sessionId) {
             throw new Error("Session ID is not set.");
