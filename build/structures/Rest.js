@@ -2,7 +2,7 @@
 const { Pool } = require("undici");
 
 class Rest {
-    constructor(aqua, { secure, host, port, sessionId, password }) {
+    constructor(aqua, { secure, host, port, sessionId, password,}) {
         this.aqua = aqua;
         this.sessionId = sessionId;
         this.version = "v4";
@@ -11,8 +11,9 @@ class Rest {
             "Content-Type": "application/json",
             Authorization: password,
         };
-
-        this.client = new Pool(this.baseUrl, { connections: 10 });
+        this.client = new Pool(this.baseUrl, {
+            pipelining: 1,
+        });
     }
 
     setSessionId(sessionId) {
@@ -24,19 +25,12 @@ class Rest {
             path: endpoint,
             method,
             headers: this.headers,
-            ...(body && { body: JSON.stringify(body) })
+            ...(body && { body: JSON.stringify(body) }),
         };
-
         try {
             const response = await this.client.request(options);
-            const { statusCode, headers } = response;
-            this.aqua.emit("apiResponse", endpoint, { status: statusCode, headers });
-
-            if (statusCode === 204) {
-                return null;
-            }
-
-            return response.body.json();
+            const { statusCode } = response;
+            return statusCode === 204 ? null : await response.body.json();
         } catch (error) {
             throw new Error(`Request to ${endpoint} failed: ${error.message}`);
         }
@@ -53,10 +47,14 @@ class Rest {
         }
     }
 
-    updatePlayer({ guildId, data }) {
-        if ((data.track?.encoded && data.track?.identifier) || (data.encodedTrack && data.identifier)) {
+    async updatePlayer({ guildId, data }) {
+        const hasEncodedTrack = data.track?.encoded && data.track?.identifier;
+        const hasEncodedTrackAlt = data.encodedTrack && data.identifier;
+
+        if (hasEncodedTrack || hasEncodedTrackAlt) {
             throw new Error("Cannot provide both 'encoded' and 'identifier' for track");
         }
+
         this.validateSessionId();
         const endpoint = this.buildEndpoint(this.version, "sessions", this.sessionId, "players", guildId) + "?noReplace=false";
         return this.makeRequest("PATCH", endpoint, data);
