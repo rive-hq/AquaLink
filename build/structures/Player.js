@@ -49,7 +49,11 @@ class Player extends EventEmitter {
         
         this.onPlayerUpdate = ({ state } = {}) => {
             if (!state) return;
-            Object.assign(this, state);
+            for (const key in state) {
+                if (state.hasOwnProperty(key)) {
+                    this[key] = state[key];
+                }
+            }
             this.aqua.emit("playerUpdate", this, { state });
         };
         this.handleEvent = async (payload) => {
@@ -64,7 +68,6 @@ class Player extends EventEmitter {
         };
         this.on("playerUpdate", this.onPlayerUpdate);
         this.on("event", this.handleEvent);
-        this.#dataStore = new Map();
     }
 
     get previous() {
@@ -308,8 +311,7 @@ class Player extends EventEmitter {
         this.aqua.send({ op: 4, d: data });
     }
 
-     // Optimize data storage
-     #dataStore;
+     #dataStore = new Map();
 
      set(key, value) {
          this.#dataStore.set(key, value);
@@ -324,11 +326,8 @@ class Player extends EventEmitter {
          return this;
      }
 
-    async updatePlayer(data) {
-        return this.nodes.rest.updatePlayer({
-            guildId: this.guildId,
-            data,
-        });
+    updatePlayer(data) {
+        return this.nodes.rest.updatePlayer({ guildId: this.guildId, data });
     }
 
     handleUnknownEvent(payload) {
