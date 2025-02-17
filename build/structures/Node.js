@@ -63,10 +63,10 @@ class Node {
             headers: this.#constructHeaders(),
             perMessageDeflate: false,
         });
-        this.#ws.once("open", this._onOpen);
-        this.#ws.once("error", this._onError);
-        this.#ws.on("message", this._onMessage);
-        this.#ws.once("close", this._onClose);
+        this.#ws.once('open', this._onOpen);
+        this.#ws.once('error', this._onError);
+        this.#ws.on('message', this._onMessage);
+        this.#ws.once('close', this._onClose);
     }
 
     #constructHeaders() {
@@ -83,7 +83,6 @@ class Node {
         this.connected = true;
         this.#reconnectAttempted = 0;
         this.aqua.emit("debug", this.name, `Connected to ${this.wsUrl.href}`);
-        
         if (this.autoResume) {
             try {
                 this.info = await this.rest.makeRequest("GET", "/v4/info");
@@ -112,7 +111,6 @@ class Node {
         }
         const op = payload?.op;
         if (!op) return;
-
         switch (op) {
             case "stats":
                 this.#updateStats(payload);
@@ -127,19 +125,19 @@ class Node {
 
     #updateStats(payload) {
         if (!payload) return;
-        this.stats = {
-            ...this.stats,
-            ...payload,
-            memory: this.#updateMemoryStats(payload.memory),
-            cpu: this.#updateCpuStats(payload.cpu),
-            frameStats: this.#updateFrameStats(payload.frameStats)
-        }; 
+
+        // Directly modify the stats object
+        Object.assign(this.stats, payload);
+        this.stats.memory = this.#updateMemoryStats(payload.memory);
+        this.stats.cpu = this.#updateCpuStats(payload.cpu);
+        this.stats.frameStats = this.#updateFrameStats(payload.frameStats);
     }
 
     #updateMemoryStats(memory = {}) {
         const allocated = memory.allocated || 0;
         const free = memory.free || 0;
         const used = memory.used || 0;
+
         return {
             free,
             used,
@@ -192,7 +190,7 @@ class Node {
         this.#reconnect();
     }
 
-    #reconnect() {
+    async #reconnect() {
         if (this.infiniteReconnects) {
             this.aqua.emit("nodeReconnect", this, "Infinite reconnects enabled, trying non-stop...");
             setTimeout(() => this.connect(), 10000);
@@ -205,23 +203,25 @@ class Node {
             return;
         }
         clearTimeout(this.#reconnectTimeoutId);
-        const jitter = Math.random() * 10000;
+        const controlledJitterFraction = 0.2;
+        const jitter = this.reconnectTimeout * controlledJitterFraction * Math.random();
         const backoffTime = Math.min(
             this.reconnectTimeout * Math.pow(Node.BACKOFF_MULTIPLIER, this.#reconnectAttempted) + jitter,
             Node.MAX_BACKOFF
         );
-        this.#reconnectTimeoutId = setTimeout(() => {
+        this.#reconnectTimeoutId = setTimeout(async () => {
             this.#reconnectAttempted++;
             this.aqua.emit("nodeReconnect", {
                 nodeName: this.name,
                 attempt: this.#reconnectAttempted,
                 backoffTime
             });
-            this.connect();
+            await this.connect();
         }, backoffTime);
     }
 
     destroy(clean = false) {
+        clearTimeout(this.#reconnectTimeoutId);
         if (clean) {
             this.aqua.emit("nodeDestroy", this);
             this.aqua.nodes.delete(this.name);
