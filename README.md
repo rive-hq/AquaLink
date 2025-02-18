@@ -4,7 +4,7 @@ An Stable, performant, Recourse friendly and fast lavalink wrapper
 This code is based in riffy, but its an 100% Rewrite made from scratch...
 
 # Why use AquaLink
-- In dev
+- Works with [Lavalink](https://github.com/lavalink-devs/Lavalink) and [NodeLink](https://github.com/PerformanC/NodeLink)
 - Very Low memory comsuption
 - Built in Queue manager
 - Lots of features to use
