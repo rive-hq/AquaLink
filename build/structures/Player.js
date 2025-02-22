@@ -45,15 +45,11 @@ class Player extends EventEmitter {
         this.nowPlayingMessage = null;
         this.previousTracks = [];
         this.shouldDeleteMessage = options.shouldDeleteMessage ?? false;
-        this.leaveOnEnd = options.leaveOnEnd ?? true;
+        this.leaveOnEnd = options.leaveOnEnd ?? false;
         
         this.onPlayerUpdate = ({ state } = {}) => {
             if (!state) return;
-            for (const key in state) {
-                if (state.hasOwnProperty(key)) {
-                    this[key] = state[key];
-                }
-            }
+            Object.assign(this, state);
             this.aqua.emit("playerUpdate", this, { state });
         };
         this.handleEvent = async (payload) => {
@@ -68,6 +64,7 @@ class Player extends EventEmitter {
         };
         this.on("playerUpdate", this.onPlayerUpdate);
         this.on("event", this.handleEvent);
+        this.#dataStore = new Map();
     }
 
     get previous() {
@@ -311,7 +308,8 @@ class Player extends EventEmitter {
         this.aqua.send({ op: 4, d: data });
     }
 
-     #dataStore = new Map();
+     // Optimize data storage
+     #dataStore;
 
      set(key, value) {
          this.#dataStore.set(key, value);
@@ -326,8 +324,11 @@ class Player extends EventEmitter {
          return this;
      }
 
-    updatePlayer(data) {
-        return this.nodes.rest.updatePlayer({ guildId: this.guildId, data });
+    async updatePlayer(data) {
+        return this.nodes.rest.updatePlayer({
+            guildId: this.guildId,
+            data,
+        });
     }
 
     handleUnknownEvent(payload) {
