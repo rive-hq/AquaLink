@@ -1,8 +1,8 @@
 "use strict";
-const { Pool } = require("undici");
 
+const { request } = require("undici");
 class Rest {
-    constructor(aqua, { secure, host, port, sessionId, password,}) {
+    constructor(aqua, { secure, host, port, sessionId, password }) {
         this.aqua = aqua;
         this.sessionId = sessionId;
         this.version = "v4";
@@ -11,9 +11,6 @@ class Rest {
             "Content-Type": "application/json",
             Authorization: password,
         };
-        this.client = new Pool(this.baseUrl, {
-            pipelining: 1,
-        });
     }
 
     setSessionId(sessionId) {
@@ -22,15 +19,16 @@ class Rest {
 
     async makeRequest(method, endpoint, body = null) {
         const options = {
-            path: endpoint,
             method,
             headers: this.headers,
-            ...(body && { body: JSON.stringify(body) }),
         };
+        if (body && method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
+            options.body = JSON.stringify(body);
+        }
         try {
-            const response = await this.client.request(options);
-            const { statusCode } = response;
-            return statusCode === 204 ? null : await response.body.json();
+            const response = await request(`${this.baseUrl}${endpoint}`, options);
+            const data = response.status === 204 ? null : await response.body.json();
+            return data;
         } catch (error) {
             throw new Error(`Request to ${endpoint} failed: ${error.message}`);
         }
