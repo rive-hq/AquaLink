@@ -1,8 +1,9 @@
 {
   "name": "aqualink",
-  "version": "1.8.0",
+  "version": "1.8.1-beta5",
   "description": "An Lavalink wrapper, focused in speed, performance, and features, Based in Riffy!",
   "main": "build/index.js",
+  "types": "index.d.ts",
   "scripts": {
     "start": "node ./build/index.js"
   },
@@ -36,8 +37,8 @@
   "author": "mushroom0162 (https://github.com/ToddyTheNoobDud)",
   "license": "ISC",
   "dependencies": {
-    "undici": "^7.3.0",
-    "ws": "^8.18.0"
+    "undici": "^7.4.0",
+		"@toddynnn/pwsl-mini": "github:ToddyTheNoobDud/websocket"
   },
   "repository": {
     "type": "git",
