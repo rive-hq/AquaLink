@@ -1,5 +1,5 @@
 "use strict";
-const WebSocket = require("ws");
+const WebSocket = require("@toddynnn/pwsl-mini");
 const Rest = require("./Rest");
 
 class Node {
@@ -98,7 +98,7 @@ class Node {
     }
 
     async getStats() {
-        const stats = await this.rest.getStats();
+        const stats = await this.rest.makeRequest("GET", "/v4/stats");
         this.stats = { ...this.defaultStats, ...stats };
         return this.stats;
     }
