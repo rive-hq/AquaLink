@@ -98,7 +98,7 @@ class Node {
     }
 
     async getStats() {
-        const stats = await this.rest.makeRequest("GET", "/v4/stats");
+        const stats = await this.rest.getStats();
         this.stats = { ...this.defaultStats, ...stats };
         return this.stats;
     }
