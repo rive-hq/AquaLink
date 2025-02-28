@@ -238,7 +238,7 @@ class Player extends EventEmitter {
         this.aqua.emit("trackStart", player, track);
     }
 
-    trackChange(player, track) {
+    async trackChange(player, track) {
         this.updateTrackState(true, false);
         this.aqua.emit("trackChange", player, track);
     }
