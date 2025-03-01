@@ -1,9 +1,9 @@
 "use strict";
 
 const { EventEmitter } = require("node:events");
-const  Node = require("./Node");
-const  Player  = require("./Player");
-const  Track  = require("./Track");
+const Node = require("./Node");
+const Player = require("./Player");
+const Track = require("./Track");
 const { version: pkgVersion } = require("../../package.json");
 const URL_REGEX = /^https?:\/\//;
 
@@ -167,16 +167,12 @@ class Aqua extends EventEmitter {
     async destroyPlayer(guildId) {
         const player = this.players.get(guildId);
         if (!player) return;
-        try {
-            await player.clearData();
-            player.removeAllListeners();
-            this.players.delete(guildId);
-            this.emit("playerDestroy", player);
-        } catch (error) {
-            console.error(`Error destroying player for guild ${guildId}:`, error);
-        }
+        player.destroy();
+        this.players.delete(guildId);
+    
+        this.emit("playerDestroy", player);
     }
-
+    
     async resolve({ query, source = this.defaultSearchPlatform, requester, nodes }) {
         this.ensureInitialized();
         const requestNode = this.getRequestNode(nodes);
