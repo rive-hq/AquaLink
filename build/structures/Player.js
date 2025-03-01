@@ -116,7 +116,6 @@ class Player extends EventEmitter {
         this.nowPlayingMessage?.delete().catch(() => { });
         this.aqua.destroyPlayer(this.guildId);
         this.nodes.rest.destroyPlayer(this.guildId);
-        this.removeAllListeners();
         return this;
     }
 
