@@ -3,58 +3,41 @@
 class Connection {
     constructor(player) {
         this.playerRef = new WeakRef(player);
-        const { voiceChannel, guildId, aqua, nodes } = player;
-        this.voice = {
-            sessionId: null,
-            endpoint: null,
-            token: null
-        };
+        this.voice = { sessionId: null, endpoint: null, token: null };
         this.region = null;
         this.selfDeaf = false;
         this.selfMute = false;
-        this.voiceChannel = voiceChannel;
-        this.guildId = guildId;
-        this.aqua = aqua;
-        this.nodes = nodes;
+        this.voiceChannel = player.voiceChannel;
+        this.guildId = player.guildId;
+        this.aqua = player.aqua;
+        this.nodes = player.nodes;
     }
 
-    setServerUpdate(data = {}) {
-        const { endpoint, token } = data;
-
-        if (!endpoint) {
-            throw new Error("Missing 'endpoint' property");
-        }
-
+    setServerUpdate({ endpoint, token } = {}) {
+        if (!endpoint) throw new Error("Missing 'endpoint' property");
         const newRegion = endpoint.split('.')[0];
         if (this.region !== newRegion) {
-            this.voice.endpoint = endpoint;
-            this.voice.token = token;
+            this.voice = { ...this.voice, endpoint, token };
             const prevRegion = this.region;
             this.region = newRegion;
-
-            const message = prevRegion
-                ? `Changed Voice Region from ${prevRegion} to ${newRegion}`
-                : `Voice Server: ${newRegion}`;
-
-            this.aqua.emit("debug", `[Player ${this.guildId} - CONNECTION] ${message}`);
-            this._updatePlayerVoiceData(); 
+            this.aqua.emit("debug", `[Player ${this.guildId} - CONNECTION] Voice Server: ${prevRegion ? `Changed from ${prevRegion} to ${newRegion}` : newRegion}`);
+            this._updatePlayerVoiceData();
         }
     }
 
-    setStateUpdate({ channel_id: channelId, session_id: sessionId, self_deaf: selfDeaf, self_mute: selfMute } = {}) {
-        if (!channelId || !sessionId) {
+    setStateUpdate({ channel_id, session_id, self_deaf, self_mute } = {}) {
+        if (!channel_id || !session_id) {
             this.playerRef.deref()?.destroy();
             return;
         }
-
-        if (this.voiceChannel !== channelId) {
-            this.aqua.emit("playerMove", this.voiceChannel, channelId);
-            this.voiceChannel = channelId;
+        
+        if (this.voiceChannel !== channel_id) {
+            this.aqua.emit("playerMove", this.voiceChannel, channel_id);
+            this.voiceChannel = channel_id;
         }
-
-        this.selfDeaf = selfDeaf;
-        this.selfMute = selfMute;
-        this.voice.sessionId = sessionId;
+        
+        Object.assign(this, { selfDeaf: self_deaf, selfMute: self_mute });
+        this.voice.sessionId = session_id;
     }
 
     async _updatePlayerVoiceData() {
@@ -64,17 +47,10 @@ class Connection {
         try {
             await this.nodes.rest.updatePlayer({
                 guildId: this.guildId,
-                data: {
-                    voice: this.voice,
-                    volume: player.volume
-                }
+                data: { voice: this.voice, volume: player.volume }
             });
         } catch (err) {
-            this.aqua.emit("apiError", "updatePlayer", {
-                error: err,
-                guildId: this.guildId,
-                voiceData: this.voice
-            });
+            this.aqua.emit("apiError", "updatePlayer", { error: err, guildId: this.guildId, voiceData: this.voice });
         }
     }
 }
