@@ -11,14 +11,6 @@ class Player extends EventEmitter {
         TRACK: "track",
         QUEUE: "queue"
     });
-    static EVENT_HANDLERS = Object.freeze({
-        TrackStartEvent: "trackStart",
-        TrackEndEvent: "trackEnd",
-        TrackExceptionEvent: "trackError",
-        TrackStuckEvent: "trackStuck",
-        TrackChangeEvent: "trackChange",
-        WebSocketClosedEvent: "socketClosed"
-    });
     static validModes = ["none", "track", "queue"]
 
     constructor(aqua, nodes, options = {}) {
@@ -56,16 +48,37 @@ class Player extends EventEmitter {
             }
             this.aqua.emit("playerUpdate", this, { state });
         };
+        
         this.handleEvent = async (payload) => {
             const player = this.aqua.players.get(payload.guildId);
             if (!player) return;
-            const handler = Player.EVENT_HANDLERS[payload.type];
-            if (handler && typeof this[handler] === "function") {
-                await this[handler](player, this.current, payload);
-            } else {
-                this.handleUnknownEvent(payload);
+            const track = this.current;
+            
+            switch (payload.type) {
+                case "TrackStartEvent":
+                    await this.trackStart(player, track, payload);
+                    break;
+                case "TrackEndEvent":
+                    await this.trackEnd(player, track, payload);
+                    break;
+                case "TrackExceptionEvent":
+                    await this.trackError(player, track, payload);
+                    break;
+                case "TrackStuckEvent":
+                    await this.trackStuck(player, track, payload);
+                    break;
+                case "TrackChangeEvent":
+                    await this.trackChange(player, track, payload);
+                    break;
+                case "WebSocketClosedEvent":
+                    await this.socketClosed(player, payload);
+                    break;
+                default:
+                    this.handleUnknownEvent(payload);
+                    break;
             }
         };
+        
         this.on("playerUpdate", this.onPlayerUpdate);
         this.on("event", this.handleEvent);
     }
@@ -87,14 +100,16 @@ class Player extends EventEmitter {
     async play() {
         if (!this.connected) throw new Error("Player must be connected first.");
         if (!this.queue.length) return;
-
+    
         const item = this.queue.shift();
         this.current = item.track ? item : await item.resolve(this.aqua);
         this.playing = true;
         this.position = 0;
         
         this.aqua.emit("debug", this.guildId, `Playing track: ${this.current.track}`);
-        return this.updatePlayer({ track: { encoded: this.current.track } });
+        const response = await this.updatePlayer({ track: { encoded: this.current.track } });
+        
+        return response;
     }
 
     connect({ guildId, voiceChannel, deaf = true, mute = false }) {
@@ -116,6 +131,7 @@ class Player extends EventEmitter {
         this.nowPlayingMessage?.delete().catch(() => { });
         this.aqua.destroyPlayer(this.guildId);
         this.nodes.rest.destroyPlayer(this.guildId);
+        this.removeAllListeners();
         return this;
     }
 
@@ -261,11 +277,11 @@ class Player extends EventEmitter {
 
         switch (this.loop) {
             case Player.LOOP_MODES.TRACK:
-                this.aqua.emit("trackRepeat", player, track);
+                this.aqua.emit("trackEnd", player, track);
                 player.queue.unshift(track);
                 break;
             case Player.LOOP_MODES.QUEUE:
-                this.aqua.emit("queueRepeat", player, track);
+                this.aqua.emit("trackEnd", player, track);
                 player.queue.push(track);
                 break;
         }
@@ -282,17 +298,17 @@ class Player extends EventEmitter {
         await player.play();
     }
 
-    trackError(player, track, payload) {
+    async trackError(player, track, payload) {
         this.aqua.emit("trackError", player, track, payload);
         return this.stop();
     }
 
-    trackStuck(player, track, payload) {
+    async trackStuck(player, track, payload) {
         this.aqua.emit("trackStuck", player, track, payload);
         return this.stop();
     }
 
-    socketClosed(player, payload) {
+    async socketClosed(player, payload) {
         if (payload?.code === 4015 || payload?.code === 4009) {
             this.send({
                 guild_id: payload.guildId,
