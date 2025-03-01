@@ -43,7 +43,7 @@ class Player extends EventEmitter {
         this.timestamp = 0;
         this.ping = 0;
         this.nowPlayingMessage = null;
-        this.previousTracks = [];
+        this.previousTracks = new Map();
         this.shouldDeleteMessage = options.shouldDeleteMessage ?? false;
         this.leaveOnEnd = options.leaveOnEnd ?? false;
         
@@ -66,8 +66,12 @@ class Player extends EventEmitter {
                 this.handleUnknownEvent(payload);
             }
         };
-        this.on("playerUpdate", this.onPlayerUpdate);
-        this.on("event", this.handleEvent);
+        if (!this.listenerCount("playerUpdate")) {
+            this.on("playerUpdate", this.onPlayerUpdate);
+        }
+        if (!this.listenerCount("event")) {
+            this.on("event", this.handleEvent);
+        }
     }
 
     get previous() {
@@ -76,6 +80,7 @@ class Player extends EventEmitter {
     get currenttrack() {
         return this.current;
     }
+    
 
     addToPreviousTrack(track) {
         if (this.previousTracks.length >= 50) {
@@ -99,7 +104,6 @@ class Player extends EventEmitter {
 
     connect({ guildId, voiceChannel, deaf = true, mute = false }) {
         if (this.connected) throw new Error("Player is already connected.");
-        this.aqua.emit("debug", `${guildId} ${voiceChannel} ${deaf} ${mute}`);
         this.send({
             guild_id: guildId,
             channel_id: voiceChannel,
@@ -160,9 +164,9 @@ class Player extends EventEmitter {
 
     stop() {
         if (!this.playing) return this;
-        this.updatePlayer({ track: { encoded: null } });
         this.playing = false;
         this.position = 0;
+        this.updatePlayer({ guildId: this.guildId, track: { encoded: null } });
         return this;
     }
 
@@ -201,23 +205,15 @@ class Player extends EventEmitter {
     }
 
     disconnect() {
-        this.updatePlayer({ track: { encoded: null } });
         this.connected = false;
-        this.send({ guild_id: this.guildId, channel_id: null });
-        this.aqua?.emit("debug", this.guildId, "Player disconnected.");
+        this.send({ guild_id: this.guildId, channel_id: null, self_mute: false, self_deaf: false });
+        this.voiceChannel = null;
+        this.aqua.emit("debug", this.guildId, "Player disconnected.");
         return this;
     }
 
     shuffle() {
-        const array = this.queue;
-        let currentIndex = array.length;
-        
-        while (currentIndex > 0) {
-            const randomIndex = Math.floor(Math.random() * currentIndex);
-            currentIndex--;
-            [array[currentIndex], array[randomIndex]] = [array[randomIndex], array[currentIndex]];
-        }
-        
+        this.queue = this.queue.sort(() => Math.random() - 0.5);
         return this;
     }
 
@@ -231,18 +227,15 @@ class Player extends EventEmitter {
     }
 
     skip() {
+        const was = this.playing; 
         this.stop();
-        return this.playing ? this.play() : undefined;
+        return was ? this.play() : undefined;
     }
+    
 
     async trackStart(player, track) {
         this.updateTrackState(true, false);
         this.aqua.emit("trackStart", player, track);
-    }
-
-    async trackChange(player, track) {
-        this.updateTrackState(true, false);
-        this.aqua.emit("trackChange", player, track);
     }
 
     async trackEnd(player, track, payload) {
@@ -254,10 +247,10 @@ class Player extends EventEmitter {
         const reason = payload.reason?.replace("_", "").toLowerCase();
         
         if (reason === "loadfailed" || reason === "cleanup") {
-            if (player.queue.isEmpty()) {
-                this.aqua.emit("queueEnd", player);
-            } else {
+            if (!player.queue.isEmpty()) {
                 await player.play();
+            } else {
+                this.aqua.emit("queueEnd", player);
             }
             return;
         }
@@ -282,7 +275,8 @@ class Player extends EventEmitter {
             return;
         }
 
-        await player.play();
+        this.playing = false;
+        this.aqua.emit("queueEnd", player);
     }
 
     async trackError(player, track, payload) {
