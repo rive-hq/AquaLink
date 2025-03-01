@@ -285,17 +285,17 @@ class Player extends EventEmitter {
         await player.play();
     }
 
-    trackError(player, track, payload) {
+    async trackError(player, track, payload) {
         this.aqua.emit("trackError", player, track, payload);
         return this.stop();
     }
 
-    trackStuck(player, track, payload) {
+    async trackStuck(player, track, payload) {
         this.aqua.emit("trackStuck", player, track, payload);
         return this.stop();
     }
 
-    socketClosed(player, payload) {
+    async socketClosed(player, payload) {
         if (payload?.code === 4015 || payload?.code === 4009) {
             this.send({
                 guild_id: payload.guildId,
@@ -328,7 +328,7 @@ class Player extends EventEmitter {
          return this;
      }
 
-     updatePlayer(data) {
+    async updatePlayer(data) {
         return this.nodes.rest.updatePlayer({ guildId: this.guildId, data });
     }
 
