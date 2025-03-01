@@ -30,7 +30,6 @@ class Node {
         this.regions = regions;
         this.wsUrl = new URL(`ws${secure ? "s" : ""}://${host}:${port}/v4/websocket`);
         this.rest = new Rest(aqua, this);
-        this.resumeKey = options.resumeKey || null;
         this.resumeTimeout = options.resumeTimeout || 60;
         this.autoResume = options.autoResume || false;
         this.reconnectTimeout = options.reconnectTimeout || 2000;
@@ -70,13 +69,13 @@ class Node {
     }
 
     #constructHeaders() {
-        return {
+        const headers = {
             Authorization: this.password,
             "User-Id": this.aqua.clientId,
             "Client-Name": `Aqua/${this.aqua.version}`,
-            ...(this.sessionId && { "Session-Id": this.sessionId }),
-            ...(this.resumeKey && { "Resume-Key": this.resumeKey })
         };
+        if (this.sessionId) headers["Session-Id"] = this.sessionId;
+        return headers;
     }
 
     async #onOpen() {
@@ -84,15 +83,15 @@ class Node {
         this.#reconnectAttempted = 0;
         this.aqua.emit("debug", this.name, `Connected to ${this.wsUrl.href}`);
         
-        if (this.autoResume) {
-            try {
-                this.info = await this.rest.makeRequest("GET", "/v4/info");
+        try {
+            this.info = await this.rest.makeRequest("GET", "/v4/info");
+            if (this.autoResume && this.sessionId) {
                 await this.resumePlayers();
-            } catch (err) {
-                this.info = null;
-                if (!this.aqua.bypassChecks?.nodeFetchInfo) {
-                    this.aqua.emit("error", `Failed to fetch node info: ${err.message}`);
-                }
+            }
+        } catch (err) {
+            this.info = null;
+            if (!this.aqua.bypassChecks?.nodeFetchInfo) {
+                this.aqua.emit("error", this, `Failed to fetch node info: ${err.message}`);
             }
         }
     }
@@ -122,6 +121,18 @@ class Node {
                 break;
             default:
                 this.#handlePlayerOp(payload);
+        }
+    }
+
+    async resumePlayers() {
+        try {
+            await this.rest.makeRequest("PATCH", `/v4/sessions/${this.sessionId}`, {
+                resuming: true,
+                timeout: this.resumeTimeout
+            });
+            this.aqua.emit("debug", this.name, `Successfully resumed session ${this.sessionId}`);
+        } catch (err) {
+            this.aqua.emit("error", this, `Failed to resume session: ${err.message}`);
         }
     }
 
@@ -170,14 +181,20 @@ class Node {
     }
 
     #handleReadyOp(payload) {
-        if (this.sessionId !== payload.sessionId) {
-            this.sessionId = payload.sessionId;
-            this.rest.setSessionId(payload.sessionId);
+        if (!payload.sessionId) {
+            this.aqua.emit("error", this, "Ready payload missing sessionId");
+            return;
         }
+        
+        this.sessionId = payload.sessionId;
+        this.rest.setSessionId(payload.sessionId);
+        
+        // Don't resume here - we'll handle resuming in the #onOpen method if autoResume is enabled
         this.aqua.emit("nodeConnect", this);
     }
 
     #handlePlayerOp(payload) {
+        if (!payload.guildId) return;
         const player = this.aqua.players.get(payload.guildId);
         if (player) player.emit(payload.op, payload);
     }
@@ -188,7 +205,7 @@ class Node {
 
     #onClose(code, reason) {
         this.connected = false;
-        this.aqua.emit("nodeDisconnect", this, { code, reason });
+        this.aqua.emit("nodeDisconnect", this, { code, reason: reason?.toString() || "No reason provided" });
         this.#reconnect();
     }
 
@@ -198,22 +215,24 @@ class Node {
             setTimeout(() => this.connect(), 10000);
             return;
         }
+        
         if (this.#reconnectAttempted >= this.reconnectTries) {
             this.aqua.emit("nodeError", this, 
                 new Error(`Max reconnection attempts reached (${this.reconnectTries})`));
             this.destroy(true);
             return;
         }
+        
         clearTimeout(this.#reconnectTimeoutId);
         const jitter = Math.random() * 10000;
         const backoffTime = Math.min(
             this.reconnectTimeout * Math.pow(Node.BACKOFF_MULTIPLIER, this.#reconnectAttempted) + jitter,
             Node.MAX_BACKOFF
         );
+        
         this.#reconnectTimeoutId = setTimeout(() => {
             this.#reconnectAttempted++;
-            this.aqua.emit("nodeReconnect", {
-                nodeName: this.name,
+            this.aqua.emit("nodeReconnect", this, {
                 attempt: this.#reconnectAttempted,
                 backoffTime
             });
@@ -222,11 +241,22 @@ class Node {
     }
 
     destroy(clean = false) {
+        clearTimeout(this.#reconnectTimeoutId);
+        
+        if (this.#ws) {
+            this.#ws.removeAllListeners();
+            if (this.#ws.readyState === WebSocket.OPEN) {
+                this.#ws.close();
+            }
+            this.#ws = null;
+        }
+        
         if (clean) {
             this.aqua.emit("nodeDestroy", this);
             this.aqua.nodes.delete(this.name);
             return;
         }
+        
         if (this.connected) {
             for (const player of this.aqua.players.values()) {
                 if (player.node === this) {
@@ -234,8 +264,9 @@ class Node {
                 }
             }
         }
+        
         this.connected = false;
-        this.aqua.nodeMap.delete(this.name);
+        this.aqua.nodes.delete(this.name);
         this.aqua.emit("nodeDestroy", this);
         this.info = null;
     }
