@@ -50,22 +50,26 @@ class Aqua extends EventEmitter {
     get leastUsedNodes() {
         const now = Date.now();
         if (now - this._leastUsedCache.timestamp < 50) return this._leastUsedCache.nodes;
-        const nodes = Array.from(this.nodeMap.values()).filter(node => node.connected);
+        const nodes = [];
+        for (const node of this.nodeMap.values()) {
+            if (node.connected) nodes.push(node);
+        }
         nodes.sort((a, b) => a.rest.calls - b.rest.calls);
         this._leastUsedCache = { nodes, timestamp: now };
         return nodes;
     }
 
     init(clientId) {
-        if (this.initiated) return this;
-        this.clientId = clientId;
-        try {
-            this.nodes.forEach(nodeConfig => this.createNode(nodeConfig));
-            this.initiated = true;
-            this.plugins.forEach(plugin => plugin.load(this));
-        } catch (error) {
-            this.initiated = false;
-            throw error;
+        if (!this.initiated) {
+            this.clientId = clientId;
+            try {
+                this.nodes.forEach(nodeConfig => this.createNode(nodeConfig));
+                this.plugins.forEach(plugin => plugin.load(this));
+                this.initiated = true;
+            } catch (error) {
+                this.initiated = false;
+                throw error;
+            }
         }
         return this;
     }
@@ -73,16 +77,18 @@ class Aqua extends EventEmitter {
     createNode(options) {
         const nodeId = options.name || options.host;
         this.destroyNode(nodeId);
+
         const node = new Node(this, options, this.options);
         this.nodeMap.set(nodeId, node);
         this._leastUsedCache.timestamp = 0;
-        node.connect().then(() => {
-            this.emit("nodeCreate", node);
-        }).catch(error => {
-            this.nodeMap.delete(nodeId);
-            console.error("Failed to connect node:", error);
-            throw error;
-        });
+        
+        node.connect()
+            .then(() => this.emit("nodeCreate", node))
+            .catch(error => {
+                this.nodeMap.delete(nodeId);
+                console.error("Failed to connect node:", error);
+                throw error;
+            });
 
         return node;
     }
@@ -90,16 +96,11 @@ class Aqua extends EventEmitter {
     destroyNode(identifier) {
         const node = this.nodeMap.get(identifier);
         if (!node) return;
-
-        node.disconnect().then(() => {
-            node.removeAllListeners();
-            this.nodeMap.delete(identifier);
-            this._leastUsedCache.timestamp = 0;
-            this.emit("nodeDestroy", node);
-        }).catch(error => {
-            console.error(`Error destroying node ${identifier}:`, error);
-        });
+        node.destroy();
+        this.nodeMap.delete(identifier);
+        this.emit("nodeDestroy", node);
     }
+
 
     updateVoiceState({ d, t }) {
         const player = this.players.get(d.guild_id);
