@@ -1,16 +1,7 @@
 "use strict";
 const { getImageUrl } = require("../handlers/fetchImage");
-/**
- * @typedef {import("../Aqua")} Aqua
- * @typedef {import("../structures/Player")} Player
- * @typedef {import("../structures/Node")} Node
- */
+
 class Track {
-  /**
-   * @param {Object} data
-   * @param {Player} requester
-   * @param {Node} nodes
-   */
   constructor(data = {}, requester, nodes) {
     const { info = {}, encoded = null, playlist = null } = data;
     this.info = {
@@ -29,21 +20,18 @@ class Track {
     this.requester = requester;
     this.nodes = nodes;
   }
-  /**
-   * @param {string} thumbnail
-   * @returns {string|null}
-   */
+
   resolveThumbnail(thumbnail) {
-    if (!thumbnail) return null;
-    return getImageUrl(thumbnail);
+    return thumbnail ? getImageUrl(thumbnail) : null;
   }
-  /**
-   * @param {Aqua} aqua
-   * @returns {Promise<Track|null>}
-   */
+
   async resolve(aqua) {
     const searchPlatform = aqua?.options?.defaultSearchPlatform;
-    if (!searchPlatform) return null;
+    if (!searchPlatform) {
+      console.warn("No search platform configured.");
+      return null;
+    }
+
     try {
       const query = `${this.info.author} - ${this.info.title}`;
       const result = await aqua.resolve({
@@ -52,9 +40,11 @@ class Track {
         requester: this.requester,
         node: this.nodes
       });
+
       if (!result?.tracks?.length) return null;
       const track = this._findMatchingTrack(result.tracks);
       if (!track) return null;
+
       this.info.identifier = track.info.identifier;
       this.track = track.track;
       this.playlist = track.playlist || null;
@@ -64,6 +54,7 @@ class Track {
       return null;
     }
   }
+
   _findMatchingTrack(tracks) {
     const { author, title, length } = this.info;
     for (const track of tracks) {
@@ -77,4 +68,5 @@ class Track {
     return null;
   }
 }
+
 module.exports = Track;
