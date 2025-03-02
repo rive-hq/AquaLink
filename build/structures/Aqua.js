@@ -50,27 +50,30 @@ class Aqua extends EventEmitter {
     get leastUsedNodes() {
         const now = Date.now();
         if (now - this._leastUsedCache.timestamp < 50) return this._leastUsedCache.nodes;
+
         const nodes = [];
         for (const node of this.nodeMap.values()) {
             if (node.connected) nodes.push(node);
         }
         nodes.sort((a, b) => a.rest.calls - b.rest.calls);
+
         this._leastUsedCache = { nodes, timestamp: now };
         return nodes;
     }
 
     init(clientId) {
-        if (!this.initiated) {
-            this.clientId = clientId;
-            try {
-                this.nodes.forEach(nodeConfig => this.createNode(nodeConfig));
-                this.plugins.forEach(plugin => plugin.load(this));
-                this.initiated = true;
-            } catch (error) {
-                this.initiated = false;
-                throw error;
-            }
+        if (this.initiated) return this;
+
+        this.clientId = clientId;
+        try {
+            this.nodes.forEach(nodeConfig => this.createNode(nodeConfig));
+            this.plugins.forEach(plugin => plugin.load(this));
+            this.initiated = true;
+        } catch (error) {
+            this.initiated = false;
+            throw error;
         }
+
         return this;
     }
 
@@ -81,7 +84,7 @@ class Aqua extends EventEmitter {
         const node = new Node(this, options, this.options);
         this.nodeMap.set(nodeId, node);
         this._leastUsedCache.timestamp = 0;
-        
+
         node.connect()
             .then(() => this.emit("nodeCreate", node))
             .catch(error => {
@@ -96,6 +99,7 @@ class Aqua extends EventEmitter {
     destroyNode(identifier) {
         const node = this.nodeMap.get(identifier);
         if (!node) return;
+
         node.destroy();
         this.nodeMap.delete(identifier);
         this.emit("nodeDestroy", node);
