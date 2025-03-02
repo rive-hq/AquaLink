@@ -8,17 +8,6 @@ const { version: pkgVersion } = require("../../package.json");
 const URL_REGEX = /^https?:\/\//;
 
 class Aqua extends EventEmitter {
-    /**
-     * @param {Object} client - The client instance.
-     * @param {Array<Object>} nodes - An array of node configurations.
-     * @param {Object} options - Configuration options for Aqua.
-     * @param {Function} options.send - Function to send data.
-     * @param {string} [options.defaultSearchPlatform="ytsearch"] - Default search platform.
-     * @param {string} [options.restVersion="v4"] - Version of the REST API.
-     * @param {Array<Object>} [options.plugins=[]] - Plugins to load.
-     * @param {boolean} [options.autoResume=false] - Automatically resume tracks on reconnect.
-     * @param {boolean} [options.infiniteReconnects=false] - Reconnect infinitely.
-     */
     constructor(client, nodes, options = {}) {
         super();
         this.validateInputs(client, nodes, options);
@@ -61,10 +50,7 @@ class Aqua extends EventEmitter {
     get leastUsedNodes() {
         const now = Date.now();
         if (now - this._leastUsedCache.timestamp < 50) return this._leastUsedCache.nodes;
-        const nodes = [];
-        for (const node of this.nodeMap.values()) {
-            if (node.connected) nodes.push(node);
-        }
+        const nodes = Array.from(this.nodeMap.values()).filter(node => node.connected);
         nodes.sort((a, b) => a.rest.calls - b.rest.calls);
         this._leastUsedCache = { nodes, timestamp: now };
         return nodes;
@@ -94,28 +80,33 @@ class Aqua extends EventEmitter {
             this.emit("nodeCreate", node);
         }).catch(error => {
             this.nodeMap.delete(nodeId);
+            console.error("Failed to connect node:", error);
             throw error;
         });
+
         return node;
     }
 
     destroyNode(identifier) {
         const node = this.nodeMap.get(identifier);
         if (!node) return;
+
         node.disconnect().then(() => {
             node.removeAllListeners();
             this.nodeMap.delete(identifier);
             this._leastUsedCache.timestamp = 0;
             this.emit("nodeDestroy", node);
-        }).catch(error => console.error(`Error destroying node ${identifier}:`, error));
+        }).catch(error => {
+            console.error(`Error destroying node ${identifier}:`, error);
+        });
     }
 
     updateVoiceState({ d, t }) {
         const player = this.players.get(d.guild_id);
         if (!player) return;
 
+        const updateMethod = t === "VOICE_SERVER_UPDATE" ? "setServerUpdate" : "setStateUpdate";
         if (t === "VOICE_SERVER_UPDATE" || (t === "VOICE_STATE_UPDATE" && d.user_id === this.clientId)) {
-            const updateMethod = t === "VOICE_SERVER_UPDATE" ? "setServerUpdate" : "setStateUpdate";
             if (player.connection && typeof player.connection[updateMethod] === "function") {
                 player.connection[updateMethod](d);
             }
@@ -127,14 +118,13 @@ class Aqua extends EventEmitter {
 
     fetchRegion(region) {
         if (!region) return this.leastUsedNodes;
+
         const lowerRegion = region.toLowerCase();
-        const regionNodes = [];
-        for (const node of this.nodeMap.values()) {
-            if (node.connected && node.regions?.includes(lowerRegion)) {
-                regionNodes.push(node);
-            }
-        }
+        const regionNodes = Array.from(this.nodeMap.values()).filter(node => 
+            node.connected && node.regions?.includes(lowerRegion)
+        );
         regionNodes.sort((a, b) => this.calculateLoad(a) - this.calculateLoad(b));
+
         return regionNodes;
     }
 
@@ -148,9 +138,11 @@ class Aqua extends EventEmitter {
         this.ensureInitialized();
         const existingPlayer = this.players.get(options.guildId);
         if (existingPlayer && existingPlayer.voiceChannel) return existingPlayer;
+
         const availableNodes = options.region ? this.fetchRegion(options.region) : this.leastUsedNodes;
         const node = availableNodes[0];
         if (!node) throw new Error("No nodes are available");
+        
         return this.createPlayer(node, options);
     }
 
@@ -167,12 +159,17 @@ class Aqua extends EventEmitter {
     async destroyPlayer(guildId) {
         const player = this.players.get(guildId);
         if (!player) return;
-        player.destroy();
-        this.players.delete(guildId);
-    
-        this.emit("playerDestroy", player);
+
+        try {
+            await player.clearData();
+            player.removeAllListeners();
+            this.players.delete(guildId);
+            this.emit("playerDestroy", player);
+        } catch (error) {
+            console.error(`Error destroying player for guild ${guildId}:`, error);
+        }
     }
-    
+
     async resolve({ query, source = this.defaultSearchPlatform, requester, nodes }) {
         this.ensureInitialized();
         const requestNode = this.getRequestNode(nodes);
@@ -272,4 +269,4 @@ class Aqua extends EventEmitter {
     }
 }
 
-module.exports = Aqua 
+module.exports = Aqua;
