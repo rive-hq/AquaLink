@@ -58,6 +58,8 @@ class Node {
     }
 
     async connect() {
+        if (this.#ws && this.#ws.readyState === WebSocket.OPEN) return; // Avoid reconnecting if already connected
+        
         this.#ws = new WebSocket(this.wsUrl.href, {
             headers: this.#constructHeaders(),
             perMessageDeflate: false,
@@ -82,7 +84,7 @@ class Node {
         this.connected = true;
         this.#reconnectAttempted = 0;
         this.aqua.emit("debug", this.name, `Connected to ${this.wsUrl.href}`);
-        
+
         try {
             this.info = await this.rest.makeRequest("GET", "/v4/info");
             if (this.autoResume && this.sessionId) {
@@ -107,8 +109,9 @@ class Node {
         try {
             payload = JSON.parse(msg);
         } catch {
-            return;
+            return; // Invalid JSON, ignore the message
         }
+
         const op = payload?.op;
         if (!op) return;
 
@@ -185,10 +188,10 @@ class Node {
             this.aqua.emit("error", this, "Ready payload missing sessionId");
             return;
         }
-        
+
         this.sessionId = payload.sessionId;
         this.rest.setSessionId(payload.sessionId);
-        
+
         // Don't resume here - we'll handle resuming in the #onOpen method if autoResume is enabled
         this.aqua.emit("nodeConnect", this);
     }
@@ -215,21 +218,21 @@ class Node {
             setTimeout(() => this.connect(), 10000);
             return;
         }
-        
+
         if (this.#reconnectAttempted >= this.reconnectTries) {
             this.aqua.emit("nodeError", this, 
                 new Error(`Max reconnection attempts reached (${this.reconnectTries})`));
             this.destroy(true);
             return;
         }
-        
+
         clearTimeout(this.#reconnectTimeoutId);
         const jitter = Math.random() * 10000;
         const backoffTime = Math.min(
             this.reconnectTimeout * Math.pow(Node.BACKOFF_MULTIPLIER, this.#reconnectAttempted) + jitter,
             Node.MAX_BACKOFF
         );
-        
+
         this.#reconnectTimeoutId = setTimeout(() => {
             this.#reconnectAttempted++;
             this.aqua.emit("nodeReconnect", this, {
@@ -242,7 +245,7 @@ class Node {
 
     destroy(clean = false) {
         clearTimeout(this.#reconnectTimeoutId);
-        
+
         if (this.#ws) {
             this.#ws.removeAllListeners();
             if (this.#ws.readyState === WebSocket.OPEN) {
@@ -250,13 +253,13 @@ class Node {
             }
             this.#ws = null;
         }
-        
+
         if (clean) {
             this.aqua.emit("nodeDestroy", this);
             this.aqua.nodes.delete(this.name);
             return;
         }
-        
+
         if (this.connected) {
             for (const player of this.aqua.players.values()) {
                 if (player.node === this) {
@@ -264,7 +267,7 @@ class Node {
                 }
             }
         }
-        
+
         this.connected = false;
         this.aqua.nodes.delete(this.name);
         this.aqua.emit("nodeDestroy", this);
