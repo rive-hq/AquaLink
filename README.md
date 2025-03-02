@@ -4,7 +4,7 @@ An Stable, performant, Recourse friendly and fast lavalink wrapper
 This code is based in riffy, but its an 100% Rewrite made from scratch...
 
 # Why use AquaLink
-- Works with [Lavalink](https://github.com/lavalink-devs/Lavalink) and [NodeLink](https://github.com/PerformanC/NodeLink) (Nodelink not 100% full implemented, play works)
+- Uses my modified fork of @performanc/pwsl-mini, for an way faster WebSocket
 - Very Low memory comsuption
 - Built in Queue manager
 - Lots of features to use
@@ -16,58 +16,88 @@ This code is based in riffy, but its an 100% Rewrite made from scratch...
 - Lavalink v4 support (din't test v3)
 - Youtube and Spotify support (Soundcloud, deezer, vimeo, etc also works...)
 - Minimal Requests to the lavalink server (helps the lavalink recourses!)
-- Easy player, node, aqua manager 
+- Easy player, node, aqua manager
 - Fast responses from rest and node
 - Playlist support (My mix playlists, youtube playlists, spotify playlists, etc)
 - Lyrics Support by Lavalink
   - https://github.com/topi314/LavaLyrics (RECOMMENDED)
   - https://github.com/DRSchlaubi/lyrics.kt (?)
   - https://github.com/DuncteBot/java-timed-lyrics (RECOMMENDED)
+  
+# Tralalero Tralala 1.9.0 Released  
+**Whoa, lots of stuff to write here 😭**
+
+---
+
+### **Small changes on the `fetchImage` Handler**
+- Improves the overall speed, less memory overhead.
+
+---
+
+### **Remade some stuff on `AQUA` module**
+- This fixes some bugs related to destroying players.
+- Faster node connection speeds.
+- Uses an Array for getting the region instead (testing).
+- Small change on the Voice Handler.
+- Improved Error handling.
+- Use `node.destroy()` method directly.
+
+---
+
+### **Remade `Connection` module**
+- Removed lots of useless code.
+- Improved joining voice channel speed.
+- Improved configuration set/get speed.
+- Improved overall checking.
+- Improved debug messages.
+
+---
+
+### **Remade `Node` module (this one is good)**
+- Fixed the `autoResume` system (now will actually work, for 60 seconds).
+- New WebSocket System.
+- Improved the events handling speed.
+- Now does recalculation of the backoff time (for more efficiency on reconnect).
+- Now avoids reconnecting if the WebSocket is already open (sorry, I forgot to add this before).
+- Better cleaning system (improved, now removes listeners instead of setting to `null`).
+- Avoids re-binding the functions every time `connect` is called (yay).
+- This update also improves long-process running.
+
+---
+
+### **Remade the `Player` module (also a good one)**
+- Remade every method.
+- Fixed destroy system.
+- Better event handling, I think.
+- Made the events async.
+- Removed `trackChange` (does not exist in Lavalink API, use `trackStart` instead).
+- Uses a new listener system (way more efficient for creating/destroying players).
+- Faster shuffle in V8 Engine (Math stuff).
+- Improved overall configs (more precise).
+- Use `pop()` instead of disabling the track 50 on the length.
+- Improved overall speed on the check-ins and some stuff I forgot.
+
+---
+
+### **Remade the `Rest` module**
+- Better speed (removed useless `buildEndpoint`).
+- More compact code.
+- Removed `stats/all` in the stats (correct by using the Lavalink API).
+- Better `makeRequest`.
+
+---
+
+### **Small changes in `Track` module**
+- More efficient final result (`author` + `track`).
+
+---
+
+That’s all for **1.9.0** atm. I’m a lazy dev. 😴
 
 # Docs (Wiki)
 - https://github.com/ToddyTheNoobDud/AquaLink/wiki
 
 - Example bot: https://github.com/ToddyTheNoobDud/Thorium-Music
-
-# Brick by brick, 1.8.0 Update (yay)
-
-- Misc changes on FetchImage (improves the overall checking and speed)
-
-- Rewrite `AQUA` module
-  - Remade the resolve logic (improves the speed by a lot)
-  - Fixes many memory usages related to nodes
-  - send is no longer required to be Applied (Applied by default now.)
-  - Remade some stuff with discord VoiceGateway
-
-- Remade `CONNECTION` module
-  - Way faster connections (Joining, reconnecting, connected, disconnect)
-  - Reduced memory overload by removing useless code
-  - Improved early Returns
-
-- Remade `NODE` module
-  - MANY fixes for the connection logic (fixes reconnection, etc)
-  - Fixed memory leaks in heartbeat system (hopefully, reduced memory by a lot.)
-  - Faster connection speed and checkings
-  - Remade the Options system, improve JSON parsing
-
-- Rewrite `PLAYER` module
-  - Many memory related fixes
-  - Improved the overall code speed by a lot
-  - Rewrote setLoop, play, shuffle, replay methods (fixes + performance)
-  - Added 2 new options: 
-
-      leaveOnEnd: false, // Optional
-      
-      shouldDeleteMessage: true // Optional
-    
-  - Uses array for better performance and less memory allocation
-  - Rewrite the Events handling (speed and recourses fixes)
-
-- Updated `TRACK` module
-  - Better object handling for internal code.
-  - Removed an useless method
-
-Thats all for now, im lazy, help me fix code and improve this on github... i can't test properly 😭😭😭
 
 # How to install
 
@@ -109,7 +139,7 @@ const nodes = [
     }
 ];
 
-const aqua = new Aqua(client, nodes, {
+const aqua = Aqua(client, nodes, {
   defaultSearchPlatform: "ytsearch",
   restVersion: "v4",
   autoResume: false,
