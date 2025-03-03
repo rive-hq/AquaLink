@@ -83,13 +83,13 @@ class Rest {
         return this.makeRequest("POST", `/${this.version}/routeplanner/free/address`, { address });
     }
 
-    async getLyrics({ track }) {
-        if (track.search) {
-            const res = await this.makeRequest("GET", `/${this.version}/lyrics/search?query=${encodeURIComponent(track.encoded.info.title)}&source=genius`);
+    async getLyrics({ track, guildId }) {
+        if (track?.info?.search) {
+            const res = await this.makeRequest("GET", `/${this.version}/lyrics/search?query=${encodeURIComponent(track.info.title)}&source=genius`);
             if (res) return res;
         }
         this.validateSessionId();
-        return this.makeRequest("GET", `/${this.version}/sessions/${this.sessionId}/players/${track.guild_id}/track/lyrics?skipTrackSource=false`);
+        return this.makeRequest("GET", `/v4/sessions/${this.sessionId}/players/${guildId}/track/lyrics?skipTrackSource=true`) 
     }
 }
 
