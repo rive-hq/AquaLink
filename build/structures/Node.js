@@ -1,5 +1,5 @@
 "use strict";
-const WebSocket = require('@toddynnn/pwsl-mini');
+const WebSocket = require('ws');
 const Rest = require("./Rest");
 
 class Node {
