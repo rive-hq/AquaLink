@@ -1,5 +1,5 @@
 "use strict";
-const WebSocket = require('ws');
+const WebSocket = require('../handlers/WebSocket');
 const Rest = require("./Rest");
 
 class Node {
@@ -98,9 +98,7 @@ class Node {
 
     async getStats() {
         const stats = await this.rest.getStats();
-        if (JSON.stringify(this.stats) !== JSON.stringify({ ...this.defaultStats, ...stats })) {
-            this.stats = { ...this.defaultStats, ...stats };
-        }
+        this.stats = { ...this.defaultStats, ...stats };
         return this.stats;
     }
 
@@ -109,7 +107,7 @@ class Node {
         try {
             payload = JSON.parse(msg);
         } catch {
-            return;
+            return; // Invalid JSON, ignore the message
         }
 
         const op = payload?.op;
@@ -141,16 +139,13 @@ class Node {
 
     #updateStats(payload) {
         if (!payload) return;
-        const newStats = {
+        this.stats = {
             ...this.stats,
             ...payload,
             memory: this.#updateMemoryStats(payload.memory),
             cpu: this.#updateCpuStats(payload.cpu),
             frameStats: this.#updateFrameStats(payload.frameStats)
-        };
-        if (JSON.stringify(this.stats) !== JSON.stringify(newStats)) {
-            this.stats = newStats;
-        }
+        }; 
     }
 
     #updateMemoryStats(memory = {}) {
@@ -215,11 +210,9 @@ class Node {
     }
 
     #reconnect() {
-        clearTimeout(this.#reconnectTimeoutId);
-        
         if (this.infiniteReconnects) {
-            this.aqua.emit("nodeReconnect", this, "Infinite reconnects enabled, trying again in 10 seconds");
-            this.#reconnectTimeoutId = setTimeout(() => this.connect(), 10000);
+            this.aqua.emit("nodeReconnect", this, "Infinite reconnects enabled, trying non-stop...");
+            setTimeout(() => this.connect(), 10000);
             return;
         }
 
@@ -230,17 +223,19 @@ class Node {
             return;
         }
 
-        const baseBackoff = this.reconnectTimeout * Math.pow(Node.BACKOFF_MULTIPLIER, this.#reconnectAttempted);
-        const jitter = Math.random() * Math.min(2000, baseBackoff * 0.2);
-        const backoffTime = Math.min(baseBackoff + jitter, Node.MAX_BACKOFF);
+        clearTimeout(this.#reconnectTimeoutId);
+        const jitter = Math.random() * 10000;
+        const backoffTime = Math.min(
+            this.reconnectTimeout * Math.pow(Node.BACKOFF_MULTIPLIER, this.#reconnectAttempted) + jitter,
+            Node.MAX_BACKOFF
+        );
 
-        this.#reconnectAttempted++;
-        this.aqua.emit("nodeReconnect", this, {
-            attempt: this.#reconnectAttempted,
-            backoffTime
-        });
-        
         this.#reconnectTimeoutId = setTimeout(() => {
+            this.#reconnectAttempted++;
+            this.aqua.emit("nodeReconnect", this, {
+                attempt: this.#reconnectAttempted,
+                backoffTime
+            });
             this.connect();
         }, backoffTime);
     }
