@@ -1,4 +1,4 @@
-const { request } = require("undici");
+const https = require('https');
 
 const sourceHandlers = new Map([
     ['spotify', uri => fetchThumbnail(`https://open.spotify.com/oembed?url=${uri}`)],
@@ -22,18 +22,29 @@ async function getImageUrl(info) {
     }
 }
 
-async function fetchThumbnail(url) {
-    try {
-        const { body } = await request(url, {
-            method: "GET",
-            headers: { 'Accept': 'application/json' }
+function fetchThumbnail(url) {
+    return new Promise((resolve, reject) => {
+        https.get(url, { headers: { 'Accept': 'application/json' } }, (res) => {
+            let data = '';
+
+            res.on('data', chunk => {
+                data += chunk;
+            });
+
+            res.on('end', () => {
+                try {
+                    const json = JSON.parse(data);
+                    resolve(json.thumbnail_url || null);
+                } catch (error) {
+                    console.error(`Error parsing JSON from ${url}:`, error);
+                    reject(null);
+                }
+            });
+        }).on('error', (error) => {
+            console.error(`Error fetching thumbnail from ${url}:`, error);
+            reject(null);
         });
-        const json = await body.json();
-        return json.thumbnail_url || null;
-    } catch (error) {
-        console.error(`Error fetching thumbnail from ${url}:`, error);
-        return null;
-    }
+    });
 }
 
 async function fetchYouTubeThumbnail(identifier) {
