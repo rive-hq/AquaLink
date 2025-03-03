@@ -1,5 +1,5 @@
 "use strict";
-const WebSocket = require("@toddynnn/pwsl-mini");
+const WebSocket = require('@toddynnn/pwsl-mini');
 const Rest = require("./Rest");
 
 class Node {
@@ -58,8 +58,6 @@ class Node {
     }
 
     async connect() {
-        if (this.#ws && this.#ws.readyState === WebSocket.OPEN) return; // Avoid reconnecting if already connected
-        
         this.#ws = new WebSocket(this.wsUrl.href, {
             headers: this.#constructHeaders(),
             perMessageDeflate: false,
@@ -192,7 +190,6 @@ class Node {
         this.sessionId = payload.sessionId;
         this.rest.setSessionId(payload.sessionId);
 
-        // Don't resume here - we'll handle resuming in the #onOpen method if autoResume is enabled
         this.aqua.emit("nodeConnect", this);
     }
 
