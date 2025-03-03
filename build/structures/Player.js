@@ -119,12 +119,12 @@ class Player extends EventEmitter {
 
     async searchLyrics(query) {
         if (!query) return null;
-        return await this.nodes.rest.getLyrics({ track: { info: { title: query } }, search: true }) || null;
+        return this.nodes.rest.getLyrics({ track: { info: { title: query, search: true } } });
     }
 
     async lyrics() {
         if (!this.playing) return null;
-        return await this.nodes.rest.getLyrics({ track: { encoded: this.current.track } }) || null;
+        return this.nodes.rest.getLyrics({ track: { encoded: this.current.track }, guildId: this.guildId });
     }
 
     seek(position) {
