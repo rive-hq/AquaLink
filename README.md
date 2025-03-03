@@ -54,6 +54,7 @@ This code is based in riffy, but its an 100% Rewrite made from scratch...
 ---
 
 ### **Remade `Node` module (this one is good)**
+- 1.9.1-beta1: Fixed the auto reconnect system
 - Fixed the `autoResume` system (now will actually work, for 60 seconds).
 - New WebSocket System.
 - Improved the events handling speed.
