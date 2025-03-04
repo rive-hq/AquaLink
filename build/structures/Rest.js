@@ -1,17 +1,24 @@
 "use strict";
-const { Pool } = require("undici");
+const https = require("https");
+const http = require("http");
+let http2;
+try {
+    http2 = require("http2");
+} catch (e) {
+    http2 = null;
+}
 
 class Rest {
     constructor(aqua, { secure, host, port, sessionId, password }) {
         this.aqua = aqua;
         this.sessionId = sessionId;
         this.version = "v4";
-        this.baseUrl = `http${secure ? "s" : ""}://${host}:${port}`;
+        this.baseUrl = `${secure ? "https" : "http"}://${host}:${port}`;
         this.headers = {
             "Content-Type": "application/json",
             Authorization: password,
         };
-        this.client = new Pool(this.baseUrl, { pipelining: 1 });
+        this.client = secure ? (http2 ? http2 : https) : http;
     }
 
     setSessionId(sessionId) {
@@ -19,18 +26,33 @@ class Rest {
     }
 
     async makeRequest(method, endpoint, body = null) {
-        try {
-            const response = await this.client.request({
-                path: endpoint,
-                method,
-                headers: this.headers,
-                body: body ? JSON.stringify(body) : undefined,
+        const options = {
+            method,
+            headers: this.headers,
+        };
+
+        return new Promise((resolve, reject) => {
+            const req = this.client.request(`${this.baseUrl}${endpoint}`, options, (res) => {
+                let data = "";
+                res.setEncoding("utf8");
+
+                res.on("data", (chunk) => (data += chunk));
+                res.on("end", () => {
+                    if (res.statusCode >= 200 && res.statusCode < 300) {
+                        resolve(data ? JSON.parse(data) : null);
+                    } else {
+                        reject(new Error(`Request failed with status ${res.statusCode}: ${res.statusMessage}`));
+                    }
+                });
             });
 
-            return response.statusCode === 204 ? null : await response.body.json();
-        } catch (error) {
-            throw new Error(`Request failed (${method} ${endpoint}): ${error.message}`);
-        }
+            req.on("error", (error) => reject(new Error(`Request failed (${method} ${endpoint}): ${error.message}`)));
+
+            if (body) {
+                req.write(JSON.stringify(body));
+            }
+            req.end();
+        });
     }
 
     validateSessionId() {
@@ -38,58 +60,62 @@ class Rest {
     }
 
     async updatePlayer({ guildId, data }) {
-        if ((data.track?.encoded && data.track?.identifier) || (data.encodedTrack && data.identifier)) {
+        if (data.track?.encoded && data.track?.identifier) {
             throw new Error("Cannot provide both 'encoded' and 'identifier' for track");
         }
         this.validateSessionId();
         return this.makeRequest("PATCH", `/${this.version}/sessions/${this.sessionId}/players/${guildId}?noReplace=false`, data);
     }
 
-    async getPlayers() {
+    getPlayers() {
         this.validateSessionId();
         return this.makeRequest("GET", `/${this.version}/sessions/${this.sessionId}/players`);
     }
 
-    async destroyPlayer(guildId) {
+    destroyPlayer(guildId) {
         this.validateSessionId();
         return this.makeRequest("DELETE", `/${this.version}/sessions/${this.sessionId}/players/${guildId}`);
     }
 
-    async getTracks(identifier) {
+    getTracks(identifier) {
         return this.makeRequest("GET", `/${this.version}/loadtracks?identifier=${encodeURIComponent(identifier)}`);
     }
 
-    async decodeTrack(track) {
+    decodeTrack(track) {
         return this.makeRequest("GET", `/${this.version}/decodetrack?encodedTrack=${encodeURIComponent(track)}`);
     }
 
-    async decodeTracks(tracks) {
+    decodeTracks(tracks) {
         return this.makeRequest("POST", `/${this.version}/decodetracks`, tracks);
     }
 
-    async getStats() {
+    getStats() {
         return this.makeRequest("GET", `/${this.version}/stats`);
     }
 
-    async getInfo() {
+    getInfo() {
         return this.makeRequest("GET", `/${this.version}/info`);
     }
 
-    async getRoutePlannerStatus() {
+    getRoutePlannerStatus() {
         return this.makeRequest("GET", `/${this.version}/routeplanner/status`);
     }
 
-    async getRoutePlannerAddress(address) {
+    getRoutePlannerAddress(address) {
         return this.makeRequest("POST", `/${this.version}/routeplanner/free/address`, { address });
     }
 
-    async getLyrics({ track, guildId }) {
-        if (track?.info?.search) {
-            const res = await this.makeRequest("GET", `/${this.version}/lyrics/search?query=${encodeURIComponent(track.info.title)}&source=genius`);
-            if (res) return res;
+    async getLyrics({ track }) {
+        if (track.search) {
+            try {
+                const res = await this.makeRequest("GET", `/${this.version}/lyrics/search?query=${encodeURIComponent(track.encoded.info.title)}&source=genius`);
+                if (res) return res;
+            } catch (error) {
+                console.error("Failed to fetch lyrics:", error.message);
+            }
         }
         this.validateSessionId();
-        return this.makeRequest("GET", `/v4/sessions/${this.sessionId}/players/${guildId}/track/lyrics?skipTrackSource=true`) 
+        return this.makeRequest("GET", `/${this.version}/sessions/${this.sessionId}/players/${track.guild_id}/track/lyrics?skipTrackSource=false`);
     }
 }
 
