@@ -11,6 +11,7 @@ class Player extends EventEmitter {
         TRACK: "track",
         QUEUE: "queue"
     });
+
     static EVENT_HANDLERS = Object.freeze({
         TrackStartEvent: "trackStart",
         TrackEndEvent: "trackEnd",
@@ -19,7 +20,8 @@ class Player extends EventEmitter {
         TrackChangeEvent: "trackChange",
         WebSocketClosedEvent: "socketClosed"
     });
-    static validModes = ["none", "track", "queue"]
+
+    static validModes = new Set(Object.values(Player.LOOP_MODES));
 
     constructor(aqua, nodes, options = {}) {
         super();
@@ -31,7 +33,7 @@ class Player extends EventEmitter {
         this.connection = new Connection(this);
         this.filters = new Filters(this);
         this.volume = Math.min(Math.max(options.defaultVolume ?? 100, 0), 200);
-        this.loop = Player.LOOP_MODES[options.loop?.toUpperCase()] || Player.LOOP_MODES.NONE;
+        this.loop = Player.validModes.has(options.loop) ? options.loop : Player.LOOP_MODES.NONE;
         this.queue = new Queue();
         this.previousTracks = [];
         this.shouldDeleteMessage = options.shouldDeleteMessage ?? false;
@@ -45,23 +47,19 @@ class Player extends EventEmitter {
         this.ping = 0;
         this.nowPlayingMessage = null;
 
-        this.onPlayerUpdate = ({ state }) => state && Object.assign(this, state) && this.aqua.emit("playerUpdate", this, { state });
-        this.handleEvent = async (payload) => {
-            const player = this.aqua.players.get(payload.guildId);
-            if (!player) return;
+        this.on("playerUpdate", ({ state }) => {
+            if (state) Object.assign(this, state);
+            this.aqua.emit("playerUpdate", this, { state });
+        });
+
+        this.on("event", async (payload) => {
             const handler = Player.EVENT_HANDLERS[payload.type];
             if (handler && typeof this[handler] === "function") {
-                await this[handler](player, this.current, payload);
+                await this[handler](this, this.current, payload);
             } else {
                 this.handleUnknownEvent(payload);
             }
-        };
-        if (!this.listenerCount("playerUpdate")) {
-            this.on("playerUpdate", this.onPlayerUpdate);
-        }
-        if (!this.listenerCount("event")) {
-            this.on("event", this.handleEvent);
-        }
+        });
     }
 
     get previous() {
@@ -107,11 +105,13 @@ class Player extends EventEmitter {
         this.nowPlayingMessage?.delete().catch(() => { });
         this.aqua.destroyPlayer(this.guildId);
         this.nodes.rest.destroyPlayer(this.guildId);
+        this.clearData();
         this.removeAllListeners();
         return this;
     }
 
     pause(paused) {
+        if (this.paused === paused) return this;
         this.paused = paused;
         this.updatePlayer({ paused });
         return this;
@@ -119,12 +119,12 @@ class Player extends EventEmitter {
 
     async searchLyrics(query) {
         if (!query) return null;
-        return this.nodes.rest.getLyrics({ track: { info: { title: query, search: true } } });
+        return await this.nodes.rest.getLyrics({ track: { info: { title: query } }, search: true }) || null;
     }
 
     async lyrics() {
         if (!this.playing) return null;
-        return this.nodes.rest.getLyrics({ track: { encoded: this.current.track }, guildId: this.guildId });
+        return await this.nodes.rest.getLyrics({ track: { encoded: this.current.track } }) || null;
     }
 
     seek(position) {
@@ -184,7 +184,10 @@ class Player extends EventEmitter {
         return this;
     }
     shuffle() {
-        this.queue = this.queue.sort(() => Math.random() - 0.5);
+        for (let i = this.queue.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [this.queue[i], this.queue[j]] = [this.queue[j], this.queue[i]];
+        }
         return this;
     }
 
@@ -213,14 +216,16 @@ class Player extends EventEmitter {
 
     async trackEnd(player, track, payload) {
         if (this.shouldDeleteMessage && this.nowPlayingMessage) {
-            await this.nowPlayingMessage.delete().catch(() => { });
-            this.nowPlayingMessage = null;
+            try {
+                await this.nowPlayingMessage.delete();
+                this.nowPlayingMessage = null;
+            } catch {}
         }
 
         const reason = payload.reason?.replace("_", "").toLowerCase();
-
-        if (reason === "loadfailed" || reason === "cleanup") {
-            if (player.queue.isEmpty()) {
+        if (["loadfailed", "cleanup"].includes(reason)) {
+            if (!player.queue.length) {
+                this.clearData();
                 this.aqua.emit("queueEnd", player);
             } else {
                 await player.play();
@@ -228,27 +233,13 @@ class Player extends EventEmitter {
             return;
         }
 
-        switch (this.loop) {
-            case Player.LOOP_MODES.TRACK:
-                this.aqua.emit("trackRepeat", player, track);
-                player.queue.unshift(track);
-                break;
-            case Player.LOOP_MODES.QUEUE:
-                this.aqua.emit("queueRepeat", player, track);
-                player.queue.push(track);
-                break;
+        if (this.loop === Player.LOOP_MODES.TRACK) {
+            player.queue.unshift(track);
+        } else if (this.loop === Player.LOOP_MODES.QUEUE) {
+            player.queue.push(track);
         }
 
-        if (player.queue.isEmpty()) {
-            this.playing = false;
-            if (this.leaveOnEnd) {
-                this.cleanup();
-            }
-            this.aqua.emit("queueEnd", player);
-            return;
-        }
-
-        await player.play();
+        player.queue.length ? await player.play() : this.aqua.emit("queueEnd", player);
     }
 
     async trackError(player, track, payload) {
@@ -290,10 +281,10 @@ class Player extends EventEmitter {
     }
 
     clearData() {
+        if (this.previousTracks) this.previousTracks.length = 0;
         this.#dataStore = new WeakMap();
         return this;
     }
-
 
     updatePlayer(data) {
         return this.nodes.rest.updatePlayer({ guildId: this.guildId, data });
@@ -313,7 +304,6 @@ class Player extends EventEmitter {
     updateTrackState(playing, paused) {
         this.playing = playing;
         this.paused = paused;
-        this.updatePlayer({ paused });
     }
 }
 
