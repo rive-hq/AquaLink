@@ -1,7 +1,10 @@
-declare module "aqualink" {
+export * from "./index";
+declare module "./index" {
     import { EventEmitter } from "events";
-
-    export class Aqua extends EventEmitter {
+    /**
+     * Main Aqua, a wrapper for aqualink
+     */
+    export declare class Aqua extends EventEmitter {
         constructor(client: any, nodes: Array<NodeConfig>, options?: AquaOptions);
         init(clientId: string): this;
         createNode(options: NodeConfig): Node;
@@ -258,6 +261,8 @@ declare module "aqualink" {
         ping: number;
         nowPlayingMessage: any;
         onPlayerUpdate: (state: any) => void;
+        previous: Track | null;
+        currenttrack: Track | null;
     }
 
     export class Plugin {
