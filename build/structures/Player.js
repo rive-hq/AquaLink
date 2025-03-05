@@ -239,7 +239,17 @@ class Player extends EventEmitter {
             player.queue.push(track);
         }
 
-        player.queue.length ? await player.play() : this.aqua.emit("queueEnd", player);
+        if (player.queue.isEmpty()) {
+            this.playing = false;
+            if (this.leaveOnEnd) {
+                this.clearData();   
+                this.cleanup();
+            }
+            this.aqua.emit("queueEnd", player);
+            return;
+        }
+
+        await player.play();
     }
 
     async trackError(player, track, payload) {
