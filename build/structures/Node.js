@@ -1,5 +1,5 @@
 "use strict";
-const WebSocket = require('../handlers/WebSocket');
+const WebSocket = require('ws');
 const Rest = require("./Rest");
 
 class Node {
@@ -37,16 +37,7 @@ class Node {
         this.infiniteReconnects = options.infiniteReconnects || false;
         this.connected = false;
         this.info = null;
-        this.defaultStats = this.#createDefaultStats();
-        this.stats = { ...this.defaultStats };
-        this._onOpen = this.#onOpen.bind(this);
-        this._onError = this.#onError.bind(this);
-        this._onMessage = this.#onMessage.bind(this);
-        this._onClose = this.#onClose.bind(this);
-    }
-
-    #createDefaultStats() {
-        return {
+        this.stats = {
             players: 0,
             playingPlayers: 0,
             uptime: 0,
@@ -55,7 +46,12 @@ class Node {
             frameStats: { sent: 0, nulled: 0, deficit: 0 },
             ping: 0
         };
+        this._onOpen = this.#onOpen.bind(this);
+        this._onError = this.#onError.bind(this);
+        this._onMessage = this.#onMessage.bind(this);
+        this._onClose = this.#onClose.bind(this);
     }
+
 
     async connect() {
         this.#ws = new WebSocket(this.wsUrl.href, {
@@ -97,8 +93,8 @@ class Node {
     }
 
     async getStats() {
-        const stats = await this.rest.getStats();
-        this.stats = { ...this.defaultStats, ...stats };
+        const newStats = await this.rest.getStats();
+        Object.assign(this.stats, newStats);
         return this.stats;
     }
 
@@ -107,7 +103,7 @@ class Node {
         try {
             payload = JSON.parse(msg);
         } catch {
-            return; // Invalid JSON, ignore the message
+            return;
         }
 
         const op = payload?.op;
@@ -139,45 +135,41 @@ class Node {
 
     #updateStats(payload) {
         if (!payload) return;
-        this.stats = {
-            ...this.stats,
-            ...payload,
-            memory: this.#updateMemoryStats(payload.memory),
-            cpu: this.#updateCpuStats(payload.cpu),
-            frameStats: this.#updateFrameStats(payload.frameStats)
-        }; 
-    }
 
-    #updateMemoryStats(memory = {}) {
-        const allocated = memory.allocated || 0;
-        const free = memory.free || 0;
-        const used = memory.used || 0;
-        return {
+        this.stats.players = payload.players || this.stats.players;
+        this.stats.playingPlayers = payload.playingPlayers || this.stats.playingPlayers;
+        this.stats.uptime = payload.uptime || this.stats.uptime;
+        this.stats.ping = payload.ping || this.stats.ping;
+
+        const memory = payload.memory || {};
+        const allocated = memory.allocated || this.stats.memory.allocated;
+        const free = memory.free || this.stats.memory.free;
+        const used = memory.used || this.stats.memory.used;
+
+        this.stats.memory = {
             free,
             used,
             allocated,
-            reservable: memory.reservable || 0,
-            freePercentage: allocated ? (free / allocated) * 100 : 0,
-            usedPercentage: allocated ? (used / allocated) * 100 : 0
+            reservable: memory.reservable || this.stats.memory.reservable,
+            freePercentage: allocated ? (free / allocated) * 100 : this.stats.memory.freePercentage,
+            usedPercentage: allocated ? (used / allocated) * 100 : this.stats.memory.usedPercentage
         };
-    }
 
-    #updateCpuStats(cpu = {}) {
-        const cores = cpu.cores || 0;
-        return {
+        const cpu = payload.cpu || {};
+        const cores = cpu.cores || this.stats.cpu.cores;
+
+        this.stats.cpu = {
             cores,
-            systemLoad: cpu.systemLoad || 0,
-            lavalinkLoad: cpu.lavalinkLoad || 0,
-            lavalinkLoadPercentage: cores ? (cpu.lavalinkLoad / cores) * 100 : 0
+            systemLoad: cpu.systemLoad || this.stats.cpu.systemLoad,
+            lavalinkLoad: cpu.lavalinkLoad || this.stats.cpu.lavalinkLoad,
+            lavalinkLoadPercentage: cores ? (cpu.lavalinkLoad / cores) * 100 : this.stats.cpu.lavalinkLoadPercentage
         };
-    }
 
-    #updateFrameStats(frameStats = {}) {
-        if (!frameStats) return { sent: 0, nulled: 0, deficit: 0 };
-        return {
-            sent: frameStats.sent || 0,
-            nulled: frameStats.nulled || 0,
-            deficit: frameStats.deficit || 0
+        const frameStats = payload.frameStats || {};
+        this.stats.frameStats = {
+            sent: frameStats.sent || this.stats.frameStats.sent,
+            nulled: frameStats.nulled || this.stats.frameStats.nulled,
+            deficit: frameStats.deficit || this.stats.frameStats.deficit
         };
     }
 
@@ -210,9 +202,11 @@ class Node {
     }
 
     #reconnect() {
+        clearTimeout(this.#reconnectTimeoutId);
+        
         if (this.infiniteReconnects) {
-            this.aqua.emit("nodeReconnect", this, "Infinite reconnects enabled, trying non-stop...");
-            setTimeout(() => this.connect(), 10000);
+            this.aqua.emit("nodeReconnect", this, "Infinite reconnects enabled, trying again in 10 seconds");
+            this.#reconnectTimeoutId = setTimeout(() => this.connect(), 10000);
             return;
         }
 
@@ -223,19 +217,17 @@ class Node {
             return;
         }
 
-        clearTimeout(this.#reconnectTimeoutId);
-        const jitter = Math.random() * 10000;
-        const backoffTime = Math.min(
-            this.reconnectTimeout * Math.pow(Node.BACKOFF_MULTIPLIER, this.#reconnectAttempted) + jitter,
-            Node.MAX_BACKOFF
-        );
+        const baseBackoff = this.reconnectTimeout * Math.pow(Node.BACKOFF_MULTIPLIER, this.#reconnectAttempted);
+        const jitter = Math.random() * Math.min(2000, baseBackoff * 0.2);
+        const backoffTime = Math.min(baseBackoff + jitter, Node.MAX_BACKOFF);
 
+        this.#reconnectAttempted++;
+        this.aqua.emit("nodeReconnect", this, {
+            attempt: this.#reconnectAttempted,
+            backoffTime
+        });
+        
         this.#reconnectTimeoutId = setTimeout(() => {
-            this.#reconnectAttempted++;
-            this.aqua.emit("nodeReconnect", this, {
-                attempt: this.#reconnectAttempted,
-                backoffTime
-            });
             this.connect();
         }, backoffTime);
     }
