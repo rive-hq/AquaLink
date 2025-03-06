@@ -1,12 +1,8 @@
 "use strict";
 const https = require("https");
 const http = require("http");
-let http2;
-try {
-    http2 = require("http2");
-} catch (e) {
-    http2 = null;
-}
+
+let http2 = null;
 
 class Rest {
     constructor(aqua, { secure, host, port, sessionId, password }) {
@@ -16,9 +12,31 @@ class Rest {
         this.baseUrl = `${secure ? "https" : "http"}://${host}:${port}`;
         this.headers = {
             "Content-Type": "application/json",
-            Authorization: password,
+            "Authorization": password,
         };
-        this.client = secure ? (http2 ? http2 : https) : http;
+        
+        this.secure = secure;
+    }
+
+    getClient() {
+        if (this.client) return this.client;
+        
+        if (this.secure) {
+            if (!http2) {
+                try {
+                    http2 = require("http2");
+                    this.client = http2;
+                } catch (e) {
+                    this.client = https;
+                }
+            } else {
+                this.client = http2;
+            }
+        } else {
+            this.client = http;
+        }
+        
+        return this.client;
     }
 
     setSessionId(sessionId) {
@@ -32,24 +50,37 @@ class Rest {
         };
 
         return new Promise((resolve, reject) => {
-            const req = this.client.request(`${this.baseUrl}${endpoint}`, options, (res) => {
-                let data = "";
-                res.setEncoding("utf8");
-
-                res.on("data", (chunk) => (data += chunk));
+            const client = this.getClient();
+            const url = `${this.baseUrl}${endpoint}`;
+            
+            const req = client.request(url, options, (res) => {
+                const chunks = [];
+                
+                res.on("data", (chunk) => chunks.push(chunk));
                 res.on("end", () => {
                     if (res.statusCode >= 200 && res.statusCode < 300) {
-                        resolve(data ? JSON.parse(data) : null);
+                        if (chunks.length === 0) {
+                            resolve(null);
+                            return;
+                        }
+                        
+                        try {
+                            const data = Buffer.concat(chunks).toString('utf8');
+                            resolve(data ? JSON.parse(data) : null);
+                        } catch (error) {
+                            reject(new Error(`Failed to parse response: ${error.message}`));
+                        }
                     } else {
                         reject(new Error(`Request failed with status ${res.statusCode}: ${res.statusMessage}`));
                     }
                 });
             });
 
-            req.on("error", (error) => reject(new Error(`Request failed (${method} ${endpoint}): ${error.message}`)));
+            req.on("error", (error) => reject(new Error(`Request failed (${method} ${url}): ${error.message}`)));
 
             if (body) {
-                req.write(JSON.stringify(body));
+                const jsonBody = JSON.stringify(body);
+                req.write(jsonBody);
             }
             req.end();
         });
@@ -64,7 +95,11 @@ class Rest {
             throw new Error("Cannot provide both 'encoded' and 'identifier' for track");
         }
         this.validateSessionId();
-        return this.makeRequest("PATCH", `/${this.version}/sessions/${this.sessionId}/players/${guildId}?noReplace=false`, data);
+        return this.makeRequest(
+            "PATCH", 
+            `/${this.version}/sessions/${this.sessionId}/players/${guildId}?noReplace=false`, 
+            data
+        );
     }
 
     getPlayers() {
@@ -106,16 +141,25 @@ class Rest {
     }
 
     async getLyrics({ track }) {
+        if (!track) {
+            return null;
+        }
+
         if (track.search) {
             try {
-                const res = await this.makeRequest("GET", `/${this.version}/lyrics/search?query=${encodeURIComponent(track.encoded.info.title)}&source=genius`);
+                const query = encodeURIComponent(track.encoded.info.title);
+                const res = await this.makeRequest("GET", `/${this.version}/lyrics/search?query=${query}&source=genius`);
                 if (res) return res;
             } catch (error) {
                 console.error("Failed to fetch lyrics:", error.message);
             }
         }
+        
         this.validateSessionId();
-        return this.makeRequest("GET", `/${this.version}/sessions/${this.sessionId}/players/${track.guild_id}/track/lyrics?skipTrackSource=false`);
+        return this.makeRequest(
+            "GET", 
+            `/${this.version}/sessions/${this.sessionId}/players/${track.guild_id}/track/lyrics?skipTrackSource=false`
+        );
     }
 }
 
