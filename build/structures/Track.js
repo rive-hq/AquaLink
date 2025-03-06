@@ -4,17 +4,19 @@ const { getImageUrl } = require("../handlers/fetchImage");
 class Track {
   constructor(data = {}, requester, nodes) {
     const { info = {}, encoded = null, playlist = null } = data;
+    
     this.info = {
       identifier: info.identifier || '',
-      isSeekable: !!info.isSeekable,
+      isSeekable: Boolean(info.isSeekable),
       author: info.author || '',
-      length: info.length | 0,
-      isStream: !!info.isStream,
+      length: info.length | 0, 
+      isStream: Boolean(info.isStream), 
       title: info.title || '',
       uri: info.uri || '',
       sourceName: info.sourceName || '',
       artworkUrl: info.artworkUrl || ''
     };
+    
     this.track = encoded;
     this.playlist = playlist;
     this.requester = requester;
@@ -33,7 +35,9 @@ class Track {
     }
 
     try {
-      const query = `${this.info.author} - ${this.info.title}`;
+      const { author, title } = this.info;
+      const query = `${author} - ${title}`;
+      
       const result = await aqua.resolve({
         query,
         source: searchPlatform,
@@ -42,12 +46,14 @@ class Track {
       });
 
       if (!result?.tracks?.length) return null;
+      
       const track = this._findMatchingTrack(result.tracks);
       if (!track) return null;
 
       this.info.identifier = track.info.identifier;
       this.track = track.track;
       this.playlist = track.playlist || null;
+      
       return this;
     } catch (error) {
       console.error("Error resolving track:", error);
@@ -57,6 +63,7 @@ class Track {
 
   _findMatchingTrack(tracks) {
     const { author, title, length } = this.info;
+    
     for (const track of tracks) {
       const tInfo = track.info;
       if (author === tInfo.author && title === tInfo.title) {
@@ -65,6 +72,7 @@ class Track {
         }
       }
     }
+    
     return null;
   }
 }
