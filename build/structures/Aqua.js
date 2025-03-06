@@ -10,30 +10,33 @@ const URL_REGEX = /^https?:\/\//;
 class Aqua extends EventEmitter {
     constructor(client, nodes, options = {}) {
         super();
-        this.validateInputs(client, nodes, options);
+        if (!client) throw new Error("Client is required to initialize Aqua");
+        if (!Array.isArray(nodes) || !nodes.length) {
+            throw new Error(`Nodes must be a non-empty Array (Received ${typeof nodes})`);
+        }
+
         this.client = client;
         this.nodes = nodes;
         this.nodeMap = new Map();
         this.players = new Map();
         this.clientId = null;
         this.initiated = false;
-        this.options = options;
-        this.shouldDeleteMessage = this.getOption(options, 'shouldDeleteMessage', false);
-        this.defaultSearchPlatform = this.getOption(options, 'defaultSearchPlatform', 'ytsearch');
-        this.leaveOnEnd = this.getOption(options, 'leaveOnEnd', true);
-        this.restVersion = this.getOption(options, 'restVersion', 'v4');
-        this.plugins = this.getOption(options, 'plugins', []);
+        
+        this.shouldDeleteMessage = options.shouldDeleteMessage ?? false;
+        this.defaultSearchPlatform = options.defaultSearchPlatform ?? 'ytsearch';
+        this.leaveOnEnd = options.leaveOnEnd ?? true;
+        this.restVersion = options.restVersion ?? 'v4';
+        this.plugins = options.plugins ?? [];
         this.version = pkgVersion;
-        this.send = options.send || this.defaultSendFunction;
-        this.autoResume = this.getOption(options, 'autoResume', false);
-        this.infiniteReconnects = this.getOption(options, 'infiniteReconnects', false);
+        this.send = options.send || this.defaultSendFunction.bind(this);
+        this.autoResume = options.autoResume ?? false;
+        this.infiniteReconnects = options.infiniteReconnects ?? false;
+        this.options = options;
+        
         this.setMaxListeners(0);
         this._leastUsedCache = { nodes: [], timestamp: 0 };
     }
 
-    getOption(options, key, defaultValue) {
-        return Object.prototype.hasOwnProperty.call(options, key) ? options[key] : defaultValue;
-    }
 
     defaultSendFunction(payload) {
         const guild = this.client.guilds.cache.get(payload.d.guild_id);
@@ -60,14 +63,15 @@ class Aqua extends EventEmitter {
         this._leastUsedCache = { nodes, timestamp: now };
         return nodes;
     }
-
     init(clientId) {
         if (this.initiated) return this;
 
         this.clientId = clientId;
+        
         try {
-            this.nodes.forEach(nodeConfig => this.createNode(nodeConfig));
-            this.plugins.forEach(plugin => plugin.load(this));
+            for (let i = 0; i < this.nodes.length; i++) { this.createNode(this.nodes[i]); }
+            if (this.plugins.length > 0) { for (let i = 0; i < this.plugins.length; i++) { this.plugins[i].load(this); } }
+            
             this.initiated = true;
         } catch (error) {
             this.initiated = false;
@@ -155,7 +159,11 @@ class Aqua extends EventEmitter {
         this.destroyPlayer(options.guildId);
         const player = new Player(this, node, options);
         this.players.set(options.guildId, player);
-        player.once("destroy", () => this.cleanupPlayer(player));
+        
+        player.once("destroy", () => {
+            this.players.delete(options.guildId);
+        });
+        
         player.connect(options);
         this.emit("playerCreate", player);
         return player;
@@ -237,6 +245,7 @@ class Aqua extends EventEmitter {
             return baseResponse;
         }
 
+        // Inline the track factory for better performance
         const trackFactory = trackData => new Track(trackData, requester, requestNode);
 
         switch (response.loadType) {
@@ -252,15 +261,26 @@ class Aqua extends EventEmitter {
                         ...response.data.info
                     };
                 }
-                baseResponse.tracks = (response.data?.tracks ?? []).map(trackFactory);
+                const tracks = response.data?.tracks;
+                if (tracks?.length) {
+                    baseResponse.tracks = new Array(tracks.length);
+                    for (let i = 0; i < tracks.length; i++) {
+                        baseResponse.tracks[i] = trackFactory(tracks[i]);
+                    }
+                }
                 break;
             case "search":
-                baseResponse.tracks = (response.data ?? []).map(trackFactory);
+                const searchData = response.data ?? [];
+                if (searchData.length) {
+                    baseResponse.tracks = new Array(searchData.length);
+                    for (let i = 0; i < searchData.length; i++) {
+                        baseResponse.tracks[i] = trackFactory(searchData[i]);
+                    }
+                }
                 break;
         }
         return baseResponse;
     }
-
     get(guildId) {
         const player = this.players.get(guildId);
         if (!player) throw new Error(`Player not found for guild ID: ${guildId}`);
