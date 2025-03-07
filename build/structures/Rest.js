@@ -147,7 +147,7 @@ class Rest {
 
         if (track.search) {
             try {
-                const query = encodeURIComponent(track.encoded.info.title);
+                const query = encodeURIComponent(track.info.title);
                 const res = await this.makeRequest("GET", `/${this.version}/lyrics/search?query=${query}&source=genius`);
                 if (res) return res;
             } catch (error) {
