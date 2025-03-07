@@ -4,7 +4,8 @@ An Stable, performant, Recourse friendly and fast lavalink wrapper
 This code is based in riffy, but its an 100% Rewrite made from scratch...
 
 # Why use AquaLink
-- Dependecy-free (0 dependencys), may change in future
+- Only uses 1 dependecy (ws for websocket, atm)
+- HTTP1.1 / HTTP2 Support
 - Very Low memory comsuption
 - Built in Queue manager
 - Lots of features to use
@@ -22,20 +23,51 @@ This code is based in riffy, but its an 100% Rewrite made from scratch...
   - https://github.com/DRSchlaubi/lyrics.kt (?)
   - https://github.com/DuncteBot/java-timed-lyrics (RECOMMENDED)
   
-# Tralalero Tralala 2.0.0 Released  
+# Tralalero Tralala 2.1.0 Released
 ---
+- Improved the `AQUA` module
+  - Faster nodes loading
+  - Faster plugin loading
+  - Better listeners for player
+  - Faster resolving system for playlists
 
-### Now aqualink is 100% depedency free!
-  - Rewrite the rest to use https / http 
-  - Removed undici usage
-  - Rewrite NODE to use built-in WebSocket (no need to upgrade to node 20 or more!)
-  - Uses my own made websocket system, so please report any bugs (i beg)
-  - more stuff soon, now bye
+- Remade the `Connection` system
+  - Less overheard now.
+  - Faster connections
+  - Improved the checkings
+  - Improved error handling
+  - Fixed creating useless Objects and arrays
+
+- Fully rewrite the `Node` system
+  - Way faster connections
+  - More stable (i think so)
+  - Faster events / messages / payloads handling
+  - Better stats handling (reusing, creating, destroyin)
+  - Some more bug fixes and stuff i forgot.
+
+- Remade the `Player` module
+  - Now support Lazy Loading by default
+  - Better State Updates
+  - Improved Garbage Collection
+  - Rewrite to use direct comparasions
+
+- Improved the `Rest` module
+  - Lazy loading of http2
+  - Faster request chunks
+  - Some overall upgrades
+
+- Improved `Track` module
+  - Faster track looking
+  - More micro optimizations (use Boolean instead of !!)
+
+- Remade the INDEX.D.TS File: Added more 1000 lines of code. Added autocomplete, options, and documented everything.
 
 # Docs (Wiki)
 - https://github.com/ToddyTheNoobDud/AquaLink/wiki
 
 - Example bot: https://github.com/ToddyTheNoobDud/Thorium-Music
+
+- Support Server: https://discord.gg/K4CVv84VBC
 
 # How to install
 
