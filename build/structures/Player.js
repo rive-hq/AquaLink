@@ -108,6 +108,18 @@ class Player extends EventEmitter {
         return this.updatePlayer({ track: { encoded: this.current.track } });
     }
 
+    async search(query, requester, source = "ytsearch") {
+        if (!this.connected || !query || !requester) return null;
+
+        try {
+            const { tracks } = await this.aqua.resolve({ query, source, requester });
+            return tracks || null;
+        } catch (error) {
+            console.error("Search error:", error);
+            return null;
+        }
+    }
+
     connect({ guildId, voiceChannel, deaf = true, mute = false }) {
         if (this.connected) throw new Error("Player is already connected.");
         
