@@ -287,6 +287,18 @@ class Aqua extends EventEmitter {
         return player;
     }
 
+    async search(query, requester, source = this.defaultSearchPlatform) {
+        if (!query || !requester) return null;
+
+        try {
+            const { tracks } = await this.resolve({ query, source, requester });
+            return tracks || null;
+        } catch (error) {
+            console.error("Search error:", error);
+            return null;
+        }
+    }
+
     cleanupPlayer(player) {
         if (player && this.players.has(player.guildId)) {
             this.players.delete(player.guildId);
