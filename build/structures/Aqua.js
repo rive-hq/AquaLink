@@ -21,7 +21,7 @@ class Aqua extends EventEmitter {
         this.players = new Map();
         this.clientId = null;
         this.initiated = false;
-        
+
         this.shouldDeleteMessage = options.shouldDeleteMessage ?? false;
         this.defaultSearchPlatform = options.defaultSearchPlatform ?? 'ytsearch';
         this.leaveOnEnd = options.leaveOnEnd ?? true;
@@ -32,7 +32,7 @@ class Aqua extends EventEmitter {
         this.autoResume = options.autoResume ?? false;
         this.infiniteReconnects = options.infiniteReconnects ?? false;
         this.options = options;
-        
+
         this.setMaxListeners(0);
         this._leastUsedCache = { nodes: [], timestamp: 0 };
     }
@@ -67,11 +67,11 @@ class Aqua extends EventEmitter {
         if (this.initiated) return this;
 
         this.clientId = clientId;
-        
+
         try {
             for (let i = 0; i < this.nodes.length; i++) { this.createNode(this.nodes[i]); }
             if (this.plugins.length > 0) { for (let i = 0; i < this.plugins.length; i++) { this.plugins[i].load(this); } }
-            
+
             this.initiated = true;
         } catch (error) {
             this.initiated = false;
@@ -129,7 +129,7 @@ class Aqua extends EventEmitter {
         if (!region) return this.leastUsedNodes;
 
         const lowerRegion = region.toLowerCase();
-        const regionNodes = Array.from(this.nodeMap.values()).filter(node => 
+        const regionNodes = Array.from(this.nodeMap.values()).filter(node =>
             node.connected && node.regions?.includes(lowerRegion)
         );
         regionNodes.sort((a, b) => this.calculateLoad(a) - this.calculateLoad(b));
@@ -151,7 +151,7 @@ class Aqua extends EventEmitter {
         const availableNodes = options.region ? this.fetchRegion(options.region) : this.leastUsedNodes;
         const node = availableNodes[0];
         if (!node) throw new Error("No nodes are available");
-        
+
         return this.createPlayer(node, options);
     }
 
@@ -159,11 +159,11 @@ class Aqua extends EventEmitter {
         this.destroyPlayer(options.guildId);
         const player = new Player(this, node, options);
         this.players.set(options.guildId, player);
-        
+
         player.once("destroy", () => {
             this.players.delete(options.guildId);
         });
-        
+
         player.connect(options);
         this.emit("playerCreate", player);
         return player;
@@ -193,7 +193,7 @@ class Aqua extends EventEmitter {
             if (["empty", "NO_MATCHES"].includes(response.loadType)) {
                 return await this.handleNoMatches(requestNode.rest, query);
             }
-            return this.constructorResponse(response, requester, requestNode);
+            return this.constructResponse(response, requester, requestNode);
         } catch (error) {
             if (error.name === "AbortError") {
                 throw new Error("Request timed out");
@@ -203,9 +203,12 @@ class Aqua extends EventEmitter {
     }
 
     getRequestNode(nodes) {
-        if (nodes && !(typeof nodes === "string" || nodes instanceof Node)) {
+        if (!nodes) return this.leastUsedNodes[0];
+
+        if (!(typeof nodes === "string" || nodes instanceof Node)) {
             throw new TypeError(`'nodes' must be a string or Node instance, received: ${typeof nodes}`);
         }
+
         return (typeof nodes === "string" ? this.nodeMap.get(nodes) : nodes) ?? this.leastUsedNodes[0];
     }
 
@@ -221,17 +224,20 @@ class Aqua extends EventEmitter {
         try {
             const ytIdentifier = `/v4/loadtracks?identifier=https://www.youtube.com/watch?v=${query}`;
             const youtubeResponse = await rest.makeRequest("GET", ytIdentifier);
-            if (["empty", "NO_MATCHES"].includes(youtubeResponse.loadType)) {
-                const spotifyIdentifier = `/v4/loadtracks?identifier=https://open.spotify.com/track/${query}`;
-                return await rest.makeRequest("GET", spotifyIdentifier);
+
+            if (!["empty", "NO_MATCHES"].includes(youtubeResponse.loadType)) {
+                return youtubeResponse;
             }
-            return youtubeResponse;
+
+            const spotifyIdentifier = `/v4/loadtracks?identifier=https://open.spotify.com/track/${query}`;
+            return await rest.makeRequest("GET", spotifyIdentifier);
         } catch (error) {
             console.error(`Failed to resolve track: ${error.message}`);
+            throw error;
         }
     }
 
-    constructorResponse(response, requester, requestNode) {
+    constructResponse(response, requester, requestNode) {
         const baseResponse = {
             loadType: response.loadType,
             exception: null,
@@ -245,8 +251,7 @@ class Aqua extends EventEmitter {
             return baseResponse;
         }
 
-        // Inline the track factory for better performance
-        const trackFactory = trackData => new Track(trackData, requester, requestNode);
+        const trackFactory = (trackData) => new Track(trackData, requester, requestNode);
 
         switch (response.loadType) {
             case "track":
@@ -254,6 +259,7 @@ class Aqua extends EventEmitter {
                     baseResponse.tracks.push(trackFactory(response.data));
                 }
                 break;
+
             case "playlist":
                 if (response.data?.info) {
                     baseResponse.playlistInfo = {
@@ -261,26 +267,32 @@ class Aqua extends EventEmitter {
                         ...response.data.info
                     };
                 }
+
                 const tracks = response.data?.tracks;
                 if (tracks?.length) {
-                    baseResponse.tracks = new Array(tracks.length);
-                    for (let i = 0; i < tracks.length; i++) {
+                    const len = tracks.length;
+                    baseResponse.tracks = new Array(len);
+                    for (let i = 0; i < len; i++) {
                         baseResponse.tracks[i] = trackFactory(tracks[i]);
                     }
                 }
                 break;
+
             case "search":
                 const searchData = response.data ?? [];
                 if (searchData.length) {
-                    baseResponse.tracks = new Array(searchData.length);
-                    for (let i = 0; i < searchData.length; i++) {
+                    const len = searchData.length;
+                    baseResponse.tracks = new Array(len);
+                    for (let i = 0; i < len; i++) {
                         baseResponse.tracks[i] = trackFactory(searchData[i]);
                     }
                 }
                 break;
         }
+
         return baseResponse;
     }
+
     get(guildId) {
         const player = this.players.get(guildId);
         if (!player) throw new Error(`Player not found for guild ID: ${guildId}`);
