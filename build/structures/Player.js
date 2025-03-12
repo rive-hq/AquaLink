@@ -366,6 +366,7 @@ class Player extends EventEmitter {
                 this.clearData();
                 this.aqua.emit("queueEnd", player);
             } else {
+                this.aqua.emit("trackEnd", player, track, reason);
                 await player.play();
             }
             return;
@@ -389,6 +390,7 @@ class Player extends EventEmitter {
                 this.aqua.emit("queueEnd", player);
             }
         } else {
+            this.aqua.emit("trackEnd", player, track, reason);
             await player.play();
         }
     }
