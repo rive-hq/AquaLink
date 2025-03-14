@@ -40,8 +40,10 @@ class Player extends EventEmitter {
         this.loop = Player.validModes.has(options.loop) ? options.loop : Player.LOOP_MODES.NONE;
         
         this.queue = new Queue();
-        this.previousTracks = Array(50);
+        this.previousTracks = new Array(50);
+        this.previousTracksIndex = 0;
         this.previousTracksCount = 0;
+        
         this.shouldDeleteMessage = Boolean(options.shouldDeleteMessage);
         this.leaveOnEnd = Boolean(options.leaveOnEnd);
 
@@ -56,15 +58,19 @@ class Player extends EventEmitter {
         this.isAutoplayEnabled = false;
         this.isAutoplay = false;
         
-        this._handlePlayerUpdate = this._handlePlayerUpdate.bind(this);
-        this._handleEvent = this._handleEvent.bind(this);
+        this._boundHandlers = {
+            playerUpdate: this._handlePlayerUpdate.bind(this),
+            event: this._handleEvent.bind(this)
+        };
         
-        this.on("playerUpdate", this._handlePlayerUpdate);
-        this.on("event", this._handleEvent);
+        this.on("playerUpdate", this._boundHandlers.playerUpdate);
+        this.on("event", this._boundHandlers.event);
+        
+        this._dataStore = null;
     }
 
     get previous() {
-        return this.previousTracksCount > 0 ? this.previousTracks[0] : null;
+        return this.previousTracksCount > 0 ? this.previousTracks[this.previousTracksIndex] : null;
     }
     
     get currenttrack() {
@@ -154,17 +160,11 @@ class Player extends EventEmitter {
     addToPreviousTrack(track) {
         if (!track) return;
         
+        this.previousTracks[this.previousTracksIndex] = track;
+        this.previousTracksIndex = (this.previousTracksIndex + 1) % 50;
+        
         if (this.previousTracksCount < 50) {
-            for (let i = this.previousTracksCount; i > 0; i--) {
-                this.previousTracks[i] = this.previousTracks[i-1];
-            }
-            this.previousTracks[0] = track;
             this.previousTracksCount++;
-        } else {
-            for (let i = 49; i > 0; i--) {
-                this.previousTracks[i] = this.previousTracks[i-1];
-            }
-            this.previousTracks[0] = track;
         }
     }
 
@@ -222,18 +222,33 @@ class Player extends EventEmitter {
         
         this.disconnect();
         
+        this._cleanupNowPlayingMessage();
+        
+        this.isAutoplay = false;
+
+        this.off("playerUpdate", this._boundHandlers.playerUpdate);
+        this.off("event", this._boundHandlers.event);
+        
+        this.aqua.destroyPlayer(this.guildId);
+        this.nodes.rest.destroyPlayer(this.guildId);
+        
+        this.clearData();
+        this.removeAllListeners();
+        
+        this._boundHandlers = null;
+        this.queue = null;
+        this.previousTracks = null;
+        this.connection = null;
+        this.filters = null;
+        
+        return this;
+    }
+    
+    _cleanupNowPlayingMessage() {
         if (this.nowPlayingMessage) {
             this.nowPlayingMessage.delete().catch(() => {});
             this.nowPlayingMessage = null;
         }
-        
-        this.isAutoplay = false;
-
-        this.aqua.destroyPlayer(this.guildId);
-        this.nodes.rest.destroyPlayer(this.guildId);
-        this.clearData();
-        this.removeAllListeners();
-        return this;
     }
 
     pause(paused) {
@@ -312,6 +327,8 @@ class Player extends EventEmitter {
     }
 
     disconnect() {
+        if (!this.connected) return this;
+        
         this.connected = false;
         this.send({ guild_id: this.guildId, channel_id: null });
         this.voiceChannel = null;
@@ -372,26 +389,34 @@ class Player extends EventEmitter {
             return;
         }
 
+        await this._handleTrackLooping(player, track);
+
+        if (player.queue.isEmpty()) {
+            await this._handleEmptyQueue(player);
+        } else {
+            this.aqua.emit("trackEnd", player, track, reason);
+            await player.play();
+        }
+    }
+    
+    async _handleTrackLooping(player, track) {
         if (this.loop === Player.LOOP_MODES.TRACK) {
             player.queue.unshift(track);
         } else if (this.loop === Player.LOOP_MODES.QUEUE) {
             player.queue.push(track);
         }
-
-        if (player.queue.isEmpty()) {
-            if (this.isAutoplayEnabled) {
-                await player.autoplay(player);
-            } else {
-                this.playing = false;
-                if (this.leaveOnEnd) {
-                    this.clearData();
-                    this.cleanup();
-                }
-                this.aqua.emit("queueEnd", player);
-            }
+    }
+    
+    async _handleEmptyQueue(player) {
+        if (this.isAutoplayEnabled) {
+            await player.autoplay(player);
         } else {
-            this.aqua.emit("trackEnd", player, track, reason);
-            await player.play();
+            this.playing = false;
+            if (this.leaveOnEnd) {
+                this.clearData();
+                this.cleanup();
+            }
+            this.aqua.emit("queueEnd", player);
         }
     }
 
