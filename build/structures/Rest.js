@@ -2,10 +2,14 @@
 const https = require("https");
 const http = require("http");
 
-let http2 = null;
+let http2;
+try {
+    http2 = require("http2");
+} catch (e) {
+}
 
 class Rest {
-    constructor(aqua, { secure, host, port, sessionId, password }) {
+    constructor(aqua, { secure, host, port, sessionId, password, timeout = 30000 }) {
         this.aqua = aqua;
         this.sessionId = sessionId;
         this.version = "v4";
@@ -14,29 +18,17 @@ class Rest {
             "Content-Type": "application/json",
             "Authorization": password,
         };
-        
         this.secure = secure;
+        this.timeout = timeout;
+        
+        this.client = this.initializeClient();
     }
 
-    getClient() {
-        if (this.client) return this.client;
-        
+    initializeClient() {
         if (this.secure) {
-            if (!http2) {
-                try {
-                    http2 = require("http2");
-                    this.client = http2;
-                } catch (e) {
-                    this.client = https;
-                }
-            } else {
-                this.client = http2;
-            }
-        } else {
-            this.client = http;
+            return http2 || https;
         }
-        
-        return this.client;
+        return http;
     }
 
     setSessionId(sessionId) {
@@ -50,22 +42,24 @@ class Rest {
         };
 
         return new Promise((resolve, reject) => {
-            const client = this.getClient();
             const url = `${this.baseUrl}${endpoint}`;
-            
-            const req = client.request(url, options, (res) => {
-                const chunks = [];
+            const req = this.client.request(url, options, (res) => {
+                res.setEncoding('utf8');
                 
-                res.on("data", (chunk) => chunks.push(chunk));
+                let data = '';
+                
+                res.on("data", (chunk) => {
+                    data += chunk;
+                });
+                
                 res.on("end", () => {
                     if (res.statusCode >= 200 && res.statusCode < 300) {
-                        if (chunks.length === 0) {
+                        if (!data) {
                             resolve(null);
                             return;
                         }
                         
                         try {
-                            const data = Buffer.concat(chunks).toString('utf8');
                             resolve(data ? JSON.parse(data) : null);
                         } catch (error) {
                             reject(new Error(`Failed to parse response: ${error.message}`));
@@ -141,25 +135,27 @@ class Rest {
     }
 
     async getLyrics({ track }) {
-        if (!track) {
+        if (!track) return null;
+        
+        try {
+            if (track.search) {
+                const query = track.info.title;
+                try {
+                    const res = await this.makeRequest("GET", `/${this.version}/lyrics/search?query=${query}&source=genius`);
+                    if (res) return res;
+                } catch (err) {}
+            } else {
+                this.validateSessionId();
+                return await this.makeRequest(
+                    "GET", 
+                    `/${this.version}/sessions/${this.sessionId}/players/${track.guild_id}/track/lyrics?skipTrackSource=false`
+                );
+            }
+         
+        } catch (error) {
+            console.error("Failed to fetch lyrics:", error.message);
             return null;
         }
-
-        if (track.search) {
-            try {
-                const query = encodeURIComponent(track.info.title);
-                const res = await this.makeRequest("GET", `/${this.version}/lyrics/search?query=${query}&source=genius`);
-                if (res) return res;
-            } catch (error) {
-                console.error("Failed to fetch lyrics:", error.message);
-            }
-        }
-        
-        this.validateSessionId();
-        return this.makeRequest(
-            "GET", 
-            `/${this.version}/sessions/${this.sessionId}/players/${track.guild_id}/track/lyrics?skipTrackSource=false`
-        );
     }
 }
 
