@@ -42,9 +42,9 @@ function fetchThumbnail(url) {
 }
 
 async function fetchYouTubeThumbnail(identifier) {
-    const promises = YOUTUBE_QUALITIES.map(urlFunc => fetchThumbnail(urlFunc(identifier)).catch(() => null));
-    const results = await Promise.all(promises);
-    return results.find(result => result !== null) || null;
+    const promises = YOUTUBE_QUALITIES.map(urlFunc => fetchThumbnail(urlFunc(identifier)));
+    const firstResult = await Promise.race(promises);
+    return firstResult || null;
 }
 
 module.exports = { getImageUrl };
