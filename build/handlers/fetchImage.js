@@ -1,94 +1,50 @@
 const https = require('https');
-const { URL } = require('url');
+const sourceHandlers = new Map([
+    ['spotify', uri => fetchThumbnail(`https://open.spotify.com/oembed?url=${uri}`)],
+    ['youtube', identifier => fetchYouTubeThumbnail(identifier)]
+]);
+const YOUTUBE_URL_TEMPLATE = (quality) => (id) => `https://img.youtube.com/vi/${id}/${quality}.jpg`;
+const YOUTUBE_QUALITIES = ['maxresdefault', 'hqdefault', 'mqdefault', 'default'].map(YOUTUBE_URL_TEMPLATE);
 
-const DEFAULT_TIMEOUT = 10000;
-
-function fetch(url, options = {}) {
-    return new Promise((resolve, reject) => {
-        const req = https.get(url, options, async (res) => {
-            try {
-                if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-                    const resolvedUrl = new URL(res.headers.location, url).href;
-                    const result = await fetch(resolvedUrl, options);
-                    return resolve(result);
-                }
-
-                if (res.statusCode < 200 || res.statusCode >= 300) {
-                    res.resume();
-                    return reject(new Error(`Request failed. Status code: ${res.statusCode}`));
-                }
-
-                const chunks = [];
-                res.on('data', chunk => chunks.push(chunk));
-                
-                res.on('end', () => resolve(Buffer.concat(chunks).toString()));
-            } catch (error) {
-                reject(error);
-            }
-        });
-
-        req.setTimeout(DEFAULT_TIMEOUT, () => {
-            req.destroy(new Error(`Request timeout after ${DEFAULT_TIMEOUT}ms`));
-        });
-
-        req.on('error', reject);
-        req.end();
-    });
-}
-
-async function scAutoPlay(url) {
+async function getImageUrl(info) {
+    if (!info?.sourceName || !info?.uri) return null;
+    const handler = sourceHandlers.get(info.sourceName.toLowerCase());
+    if (!handler) return null;
     try {
-        const targetUrl = new URL('/recommended', url).href;
-        const html = await fetch(targetUrl);
-
-        const hrefs = new Set();
-        const regex = /<a\s+itemprop="url"\s+href="([^"]*)"/gi;
-        const matches = html.matchAll(regex);
-
-        for (const match of matches) {
-            const path = match[1];
-            if (path.startsWith('/')) {
-                hrefs.add(new URL(path, 'https://soundcloud.com').href);
-            }
-        }
-
-        if (hrefs.size === 0) {
-            throw new Error("No recommended tracks found on SoundCloud.");
-        }
-
-        return shuffleArray([...hrefs]);
+        return await handler(info.uri);
     } catch (error) {
-        console.error("Error fetching SoundCloud recommendations:", error);
-        return [];
-    }
-}
-
-function shuffleArray(array) {
-    for (let i = array.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [array[i], array[j]] = [array[j], array[i]];
-    }
-    return array;
-}
-
-async function spAutoPlay(track_id, requester, aqua) {
-    try {
-        const res = await aqua.resolve({
-            query: `seed_tracks=${track_id}`,
-            requester: requester,
-            source: "spsearch"
-        }) || {};
-
-        const tracks = res.tracks || [];
-        if (tracks.length === 0) {
-            throw new Error("No recommended tracks found");
-        }
-
-        return tracks[Math.floor(Math.random() * tracks.length)].info?.identifier;
-    } catch (error) {
-        console.error("Spotify AutoPlay Error:", error);
+        console.error('Error fetching image URL:', error);
         return null;
     }
 }
 
-module.exports = { scAutoPlay, spAutoPlay, fetch };
+function fetchThumbnail(url) {
+    return new Promise((resolve, reject) => {
+        https.get(url, (res) => {
+            if (res.statusCode !== 200) {
+                res.resume();
+                return reject(`Failed to fetch: ${res.statusCode}`);
+            }
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+                try {
+                    const json = JSON.parse(data);
+                    resolve(json.thumbnail_url || null);
+                } catch (error) {
+                    reject(`JSON parse error: ${error.message}`);
+                }
+            });
+        }).on('error', (error) => {
+            reject(`Request error: ${error.message}`);
+        });
+    });
+}
+
+async function fetchYouTubeThumbnail(identifier) {
+    const promises = YOUTUBE_QUALITIES.map(urlFunc => fetchThumbnail(urlFunc(identifier)));
+    const firstResult = await Promise.race(promises);
+    return firstResult || null;
+}
+
+module.exports = { getImageUrl };
