@@ -1,95 +1,94 @@
 const https = require('https');
+const { URL } = require('url');
+
+const DEFAULT_TIMEOUT = 10000;
 
 function fetch(url, options = {}) {
     return new Promise((resolve, reject) => {
-        const req = https.get(url, options, (res) => {
-            if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-                return fetch(res.headers.location, options).then(resolve).catch(reject);
+        const req = https.get(url, options, async (res) => {
+            try {
+                if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                    const resolvedUrl = new URL(res.headers.location, url).href;
+                    const result = await fetch(resolvedUrl, options);
+                    return resolve(result);
+                }
+
+                if (res.statusCode < 200 || res.statusCode >= 300) {
+                    res.resume();
+                    return reject(new Error(`Request failed. Status code: ${res.statusCode}`));
+                }
+
+                const chunks = [];
+                res.on('data', chunk => chunks.push(chunk));
+                
+                res.on('end', () => resolve(Buffer.concat(chunks).toString()));
+            } catch (error) {
+                reject(error);
             }
-            
-            if (res.statusCode !== 200) {
-                res.resume();
-                reject(new Error(`Request failed. Status code: ${res.statusCode}`));
-                return;
-            }
-            
-            const chunks = [];
-            res.on('data', chunk => chunks.push(chunk));
-            res.on('end', () => resolve(Buffer.concat(chunks).toString()));
         });
-        
-        req.setTimeout(10000, () => {
-            req.destroy();
-            reject(new Error('Request timeout'));
+
+        req.setTimeout(DEFAULT_TIMEOUT, () => {
+            req.destroy(new Error(`Request timeout after ${DEFAULT_TIMEOUT}ms`));
         });
-        
-        req.on('error', err => {
-            reject(err);
-        });
-        
+
+        req.on('error', reject);
         req.end();
     });
 }
 
 async function scAutoPlay(url) {
     try {
-        const html = await fetch(`${url}/recommended`);
-        
-        const regex = /<a itemprop="url" href="(\/.*?)"/g;
+        const targetUrl = new URL('/recommended', url).href;
+        const html = await fetch(targetUrl);
+
         const hrefs = new Set();
-        let match;
-        
-        while ((match = regex.exec(html)) !== null) {
-            hrefs.add(`https://soundcloud.com${match[1]}`);
+        const regex = /<a\s+itemprop="url"\s+href="([^"]*)"/gi;
+        const matches = html.matchAll(regex);
+
+        for (const match of matches) {
+            const path = match[1];
+            if (path.startsWith('/')) {
+                hrefs.add(new URL(path, 'https://soundcloud.com').href);
+            }
         }
-        
+
         if (hrefs.size === 0) {
             throw new Error("No recommended tracks found on SoundCloud.");
         }
-        
-        const shuffledHrefs = Array.from(hrefs);
-        for (let i = shuffledHrefs.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [shuffledHrefs[i], shuffledHrefs[j]] = [shuffledHrefs[j], shuffledHrefs[i]];
-        }
-        
-        return shuffledHrefs;
+
+        return shuffleArray([...hrefs]);
     } catch (error) {
         console.error("Error fetching SoundCloud recommendations:", error);
         return [];
     }
 }
 
-async function spAutoPlay(track_id) {
+function shuffleArray(array) {
+    for (let i = array.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [array[i], array[j]] = [array[j], array[i]];
+    }
+    return array;
+}
+
+async function spAutoPlay(track_id, requester, aqua) {
     try {
-        const tokenResponse = await fetch("https://open.spotify.com/get_access_token?reason=transport&productType=embed");
-        const tokenData = JSON.parse(tokenResponse);
-        const accessToken = tokenData?.accessToken;
-        
-        if (!accessToken) throw new Error("Failed to retrieve Spotify access token");
-        
-        const recommendationsResponse = await fetch(
-            `https://api.spotify.com/v1/recommendations?limit=5&seed_tracks=${track_id}&fields=tracks.id`, 
-            {
-                headers: { 
-                    Authorization: `Bearer ${accessToken}`, 
-                    'Content-Type': 'application/json'
-                }
-            }
-        );
-        
-        const data = JSON.parse(recommendationsResponse);
-        const tracks = data?.tracks || [];
-        
+        const res = await aqua.resolve({
+            query: `seed_tracks=${track_id}`,
+            requester: requester,
+            source: "spsearch"
+        }) || {};
+
+        const tracks = res.tracks || [];
         if (tracks.length === 0) {
-            throw new Error("No recommended tracks found on Spotify.");
+            throw new Error("No recommended tracks found");
         }
-        
-        return tracks[Math.floor(Math.random() * tracks.length)].id;
+
+        return tracks[Math.floor(Math.random() * tracks.length)].info?.identifier;
     } catch (error) {
-        console.error("Error fetching Spotify recommendations:", error);
+        console.error("Spotify AutoPlay Error:", error);
         return null;
     }
 }
 
-module.exports = { scAutoPlay, spAutoPlay };
+module.exports = { scAutoPlay, spAutoPlay, fetch };
