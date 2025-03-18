@@ -80,7 +80,7 @@ class Player extends EventEmitter {
         return this.current;
     }
 
-    async autoplay(player) {
+       async autoplay(player) {
         if (!player) throw new Error("Quick Fix: player.autoplay(player)");
 
         if (!this.isAutoplayEnabled) {
@@ -113,7 +113,8 @@ class Player extends EventEmitter {
                     };
                 },
                 spotify: async () => {
-                    const spResult = await spAutoPlay(identifier);
+                    const spResult = await spAutoPlay(identifier, requester, this.aqua);
+                    this.aqua.emit('debug', this.guildId, `Spotify result: ${spResult}`);
                     if (!spResult) return null;
                     return {
                         query: `https://open.spotify.com/track/${spResult}`,
