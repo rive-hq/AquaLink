@@ -324,7 +324,7 @@ We welcome contributions from developers of all skill levels! Whether it's addin
 Join our thriving community of developers and bot creators!
 
 [![Discord Server](https://img.shields.io/badge/Discord_Server-7289da?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/K4CVv84VBC)
-[![GitHub Discussions](https://img.shields.io/badge/GitHub_Discussions-0061ff?style=for-the-badge&logo=github&logoColor=white)](https://github.com/ToddyTheNoobDud/AquaLink/aqualink/discussions)
+[![GitHub Discussions](https://img.shields.io/badge/GitHub_Discussions-0061ff?style=for-the-badge&logo=github&logoColor=white)](https://github.com/ToddyTheNoobDud/AquaLink/discussions)
 
 </div>
 
