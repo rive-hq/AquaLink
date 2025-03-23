@@ -4,6 +4,7 @@
   <img src="https://capsule-render.vercel.app/api?type=wave&color=0099FF&height=300&section=header&text=Aqualink&fontSize=90&fontAlignY=35&animation=twinkling&fontColor=ffffff&desc=The%20Ultimate%20Lavalink%20Wrapper&descSize=25&descAlignY=60" />
 </p>
 
+[![NPM Downloads](https://img.shields.io/npm/dw/aqualink.svg?style=for-the-badge&color=3498db)](https://www.npmjs.com/package/aqualink)
 [![NPM Version](https://img.shields.io/npm/v/aqualink?color=0061ff&label=Aqualink&style=for-the-badge&logo=npm)](https://www.npmjs.com/package/aqualink)
 [![GitHub Stars](https://img.shields.io/github/stars/ToddyTheNoobDud/AquaLink?color=00bfff&style=for-the-badge&logo=github)](https://github.com/ToddyTheNoobDud/AquaLink/stargazers)
 [![Downloads](https://img.shields.io/npm/dt/aqualink.svg?style=for-the-badge&color=3498db)](https://www.npmjs.com/package/aqualink)
@@ -214,13 +215,6 @@ client.login("Yourtokenhere");
 [View All Projects →](https://github.com/ToddyTheNoobDud/AquaLink#used-by)
 </div>
 
-## 📊 Usage Statistics
-
-<div align="center">
-
- <img src="https://quickchart.io/chart?c={type:'line',data:{labels:['January','February','March','April'],datasets:[{label:'Monthly Downloads',data:[150,200,250,300],borderColor:'rgba(75,192,192,1)',fill:false}]}}" alt="Aqualink Monthly Downloads" width="600px" />
-
-<br />
 
 **300+** weekly downloads • **3+** GitHub stars • **3+** Discord bots
 
