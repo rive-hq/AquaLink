@@ -54,7 +54,7 @@
   <table>
     <tr>
       <td align="center" width="25%">
-        <img src="https://img.icons8.com/fluent/48/000000/equalizer.png"/>
+        <img src="https://img.icons8.com/fluent/48/000000/filter.png"/>
         <h4>Advanced Filters</h4>
         <p>EQ, Bass Boost, Nightcore & more</p>
       </td>
@@ -80,17 +80,8 @@
 ## 📦 Resources
 
 <div align="center">
-  <a href="https://docs.aqualink.com">
-    <img src="https://img.shields.io/badge/Documentation-0061ff?style=for-the-badge&logo=bookstack&logoColor=white" />
-  </a>
-  <a href="https://github.com/Aqualink-NPM/aqualink_basics_bot">
-    <img src="https://img.shields.io/badge/Example_Bot-00bfff?style=for-the-badge&logo=discord&logoColor=white" />
-  </a>
-  <a href="https://discord.gg/aqualink">
+  <a href="https://discord.gg/BNrPCvgrCf">
     <img src="https://img.shields.io/badge/Support_Server-3498db?style=for-the-badge&logo=discord&logoColor=white" />
-  </a>
-  <a href="https://aqualink.js.org">
-    <img src="https://img.shields.io/badge/API_Reference-0099cc?style=for-the-badge&logo=read-the-docs&logoColor=white" />
   </a>
 </div>
 
@@ -225,7 +216,7 @@ client.login("Yourtokenhere");
 
 <div align="center">
 
-<img src="https://i.imgur.com/placeholder-chart.png" alt="Aqualink Monthly Downloads" width="600px" />
+ <img src="https://quickchart.io/chart?c={type:'line',data:{labels:['January','February','March','April'],datasets:[{label:'Monthly Downloads',data:[150,200,250,300],borderColor:'rgba(75,192,192,1)',fill:false}]}}" alt="Aqualink Monthly Downloads" width="600px" />
 
 <br />
 
