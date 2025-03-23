@@ -214,39 +214,46 @@ class Aqua extends EventEmitter {
         };
         if (response.loadType === "error" || response.loadType === "LOAD_FAILED") {
             baseResponse.exception = response.data ?? response.exception;
-            return { ...baseResponse };
+            return baseResponse;
         }
         const trackFactory = (trackData) => new Track(trackData, requester, requestNode);
-
         switch (response.loadType) {
-            case "track": {
-                const newResponse = { ...baseResponse };
-                newResponse.tracks = [trackFactory(response.data)];
-                return newResponse;
-            }
-
-            case "playlist": {
-                const newResponse = { ...baseResponse };
-                newResponse.playlistInfo = {
-                    name: response.data.info.name ?? response.data.info.title,
-                    ...response.data.info
-                };
-                newResponse.tracks = [];
-                for (const track of response.data.tracks) {
-                    newResponse.tracks.push(trackFactory(track));
+            case "track":
+                if (response.data) {
+                    baseResponse.tracks.push(trackFactory(response.data));
                 }
-                return newResponse;
-            }
+                break;
 
-            case "search": {
-                const newResponse = { ...baseResponse };
-                newResponse.tracks = [];
-                for (const trackData of response.data) {
-                    newResponse.tracks.push(trackFactory(trackData));
+            case "playlist":
+                if (response.data?.info) {
+                    baseResponse.playlistInfo = {
+                        name: response.data.info.name ?? response.data.info.title,
+                        ...response.data.info
+                    };
                 }
-                return newResponse;
-            }
+
+                const tracks = response.data?.tracks;
+                if (tracks?.length) {
+                    const len = tracks.length;
+                    baseResponse.tracks = new Array(len);
+                    for (let i = 0; i < len; i++) {
+                        baseResponse.tracks[i] = trackFactory(tracks[i]);
+                    }
+                }
+                break;
+
+            case "search":
+                const searchData = response.data ?? [];
+                if (searchData.length) {
+                    const len = searchData.length;
+                    baseResponse.tracks = new Array(len);
+                    for (let i = 0; i < len; i++) {
+                        baseResponse.tracks[i] = trackFactory(searchData[i]);
+                    }
+                }
+                break;
         }
+        return baseResponse;
     }
 
     get(guildId) {
