@@ -219,6 +219,20 @@ client.login("Yourtokenhere");
 
 </div>
 
+## 📖 Documentation
+
+For detailed usage, API references, and examples, check out our official documentation:
+
+[![Docs](https://img.shields.io/badge/Documentation-0099FF?style=for-the-badge&logo=readthedocs&logoColor=white)](https://toddythenoobdud.github.io/aqualink.github.io)
+
+📌 **Get Started Quickly**
+- Installation guide
+- API methods
+- Advanced features
+- Troubleshooting
+
+🔗 Visit: **[Aqualink Docs](https://toddythenoobdud.github.io/aqualink.github.io)**
+
 ## 👑 Premium Bots Using Aqualink
 
 | Bot | Invite Link | Features |
