@@ -160,7 +160,7 @@ client.on("messageCreate", async (message) => {
 
     if (resolve.loadType === 'playlist') {
         await message.channel.send(`Added ${resolve.tracks.length} songs from ${resolve.playlistInfo.name} playlist.`);
-        for (const track of result.tracks) {
+        for (const track of resolve.tracks) {
             player.queue.add(track)
         }
         if (!player.playing && !player.paused) return player.play();
