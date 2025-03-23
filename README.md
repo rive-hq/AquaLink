@@ -5,9 +5,9 @@
 </p>
 
 [![NPM Version](https://img.shields.io/npm/v/aqualink?color=0061ff&label=Aqualink&style=for-the-badge&logo=npm)](https://www.npmjs.com/package/aqualink)
-[![GitHub Stars](https://img.shields.io/github/stars/ToddyTheNoobDud/AquaLink?color=00bfff&style=for-the-badge&logo=github)](https://github.com/Aqualink-NPM/aqualink/stargazers)
+[![GitHub Stars](https://img.shields.io/github/stars/ToddyTheNoobDud/AquaLink?color=00bfff&style=for-the-badge&logo=github)](https://github.com/ToddyTheNoobDud/AquaLink/stargazers)
 [![Downloads](https://img.shields.io/npm/dt/aqualink.svg?style=for-the-badge&color=3498db)](https://www.npmjs.com/package/aqualink)
-[![Discord](https://img.shields.io/discord/1346930640049803266?color=7289da&label=Discord&logo=discord&style=for-the-badge)](https://discord.gg/aqualink)
+[![Discord](https://img.shields.io/discord/1346930640049803266?color=7289da&label=Discord&logo=discord&style=for-the-badge)](https://discord.gg/K4CVv84VBC)
 
 <br />
 
@@ -209,7 +209,7 @@ client.login("Yourtokenhere");
 </table>
 </div>
 
-[View All Projects →](https://github.com/Aqualink-NPM/aqualink#used-by)
+[View All Projects →](https://github.com/ToddyTheNoobDud/AquaLink/aqualink#used-by)
 </div>
 
 ## 📊 Usage Statistics
@@ -323,9 +323,8 @@ We welcome contributions from developers of all skill levels! Whether it's addin
 
 Join our thriving community of developers and bot creators!
 
-[![Discord Server](https://img.shields.io/badge/Discord_Server-7289da?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/aqualink)
-[![GitHub Discussions](https://img.shields.io/badge/GitHub_Discussions-0061ff?style=for-the-badge&logo=github&logoColor=white)](https://github.com/Aqualink-NPM/aqualink/discussions)
-[![Twitter](https://img.shields.io/badge/Twitter-1da1f2?style=for-the-badge&logo=twitter&logoColor=white)](https://twitter.com/aqualinkjs)
+[![Discord Server](https://img.shields.io/badge/Discord_Server-7289da?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/K4CVv84VBC)
+[![GitHub Discussions](https://img.shields.io/badge/GitHub_Discussions-0061ff?style=for-the-badge&logo=github&logoColor=white)](https://github.com/ToddyTheNoobDud/AquaLink/aqualink/discussions)
 
 </div>
 
