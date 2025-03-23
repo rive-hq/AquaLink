@@ -37,7 +37,7 @@
       <td align="center" width="33%">
         <h3>🛠️</h3>
         <h4>Developer Friendly</h4>
-        <p>Intuitive API with extensive documentation and TypeScript support</p>
+        <p>Intuitive API with extensive documentation and CJS/ESM support</p>
       </td>
       <td align="center" width="33%">
         <h3>🔌</h3>
