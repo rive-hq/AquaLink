@@ -229,7 +229,7 @@ client.login("Yourtokenhere");
 
 <br />
 
-**150K+** weekly downloads • **2K+** GitHub stars • **500+** Discord bots
+**300+** weekly downloads • **3+** GitHub stars • **3+** Discord bots
 
 </div>
 
