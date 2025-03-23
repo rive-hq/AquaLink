@@ -160,7 +160,9 @@ client.on("messageCreate", async (message) => {
 
     if (resolve.loadType === 'playlist') {
         await message.channel.send(`Added ${resolve.tracks.length} songs from ${resolve.playlistInfo.name} playlist.`);
-        player.queue.add(resolve.tracks);
+        for (const track of result.tracks) {
+            player.queue.add(track)
+        }
         if (!player.playing && !player.paused) return player.play();
 
     } else if (resolve.loadType === 'search' || resolve.loadType === 'track') {
@@ -209,7 +211,7 @@ client.login("Yourtokenhere");
 </table>
 </div>
 
-[View All Projects →](https://github.com/ToddyTheNoobDud/AquaLink/aqualink#used-by)
+[View All Projects →](https://github.com/ToddyTheNoobDud/AquaLink#used-by)
 </div>
 
 ## 📊 Usage Statistics
