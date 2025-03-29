@@ -19,26 +19,21 @@ class Connection {
     }
 
     setServerUpdate(data) {
-        if (!data || !data.endpoint) return;
+        if (!data?.endpoint) return;
         
-        const endpoint = data.endpoint;
-        const token = data.token;
-        
+        const { endpoint, token } = data;
         const dotIndex = endpoint.indexOf('.');
-        if (dotIndex === -1) return;
         
+        if (dotIndex === -1) return;
         const newRegion = endpoint.substring(0, dotIndex);
         
         if (this.region !== newRegion) {
-            this.endpoint = endpoint;
-            this.token = token;
-            
             const prevRegion = this.region;
-            this.region = newRegion;
+            [this.endpoint, this.token, this.region] = [endpoint, token, newRegion];
             
-            if (this.aqua.listenerCount('debug') > 0) {
+            if (this.aqua.listenerCount('debug')) {
                 this.aqua.emit(
-                    "debug", 
+                    "debug",
                     `[Player ${this.guildId} - CONNECTION] Voice Server: ${
                         prevRegion ? `Changed from ${prevRegion} to ${newRegion}` : newRegion
                     }`
@@ -50,14 +45,10 @@ class Connection {
     }
 
     setStateUpdate(data) {
-        if (!data) return;
-        
-        const channel_id = data.channel_id;
-        const session_id = data.session_id;
+        const { channel_id, session_id, self_deaf, self_mute } = data || {};
         
         if (!channel_id || !session_id) {
-            const player = this.playerRef.deref();
-            if (player) player.destroy();
+            this.playerRef.deref()?.destroy();
             return;
         }
         
@@ -66,8 +57,8 @@ class Connection {
             this.voiceChannel = channel_id;
         }
         
-        this.selfDeaf = !!data.self_deaf;
-        this.selfMute = !!data.self_mute;
+        this.selfDeaf = !!self_deaf;
+        this.selfMute = !!self_mute;
         this.sessionId = session_id;
     }
 
@@ -76,29 +67,23 @@ class Connection {
         if (!player) return;
 
         try {
-            const voiceData = {
-                sessionId: this.sessionId,
-                endpoint: this.endpoint,
-                token: this.token
-            };
-            
             await this.nodes.rest.updatePlayer({
                 guildId: this.guildId,
                 data: { 
-                    voice: voiceData, 
+                    voice: {
+                        sessionId: this.sessionId,
+                        endpoint: this.endpoint,
+                        token: this.token
+                    }, 
                     volume: player.volume 
                 }
             });
-        } catch (err) {
-            if (this.aqua.listenerCount('apiError') > 0) {
+        } catch (error) {
+            if (this.aqua.listenerCount('apiError')) {
                 this.aqua.emit("apiError", "updatePlayer", { 
-                    error: err, 
-                    guildId: this.guildId, 
-                    voiceData: { 
-                        sessionId: this.sessionId, 
-                        endpoint: this.endpoint, 
-                        token: this.token 
-                    } 
+                    error,
+                    guildId: this.guildId,
+                    voiceData: { ...this }
                 });
             }
         }
