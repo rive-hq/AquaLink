@@ -86,33 +86,29 @@ async function soundAutoPlay(baseUrl) {
     }
 }
 
-function gerenateToKen() {
-    const totpSecret = Buffer.from(new Uint8Array([
-        53, 53, 48, 55, 49, 52, 53, 56, 53, 51, 52, 56, 55, 52, 57, 57,
-        53, 57, 50, 50, 52, 56, 54, 51, 48, 51, 50, 57, 51, 52, 55
-    ]));
-
-    // Note for  me: Can also be used from Buffer.from("5507145853487499592248630329347", 'utf8');
-
+function generateToken() {
     const timeStep = Math.floor(Date.now() / 30000);
     const counter = Buffer.alloc(8);
     counter.writeBigInt64BE(BigInt(timeStep));
 
-    const hmac = crypto.createHmac('sha1', totpSecret);
+    const hmac = crypto.createHmac('sha1', TOTP_SECRET);
     hmac.update(counter);
     const hash = hmac.digest();
     const offset = hash[hash.length - 1] & 0x0f;
-    const binCode =
-        ((hash[offset] & 0x7f) << 24) |
-        ((hash[offset + 1] & 0xff) << 16) |
-        ((hash[offset + 2] & 0xff) << 8) |
-        (hash[offset + 3] & 0xff);
+    
+    const binCode = (
+        (hash[offset] << 24) |
+        (hash[offset + 1] << 16) |
+        (hash[offset + 2] << 8) |
+        hash[offset + 3]
+    ) & 0x7fffffff;
+
     const token = (binCode % 1000000).toString().padStart(6, '0');
     return [token, timeStep * 30000];
 }
 
 async function spotifyAutoPlay(seedTrackId) {
-    const [totp, ts] = gerenateToKen();
+    const [totp, ts] = generateToken();
     const params = new URLSearchParams({
         reason: "transport",
         productType: "embed",
@@ -120,31 +116,26 @@ async function spotifyAutoPlay(seedTrackId) {
         totpVer: "5",
         ts: ts.toString()
     });
-    const tokenUrl = `https://open.spotify.com/get_access_token?${params.toString()}`;
-    const tokenData = await quickFetch(tokenUrl);
 
-    let accessToken;
     try {
-        accessToken = JSON.parse(tokenData).accessToken;
-    } catch {
-        throw new Error("Failed to retrieve Spotify access token.");
-    }
+        const tokenData = await quickFetch(`https://open.spotify.com/get_access_token?${params}`);
+        const { accessToken } = JSON.parse(tokenData);
+        
+        if (!accessToken) throw new Error("Invalid access token");
 
-    const recUrl = `https://api.spotify.com/v1/recommendations?limit=10&seed_tracks=${seedTrackId}`;
-    const recData = await quickFetch(recUrl, {
-        headers: {
-            Authorization: `Bearer ${accessToken}`,
-            'Content-Type': 'application/json'
-        }
-    });
+        const recData = await quickFetch(
+            `https://api.spotify.com/v1/recommendations?limit=10&seed_tracks=${seedTrackId}`,
+            { headers: { Authorization: `Bearer ${accessToken}` } }
+        );
 
-    let tracks;
-    try {
-        tracks = JSON.parse(recData).tracks;
-    } catch {
-        throw new Error("Failed to parse Spotify recommendations.");
+        const { tracks } = JSON.parse(recData);
+        if (!tracks?.length) throw new Error("No tracks found");
+
+        return tracks[Math.random() * tracks.length | 0].id;
+    } catch (err) {
+        console.error("Spotify autoplay error:", err);
+        throw err;
     }
-    return tracks[Math.floor(Math.random() * tracks.length)].id;
 }
 
 module.exports = {
