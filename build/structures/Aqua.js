@@ -6,7 +6,7 @@ const { version: pkgVersion } = require("../../package.json");
 const { EventEmitter } = require('eventemitter3');
 
 const URL_REGEX = /^https?:\/\//;
-const DEFAULT_OPTIONS = {
+const DEFAULT_OPTIONS = Object.freeze({
   shouldDeleteMessage: false,
   defaultSearchPlatform: 'ytsearch',
   leaveOnEnd: true,
@@ -14,7 +14,7 @@ const DEFAULT_OPTIONS = {
   plugins: [],
   autoResume: false,
   infiniteReconnects: false
-};
+});
 const LEAST_USED_CACHE_TTL = 50;
 
 class Aqua extends EventEmitter {
@@ -22,7 +22,7 @@ class Aqua extends EventEmitter {
         super();
         if (!client) throw new Error("Client is required to initialize Aqua");
         if (!Array.isArray(nodes) || !nodes.length) {
-            throw new Error(`Nodes must be a non-empty Array (Received ${typeof nodes})`);
+            throw new TypeError(`Nodes must be a non-empty Array (Received ${typeof nodes})`);
         }
 
         this.client = client;
@@ -33,17 +33,28 @@ class Aqua extends EventEmitter {
         this.initiated = false;
         this.version = pkgVersion;
         
-        this.options = { ...DEFAULT_OPTIONS, ...options };
+        this.options = Object.assign({}, DEFAULT_OPTIONS, options);
         
-        this.shouldDeleteMessage = this.options.shouldDeleteMessage;
-        this.defaultSearchPlatform = this.options.defaultSearchPlatform;
-        this.leaveOnEnd = this.options.leaveOnEnd;
-        this.restVersion = this.options.restVersion;
-        this.plugins = this.options.plugins;
-        this.autoResume = this.options.autoResume;
-        this.infiniteReconnects = this.options.infiniteReconnects;
+        const {
+            shouldDeleteMessage,
+            defaultSearchPlatform,
+            leaveOnEnd,
+            restVersion,
+            plugins,
+            autoResume,
+            infiniteReconnects,
+            send
+        } = this.options;
         
-        this.send = options.send || this.defaultSendFunction.bind(this);
+        this.shouldDeleteMessage = shouldDeleteMessage;
+        this.defaultSearchPlatform = defaultSearchPlatform;
+        this.leaveOnEnd = leaveOnEnd;
+        this.restVersion = restVersion;
+        this.plugins = plugins;
+        this.autoResume = autoResume;
+        this.infiniteReconnects = infiniteReconnects;
+        
+        this.send = send || this.defaultSendFunction.bind(this);
         
         this._leastUsedCache = { nodes: [], timestamp: 0 };
     }
@@ -59,7 +70,11 @@ class Aqua extends EventEmitter {
             return this._leastUsedCache.nodes;
         }
         
-        const connectedNodes = Array.from(this.nodeMap.values()).filter(node => node.connected);
+        const connectedNodes = [];
+        for (const node of this.nodeMap.values()) {
+            if (node.connected) connectedNodes.push(node);
+        }
+        
         connectedNodes.sort((a, b) => a.rest.calls - b.rest.calls);
         
         this._leastUsedCache = { nodes: connectedNodes, timestamp: now };
@@ -71,10 +86,15 @@ class Aqua extends EventEmitter {
         this.clientId = clientId;
         
         try {
-            const nodePromises = this.nodes.map(node => this.createNode(node));
+            const nodePromises = [];
+            for (const node of this.nodes) {
+                nodePromises.push(this.createNode(node));
+            }
             await Promise.all(nodePromises);
             
-            this.plugins.forEach(plugin => plugin.load(this));
+            for (const plugin of this.plugins) {
+                plugin.load(this);
+            }
             
             this.initiated = true;
         } catch (error) {
@@ -119,10 +139,10 @@ class Aqua extends EventEmitter {
         if (!player) return;
         
         if (t === "VOICE_SERVER_UPDATE" || (t === "VOICE_STATE_UPDATE" && d.user_id === this.clientId)) {
-            const updateMethod = t === "VOICE_SERVER_UPDATE" ? "setServerUpdate" : "setStateUpdate";
-            
-            if (player.connection && typeof player.connection[updateMethod] === "function") {
-                player.connection[updateMethod](d);
+            if (t === "VOICE_SERVER_UPDATE") {
+                player.connection?.setServerUpdate?.(d);
+            } else {
+                player.connection?.setStateUpdate?.(d);
             }
             
             if (d.channel_id === null) {
@@ -135,22 +155,33 @@ class Aqua extends EventEmitter {
         if (!region) return this.leastUsedNodes;
         
         const lowerRegion = region.toLowerCase();
-        const regionNodes = Array.from(this.nodeMap.values()).filter(node =>
-            node.connected && node.regions?.includes(lowerRegion)
-        );
+        const regionNodes = [];
         
-        regionNodes.sort((a, b) => this.calculateLoad(a) - this.calculateLoad(b));
+        for (const node of this.nodeMap.values()) {
+            if (node.connected && node.regions?.includes(lowerRegion)) {
+                regionNodes.push(node);
+            }
+        }
+        
+        const loadCache = new Map();
+        regionNodes.sort((a, b) => {
+            if (!loadCache.has(a)) loadCache.set(a, this.calculateLoad(a));
+            if (!loadCache.has(b)) loadCache.set(b, this.calculateLoad(b));
+            return loadCache.get(a) - loadCache.get(b);
+        });
+        
         return regionNodes;
     }
 
     calculateLoad(node) {
-        if (!node?.stats?.cpu) return 0;
-        const { systemLoad, cores } = node.stats.cpu;
+        const stats = node?.stats?.cpu;
+        if (!stats) return 0;
+        const { systemLoad, cores } = stats;
         return (systemLoad / cores) * 100;
     }
 
     createConnection(options) {
-        this.ensureInitialized();
+        if (!this.initiated) throw new Error("Aqua must be initialized before this operation");
         
         const existingPlayer = this.players.get(options.guildId);
         if (existingPlayer && existingPlayer.voiceChannel) return existingPlayer;
@@ -192,10 +223,10 @@ class Aqua extends EventEmitter {
     }
 
     async resolve({ query, source = this.defaultSearchPlatform, requester, nodes }) {
-        this.ensureInitialized();
+        if (!this.initiated) throw new Error("Aqua must be initialized before this operation");
         
         const requestNode = this.getRequestNode(nodes);
-        const formattedQuery = this.formatQuery(query, source);
+        const formattedQuery = URL_REGEX.test(query) ? query : `${source}:${query}`;
         
         try {
             const endpoint = `/v4/loadtracks?identifier=${encodeURIComponent(formattedQuery)}`;
@@ -217,19 +248,10 @@ class Aqua extends EventEmitter {
     getRequestNode(nodes) {
         if (!nodes) return this.leastUsedNodes[0];
         
-        if (!(typeof nodes === "string" || nodes instanceof Node)) {
-            throw new TypeError(`'nodes' must be a string or Node instance, received: ${typeof nodes}`);
-        }
+        if (nodes instanceof Node) return nodes;
+        if (typeof nodes === "string") return this.nodeMap.get(nodes) || this.leastUsedNodes[0];
         
-        return (typeof nodes === "string" ? this.nodeMap.get(nodes) : nodes) ?? this.leastUsedNodes[0];
-    }
-
-    ensureInitialized() {
-        if (!this.initiated) throw new Error("Aqua must be initialized before this operation");
-    }
-
-    formatQuery(query, source) {
-        return URL_REGEX.test(query) ? query : `${source}:${query}`;
+        throw new TypeError(`'nodes' must be a string or Node instance, received: ${typeof nodes}`);
     }
 
     async handleNoMatches(rest, query) {
@@ -272,26 +294,37 @@ class Aqua extends EventEmitter {
                 }
                 break;
 
-            case "playlist":
-                if (response.data?.info) {
+            case "playlist": {
+                const info = response.data?.info;
+                if (info) {
                     baseResponse.playlistInfo = {
-                        name: response.data.info.name ?? response.data.info.title,
-                        ...response.data.info
+                        name: info.name ?? info.title,
+                        ...info
                     };
                 }
 
                 const tracks = response.data?.tracks;
                 if (tracks?.length) {
-                    baseResponse.tracks = tracks.map(trackFactory);
+                    const trackCount = tracks.length;
+                    baseResponse.tracks = new Array(trackCount);
+                    for (let i = 0; i < trackCount; i++) {
+                        baseResponse.tracks[i] = trackFactory(tracks[i]);
+                    }
                 }
                 break;
+            }
 
-            case "search":
+            case "search": {
                 const searchData = response.data ?? [];
-                if (searchData.length) {
-                    baseResponse.tracks = searchData.map(trackFactory);
+                const dataLength = searchData.length;
+                if (dataLength) {
+                    baseResponse.tracks = new Array(dataLength);
+                    for (let i = 0; i < dataLength; i++) {
+                        baseResponse.tracks[i] = trackFactory(searchData[i]);
+                    }
                 }
                 break;
+            }
         }
         
         return baseResponse;
@@ -328,9 +361,7 @@ class Aqua extends EventEmitter {
                 }
             }
             
-            if (player.queue) {
-                player.queue.clear();
-            }
+            player.queue?.clear();
             
             if (typeof player.stop === 'function') {
                 try {
