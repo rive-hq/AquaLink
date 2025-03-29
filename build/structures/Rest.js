@@ -9,7 +9,7 @@ try {
 }
 
 class Rest {
-    constructor(aqua, { secure, host, port, sessionId, password, timeout = 30000 }) {
+    constructor(aqua, { secure = false, host, port, sessionId = null, password, timeout = 30000 }) {
         this.aqua = aqua;
         this.sessionId = sessionId;
         this.version = "v4";
@@ -21,14 +21,7 @@ class Rest {
         this.secure = secure;
         this.timeout = timeout;
         
-        this.client = this.initializeClient();
-    }
-
-    initializeClient() {
-        if (this.secure) {
-            return http2 || https;
-        }
-        return http;
+        this.client = secure ? (http2 || https) : http;
     }
 
     setSessionId(sessionId) {
@@ -36,13 +29,14 @@ class Rest {
     }
 
     async makeRequest(method, endpoint, body = null) {
+        const url = `${this.baseUrl}${endpoint}`;
         const options = {
             method,
             headers: this.headers,
+            timeout: this.timeout,
         };
 
         return new Promise((resolve, reject) => {
-            const url = `${this.baseUrl}${endpoint}`;
             const req = this.client.request(url, options, (res) => {
                 res.setEncoding('utf8');
                 
@@ -60,34 +54,38 @@ class Rest {
                         }
                         
                         try {
-                            resolve(data ? JSON.parse(data) : null);
+                            resolve(JSON.parse(data));
                         } catch (error) {
                             reject(new Error(`Failed to parse response: ${error.message}`));
                         }
                     } else {
-                        reject(new Error(`Request failed with status ${res.statusCode}: ${res.statusMessage}`));
+                        reject(new Error(`Request failed with status ${res.statusCode}: ${res.statusMessage || 'Unknown error'}`));
                     }
                 });
             });
 
             req.on("error", (error) => reject(new Error(`Request failed (${method} ${url}): ${error.message}`)));
+            req.on("timeout", () => {
+                req.destroy();
+                reject(new Error(`Request timeout after ${this.timeout}ms (${method} ${url})`));
+            });
 
             if (body) {
-                const jsonBody = JSON.stringify(body);
-                req.write(jsonBody);
+                req.write(JSON.stringify(body));
             }
             req.end();
         });
     }
 
     validateSessionId() {
-        if (!this.sessionId) throw new Error("Session ID is not set.");
+        if (!this.sessionId) throw new Error("Session ID is required but not set.");
     }
 
     async updatePlayer({ guildId, data }) {
-        if (data.track?.encoded && data.track?.identifier) {
+        if (data.track && data.track.encoded && data.track.identifier) {
             throw new Error("Cannot provide both 'encoded' and 'identifier' for track");
         }
+        
         this.validateSessionId();
         return this.makeRequest(
             "PATCH", 
@@ -96,41 +94,41 @@ class Rest {
         );
     }
 
-    getPlayers() {
+    async getPlayers() {
         this.validateSessionId();
         return this.makeRequest("GET", `/${this.version}/sessions/${this.sessionId}/players`);
     }
 
-    destroyPlayer(guildId) {
+    async destroyPlayer(guildId) {
         this.validateSessionId();
         return this.makeRequest("DELETE", `/${this.version}/sessions/${this.sessionId}/players/${guildId}`);
     }
 
-    getTracks(identifier) {
+    async getTracks(identifier) {
         return this.makeRequest("GET", `/${this.version}/loadtracks?identifier=${encodeURIComponent(identifier)}`);
     }
 
-    decodeTrack(track) {
+    async decodeTrack(track) {
         return this.makeRequest("GET", `/${this.version}/decodetrack?encodedTrack=${encodeURIComponent(track)}`);
     }
 
-    decodeTracks(tracks) {
+    async decodeTracks(tracks) {
         return this.makeRequest("POST", `/${this.version}/decodetracks`, tracks);
     }
 
-    getStats() {
+    async getStats() {
         return this.makeRequest("GET", `/${this.version}/stats`);
     }
 
-    getInfo() {
+    async getInfo() {
         return this.makeRequest("GET", `/${this.version}/info`);
     }
 
-    getRoutePlannerStatus() {
+    async getRoutePlannerStatus() {
         return this.makeRequest("GET", `/${this.version}/routeplanner/status`);
     }
 
-    getRoutePlannerAddress(address) {
+    async getRoutePlannerAddress(address) {
         return this.makeRequest("POST", `/${this.version}/routeplanner/free/address`, { address });
     }
 
@@ -139,7 +137,7 @@ class Rest {
         
         try {
             if (track.search) {
-                const query = track.info.title;
+                const query = encodeURIComponent(track.info.title);
                 try {
                     const res = await this.makeRequest("GET", `/${this.version}/lyrics/search?query=${query}&source=genius`);
                     if (res) return res;
