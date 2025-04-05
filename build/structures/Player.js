@@ -35,7 +35,7 @@ class Player extends EventEmitter {
         this.filters = new Filters(this);
         this.queue = new Queue();
         
-        this.volume = Math.max(0, Math.min(options.defaultVolume ?? 100, 200));
+        this.volume = Math.min(Math.max(options.defaultVolume ?? 100, 0), 200);
         this.loop = Player.validModes.has(options.loop) ? options.loop : Player.LOOP_MODES.NONE;
         this.shouldDeleteMessage = Boolean(options.shouldDeleteMessage);
         this.leaveOnEnd = Boolean(options.leaveOnEnd);
@@ -55,6 +55,9 @@ class Player extends EventEmitter {
         this.isAutoplayEnabled = false;
         this.isAutoplay = false;
         
+        this._pendingUpdates = {};
+        this._updateTimeout = null;
+        
         this._boundHandlers = {
             playerUpdate: this._handlePlayerUpdate.bind(this),
             event: this._handleEvent.bind(this)
@@ -63,7 +66,7 @@ class Player extends EventEmitter {
         this.on("playerUpdate", this._boundHandlers.playerUpdate);
         this.on("event", this._boundHandlers.event);
         
-        this._dataStore = null;
+        this._dataStore = new Map();
     }
 
     get previous() {
@@ -73,6 +76,30 @@ class Player extends EventEmitter {
 
     get currenttrack() {
         return this.current;
+    }
+
+    batchUpdatePlayer(data, immediate = false) {
+        this._pendingUpdates = { ...this._pendingUpdates, ...data };
+        
+        if (this._updateTimeout) {
+            clearTimeout(this._updateTimeout);
+            this._updateTimeout = null;
+        }
+        
+        if (immediate || data.track) {
+            const updates = this._pendingUpdates;
+            this._pendingUpdates = {};
+            return this.updatePlayer(updates);
+        }
+        
+        this._updateTimeout = setTimeout(() => {
+            const updates = this._pendingUpdates;
+            this._pendingUpdates = {};
+            this.updatePlayer(updates);
+            this._updateTimeout = null;
+        }, 50);
+        
+        return Promise.resolve();
     }
 
     async autoplay(player) {
@@ -113,7 +140,8 @@ class Player extends EventEmitter {
             const { query, source } = result;
             const response = await this.aqua.resolve({ query, source, requester });
 
-            if (!response?.tracks?.length || ["error", "empty", "LOAD_FAILED", "NO_MATCHES"].includes(response.loadType)) {
+            const failTypes = new Set(["error", "empty", "LOAD_FAILED", "NO_MATCHES"]);
+            if (!response?.tracks?.length || failTypes.has(response.loadType)) {
                 return this.stop();
             }
 
@@ -145,12 +173,13 @@ class Player extends EventEmitter {
     }
 
     _handlePlayerUpdate({ state }) {
-        if (state) {
-            const { position, timestamp, ping } = state;
-            if (position !== undefined) this.position = position;
-            if (timestamp !== undefined) this.timestamp = timestamp;
-            if (ping !== undefined) this.ping = ping;
-        }
+        if (!state) return;
+        
+        const { position, timestamp, ping } = state;
+        if (position !== undefined) this.position = position;
+        if (timestamp !== undefined) this.timestamp = timestamp;
+        if (ping !== undefined) this.ping = ping;
+        
         this.aqua.emit("playerUpdate", this, { state });
     }
 
@@ -172,7 +201,7 @@ class Player extends EventEmitter {
         this.position = 0;
         
         this.aqua.emit("debug", this.guildId, `Playing track: ${this.current.track}`);
-        return this.updatePlayer({ track: { encoded: this.current.track } });
+        return this.batchUpdatePlayer({ track: { encoded: this.current.track } }, true);
     }
 
     connect({ voiceChannel, deaf = true, mute = false } = {}) {
@@ -191,6 +220,12 @@ class Player extends EventEmitter {
 
     destroy() {
         if (!this.connected) return this;
+        
+        if (this._updateTimeout) {
+            clearTimeout(this._updateTimeout);
+            this._updateTimeout = null;
+            this._pendingUpdates = {};
+        }
         
         this.disconnect();
         if (this.nowPlayingMessage) {
@@ -220,22 +255,36 @@ class Player extends EventEmitter {
     pause(paused) {
         if (this.paused === paused) return this;
         this.paused = paused;
-        this.updatePlayer({ paused });
+        this.batchUpdatePlayer({ paused });
         return this;
     }
 
+    async getLyrics(options = {}) {
+        const { query = null, useCurrentTrack = true } = options;
+        
+        if (query) {
+            return this.nodes.rest.getLyrics({ track: { info: { title: query }, search: true } }) || null;
+        }
+        
+        if (useCurrentTrack && this.playing) {
+            return this.nodes.rest.getLyrics({ track: { encoded: this.current.track, guild_id: this.guildId } }) || null;
+        }
+        
+        return null;
+    }
+
     async searchLyrics(query) {
-        return query ? this.nodes.rest.getLyrics({ track: { info: { title: query }, search: true } }) || null : null;
+        return this.getLyrics({ query });
     }
 
     async lyrics() {
-        return this.playing ? this.nodes.rest.getLyrics({ track: { encoded: this.current.track, guild_id: this.guildId } }) || null : null;
+        return this.getLyrics({ useCurrentTrack: true });
     }
 
     seek(position) {
         if (!this.playing) return this;
         this.position += position;
-        this.updatePlayer({ position: this.position });
+        this.batchUpdatePlayer({ position: this.position });
         return this;
     }
 
@@ -243,27 +292,27 @@ class Player extends EventEmitter {
         if (!this.playing) return this;
         this.playing = false;
         this.position = 0;
-        this.updatePlayer({ track: { encoded: null } });
+        this.batchUpdatePlayer({ track: { encoded: null } }, true);
         return this;
     }
 
     setVolume(volume) {
         if (volume < 0 || volume > 200) throw new Error("Volume must be between 0 and 200.");
         this.volume = volume;
-        this.updatePlayer({ volume });
+        this.batchUpdatePlayer({ volume });
         return this;
     }
 
     setLoop(mode) {
         if (!Player.validModes.has(mode)) throw new Error("Loop mode must be 'none', 'track', or 'queue'.");
         this.loop = mode;
-        this.updatePlayer({ loop: mode });
+        this.batchUpdatePlayer({ loop: mode });
         return this;
     }
 
     setTextChannel(channel) {
         this.textChannel = channel;
-        this.updatePlayer({ text_channel: channel });
+        this.batchUpdatePlayer({ text_channel: channel });
         return this;
     }
 
@@ -294,11 +343,14 @@ class Player extends EventEmitter {
     }
 
     shuffle() {
-        const { queue } = this;
-        for (let i = queue.length - 1; i > 0; i--) {
+        const queue = this.queue;
+        const length = queue.length;
+        
+        for (let i = length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
             [queue[i], queue[j]] = [queue[j], queue[i]];
         }
+        
         return this;
     }
 
@@ -327,14 +379,16 @@ class Player extends EventEmitter {
         if (this.shouldDeleteMessage && this.nowPlayingMessage) {
             try {
                 await this.nowPlayingMessage.delete();
-                this.nowPlayingMessage = null;
             } catch (error) {
                 console.error("Error deleting now playing message:", error);
+            } finally {
+                this.nowPlayingMessage = null;
             }
         }
         
         const reason = payload.reason;
-        if (reason === "LOAD_FAILED" || reason === "CLEANUP") {
+        const failureReasons = new Set(["LOAD_FAILED", "CLEANUP"]);
+        if (failureReasons.has(reason)) {
             if (!player.queue.length) {
                 this.clearData();
                 this.aqua.emit("queueEnd", player);
@@ -345,10 +399,13 @@ class Player extends EventEmitter {
             return;
         }
         
-        if (this.loop === Player.LOOP_MODES.TRACK) {
-            player.queue.unshift(track);
-        } else if (this.loop === Player.LOOP_MODES.QUEUE) {
-            player.queue.push(track);
+        switch (this.loop) {
+            case Player.LOOP_MODES.TRACK:
+                player.queue.unshift(track);
+                break;
+            case Player.LOOP_MODES.QUEUE:
+                player.queue.push(track);
+                break;
         }
         
         if (player.queue.isEmpty()) {
@@ -381,7 +438,8 @@ class Player extends EventEmitter {
     async socketClosed(player, payload) {
         const { code, guildId } = payload || {};
         
-        if (code === 4015 || code === 4009) {
+        const reconnectCodes = new Set([4015, 4009]);
+        if (reconnectCodes.has(code)) {
             this.send({
                 guild_id: guildId,
                 channel_id: this.voiceChannel,
@@ -400,17 +458,16 @@ class Player extends EventEmitter {
     }
 
     set(key, value) {
-        if (!this._dataStore) this._dataStore = new Map();
         this._dataStore.set(key, value);
     }
 
     get(key) {
-        return this._dataStore ? this._dataStore.get(key) : undefined;
+        return this._dataStore.get(key);
     }
 
     clearData() {
         if (this.previousTracks) this.previousTracksCount = 0;
-        this._dataStore = null;
+        this._dataStore.clear();
         return this;
     }
 
