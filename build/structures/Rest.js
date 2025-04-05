@@ -1,8 +1,10 @@
 "use strict";
+
 const https = require("https");
 const http = require("http");
 
 let http2;
+
 try {
     http2 = require("http2");
 } catch (e) {
@@ -20,12 +22,18 @@ class Rest {
         };
         this.secure = secure;
         this.timeout = timeout;
-        
-        this.client = secure ? (http2 || https) : http;
+
+        this.client = secure ? http2 || https : http;
     }
 
     setSessionId(sessionId) {
         this.sessionId = sessionId;
+    }
+
+    validateSessionId() {
+        if (!this.sessionId) {
+            throw new Error("Session ID is required but not set.");
+        }
     }
 
     async makeRequest(method, endpoint, body = null) {
@@ -38,36 +46,36 @@ class Rest {
 
         return new Promise((resolve, reject) => {
             const req = this.client.request(url, options, (res) => {
-                res.setEncoding('utf8');
-                
-                let data = '';
-                
+                let data = "";
+
+                res.setEncoding("utf8");
+
                 res.on("data", (chunk) => {
                     data += chunk;
                 });
-                
+
                 res.on("end", () => {
-                    if (res.statusCode >= 200 && res.statusCode < 300) {
+                    if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
                         if (!data) {
                             resolve(null);
                             return;
                         }
-                        
                         try {
                             resolve(JSON.parse(data));
-                        } catch (error) {
-                            reject(new Error(`Failed to parse response: ${error.message}`));
+                        } catch (err) {
+                            reject(new Error(`Failed to parse response: ${err.message}`));
                         }
                     } else {
-                        reject(new Error(`Request failed with status ${res.statusCode}: ${res.statusMessage || 'Unknown error'}`));
+                        const errorMessage = `Request failed with status ${res.statusCode}: ${res.statusMessage || "Unknown error"}`;
+                        reject(new Error(errorMessage));
                     }
                 });
             });
 
-            req.on("error", (error) => reject(new Error(`Request failed (${method} ${url}): ${error.message}`)));
+            req.on("error", (err) => reject(new Error(`Request failed (${method} ${url}): ${err.message}`)));
             req.on("timeout", () => {
                 req.destroy();
-                reject(new Error(`Request timeout after ${this.timeout}ms (${method} ${url})`));
+                reject(new Error(`Request timed out after ${this.timeout}ms (${method} ${url})`));
             });
 
             if (body) {
@@ -77,79 +85,86 @@ class Rest {
         });
     }
 
-    validateSessionId() {
-        if (!this.sessionId) throw new Error("Session ID is required but not set.");
-    }
-
     async updatePlayer({ guildId, data }) {
-        if (data.track && data.track.encoded && data.track.identifier) {
-            throw new Error("Cannot provide both 'encoded' and 'identifier' for track");
+        if (data.track?.encoded && data.track?.identifier) {
+            throw new Error("You cannot provide both 'encoded' and 'identifier' for a track.");
         }
-        
+
         this.validateSessionId();
-        return this.makeRequest(
-            "PATCH", 
-            `/${this.version}/sessions/${this.sessionId}/players/${guildId}?noReplace=false`, 
-            data
-        );
+
+        const endpoint = `/${this.version}/sessions/${this.sessionId}/players/${guildId}?noReplace=false`;
+        return this.makeRequest("PATCH", endpoint, data);
     }
 
     async getPlayers() {
         this.validateSessionId();
-        return this.makeRequest("GET", `/${this.version}/sessions/${this.sessionId}/players`);
+        const endpoint = `/${this.version}/sessions/${this.sessionId}/players`;
+        return this.makeRequest("GET", endpoint);
     }
 
     async destroyPlayer(guildId) {
         this.validateSessionId();
-        return this.makeRequest("DELETE", `/${this.version}/sessions/${this.sessionId}/players/${guildId}`);
+        const endpoint = `/${this.version}/sessions/${this.sessionId}/players/${guildId}`;
+        return this.makeRequest("DELETE", endpoint);
     }
 
     async getTracks(identifier) {
-        return this.makeRequest("GET", `/${this.version}/loadtracks?identifier=${encodeURIComponent(identifier)}`);
+        const endpoint = `/${this.version}/loadtracks?identifier=${encodeURIComponent(identifier)}`;
+        return this.makeRequest("GET", endpoint);
     }
 
     async decodeTrack(track) {
-        return this.makeRequest("GET", `/${this.version}/decodetrack?encodedTrack=${encodeURIComponent(track)}`);
+        const endpoint = `/${this.version}/decodetrack?encodedTrack=${encodeURIComponent(track)}`;
+        return this.makeRequest("GET", endpoint);
     }
 
     async decodeTracks(tracks) {
-        return this.makeRequest("POST", `/${this.version}/decodetracks`, tracks);
+        const endpoint = `/${this.version}/decodetracks`;
+        return this.makeRequest("POST", endpoint, tracks);
     }
 
     async getStats() {
-        return this.makeRequest("GET", `/${this.version}/stats`);
+        const endpoint = `/${this.version}/stats`;
+        return this.makeRequest("GET", endpoint);
     }
 
     async getInfo() {
-        return this.makeRequest("GET", `/${this.version}/info`);
+        const endpoint = `/${this.version}/info`;
+        return this.makeRequest("GET", endpoint);
     }
 
     async getRoutePlannerStatus() {
-        return this.makeRequest("GET", `/${this.version}/routeplanner/status`);
+        const endpoint = `/${this.version}/routeplanner/status`;
+        return this.makeRequest("GET", endpoint);
     }
 
     async getRoutePlannerAddress(address) {
-        return this.makeRequest("POST", `/${this.version}/routeplanner/free/address`, { address });
+        const endpoint = `/${this.version}/routeplanner/free/address`;
+        return this.makeRequest("POST", endpoint, { address });
     }
 
     async getLyrics({ track }) {
         if (!track) return null;
-        
+
         try {
             if (track.search) {
                 const query = encodeURIComponent(track.info.title);
                 try {
-                    const res = await this.makeRequest("GET", `/${this.version}/lyrics/search?query=${query}&source=genius`);
+                    const res = await this.makeRequest(
+                        "GET", 
+                        `/${this.version}/lyrics/search?query=${query}&source=genius`
+                    );
                     if (res) return res;
-                } catch (err) {}
+                } catch (_) {
+                    // Silently handle any errors.
+                }
             } else {
                 this.validateSessionId();
                 return await this.makeRequest(
-                    "GET", 
+                    "GET",
                     `/${this.version}/sessions/${this.sessionId}/players/${track.guild_id}/track/lyrics?skipTrackSource=false`
                 );
             }
-         
         } catch (error) {
             console.error("Failed to fetch lyrics:", error.message);
             return null;
