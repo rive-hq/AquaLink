@@ -5,17 +5,18 @@ class Track {
   constructor(data = {}, requester, nodes) {
     const { info = {}, encoded = null, playlist = null } = data;
     
-    this.info = {
-      identifier: info.identifier || '',
-      isSeekable: Boolean(info.isSeekable),
-      author: info.author || '',
-      length: info.length | 0, 
-      isStream: Boolean(info.isStream), 
-      title: info.title || '',
-      uri: info.uri || '',
-      sourceName: info.sourceName || '',
-      artworkUrl: info.artworkUrl || ''
-    };
+    this._rawInfo = info;
+    
+    this.identifier = info.identifier || '';
+    this.isSeekable = Boolean(info.isSeekable);
+    this.author = info.author || '';
+    this.length = info.length | 0;
+    this.isStream = Boolean(info.isStream);
+    this.title = info.title || '';
+    this.uri = info.uri || '';
+    this.sourceName = info.sourceName || '';
+    this.artworkUrl = info.artworkUrl || '';
+    this.thumbnail = info.artworkUrl || '';
     
     this.track = encoded;
     this.playlist = playlist;
@@ -23,8 +24,22 @@ class Track {
     this.nodes = nodes;
   }
 
-  resolveThumbnail(thumbnail) {
-    return thumbnail ? getImageUrl(thumbnail) : null;
+  get info() {
+    return {
+      identifier: this.identifier,
+      isSeekable: this.isSeekable,
+      author: this.author,
+      length: this.length,
+      isStream: this.isStream,
+      title: this.title,
+      uri: this.uri,
+      sourceName: this.sourceName,
+      artworkUrl: this.artworkUrl
+    };
+  }
+
+  resolveThumbnail(artworkUrl) {
+    return artworkUrl ? getImageUrl(artworkUrl) : null;
   }
 
   async resolve(aqua) {
@@ -35,8 +50,7 @@ class Track {
     }
 
     try {
-      const { author, title } = this.info;
-      const query = `${author} - ${title}`;
+      const query = `${this.author} - ${this.title}`;
       
       const result = await aqua.resolve({
         query,
@@ -50,7 +64,8 @@ class Track {
       const track = this._findMatchingTrack(result.tracks);
       if (!track) return null;
 
-      this.info.identifier = track.info.identifier;
+      // Update properties directly
+      this.identifier = track.info.identifier;
       this.track = track.track;
       this.playlist = track.playlist || null;
       
@@ -62,12 +77,10 @@ class Track {
   }
 
   _findMatchingTrack(tracks) {
-    const { author, title, length } = this.info;
-    
     for (const track of tracks) {
       const tInfo = track.info;
-      if (author === tInfo.author && title === tInfo.title) {
-        if (!length || Math.abs(tInfo.length - length) <= 2000) {
+      if (this.author === tInfo.author && this.title === tInfo.title) {
+        if (!this.length || Math.abs(tInfo.length - this.length) <= 2000) {
           return track;
         }
       }
