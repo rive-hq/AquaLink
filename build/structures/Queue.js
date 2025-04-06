@@ -38,23 +38,32 @@ class Queue extends Array {
     remove(track) {
         const index = this.indexOf(track);
         if (index !== -1) {
-            this.splice(index, 1);
+            if (index === this.length - 1) {
+                this.pop();
+            } else {
+                this.splice(index, 1);
+            }
+            return true;
         }
+        return false;
     }
 
     // Clear all tracks from the queue
     clear() {
-        this.length = 0; // More efficient memory handling
+        this.length = 0;
     }
 
     // Shuffle the tracks in the queue
     shuffle() {
-        for (let i = this.length - 1; i > 0; i--) {
+        const length = this.length;
+        for (let i = length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
-            [this[i], this[j]] = [this[j], this[i]];
+            if (i !== j) {
+                [this[i], this[j]] = [this[j], this[i]];
+            }
         }
+        return this;
     }
-
     // Peek at the element at the front of the queue without removing it
     peek() {
         return this.first;
@@ -62,7 +71,7 @@ class Queue extends Array {
 
     // Get all tracks in the queue as an array
     toArray() {
-        return [...this]; // Create a shallow copy of the queue
+        return this.slice();
     }
 
     /**
@@ -71,9 +80,8 @@ class Queue extends Array {
      * @returns {*} The track at the specified index or null if out of bounds.
      */
     at(index) {
-        return this[index] || null; // Return null if index is out of bounds
+        return (index >= 0 && index < this.length) ? this[index] : null;
     }
-
     // Remove the first track from the queue
     dequeue() {
         return this.shift(); // Removes and returns the first element
