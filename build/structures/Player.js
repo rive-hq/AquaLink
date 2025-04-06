@@ -37,8 +37,8 @@ class Player extends EventEmitter {
         
         this.volume = Math.min(Math.max(options.defaultVolume ?? 100, 0), 200);
         this.loop = Player.validModes.has(options.loop) ? options.loop : Player.LOOP_MODES.NONE;
-        this.shouldDeleteMessage = Boolean(options.shouldDeleteMessage);
-        this.leaveOnEnd = Boolean(options.leaveOnEnd);
+        this.shouldDeleteMessage = !!this.aqua.options.shouldDeleteMessage;
+        this.leaveOnEnd = !!this.aqua.options.leaveOnEnd;
         
         this.previousTracks = new Array(50);
         this.previousTracksIndex = 0;
@@ -103,7 +103,7 @@ class Player extends EventEmitter {
     }
 
     async autoplay(player) {
-        if (!player) throw new Error("Quick Fix: player.autoplay(player)");
+        if (!player) throw new Error("Player is undefined. const player = aqua.plaerers.get(guildId);");
         if (!this.isAutoplayEnabled) {
             this.aqua.emit("debug", this.guildId, "Autoplay is disabled.");
             return this;
