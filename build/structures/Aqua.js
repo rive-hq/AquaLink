@@ -233,7 +233,7 @@ class Aqua extends EventEmitter {
             const response = await requestNode.rest.makeRequest("GET", endpoint);
             
             if (["empty", "NO_MATCHES"].includes(response.loadType)) {
-                return await this.handleNoMatches(requestNode.rest, query);
+                return await this.handleNoMatches(query);
             }
             
             return this.constructResponse(response, requester, requestNode);
@@ -244,33 +244,29 @@ class Aqua extends EventEmitter {
             throw new Error(`Failed to resolve track: ${error.message}`);
         }
     }
-
+    
     getRequestNode(nodes) {
         if (!nodes) return this.leastUsedNodes[0];
         
         if (nodes instanceof Node) return nodes;
-        if (typeof nodes === "string") return this.nodeMap.get(nodes) || this.leastUsedNodes[0];
+        if (typeof nodes === "string") {
+            const mappedNode = this.nodeMap.get(nodes);
+            return mappedNode || this.leastUsedNodes[0];
+        }
         
         throw new TypeError(`'nodes' must be a string or Node instance, received: ${typeof nodes}`);
     }
-
-    async handleNoMatches(rest, query) {
-        try {
-            const ytEndpoint = `/v4/loadtracks?identifier=https://www.youtube.com/watch?v=${query}`;
-            const youtubeResponse = await rest.makeRequest("GET", ytEndpoint);
-            
-            if (!["empty", "NO_MATCHES"].includes(youtubeResponse.loadType)) {
-                return youtubeResponse;
-            }
-            
-            const spotifyEndpoint = `/v4/loadtracks?identifier=https://open.spotify.com/track/${query}`;
-            return await rest.makeRequest("GET", spotifyEndpoint);
-        } catch (error) {
-            console.error(`Failed to resolve track: ${error.message}`);
-            throw error;
-        }
+    
+    async handleNoMatches(query) {
+        return {
+            loadType: "empty",
+            exception: null,
+            playlistInfo: null,
+            pluginInfo: {},
+            tracks: []
+        };
     }
-
+    
     constructResponse(response, requester, requestNode) {
         const baseResponse = {
             loadType: response.loadType,
