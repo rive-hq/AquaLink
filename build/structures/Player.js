@@ -221,16 +221,25 @@ class Player extends EventEmitter {
     destroy() {
         if (!this.connected) return this;
         
+        const voiceChannelId = this.voiceChannel ? this.voiceChannel.id || this.voiceChannel : null;
+        
         if (this._updateTimeout) {
-            clearTimeout(this._updateTimeout);
-            this._updateTimeout = null;
-            this._pendingUpdates = {};
+          clearTimeout(this._updateTimeout);
+          this._updateTimeout = null;
+          this._pendingUpdates = {};
         }
         
+        this.send({ guild_id: this.guildId, channel_id: null });
+        
+        this._lastVoiceChannel = voiceChannelId;
+        
+        this.voiceChannel = null;
+        
         this.disconnect();
+        
         if (this.nowPlayingMessage) {
-            this.nowPlayingMessage.delete().catch(() => {});
-            this.nowPlayingMessage = null;
+          this.nowPlayingMessage.delete().catch(() => {});
+          this.nowPlayingMessage = null;
         }
         
         this.isAutoplay = false;
@@ -250,8 +259,7 @@ class Player extends EventEmitter {
         this.filters = null;
         
         return this;
-    }
-
+      }
     pause(paused) {
         if (this.paused === paused) return this;
         this.paused = paused;
