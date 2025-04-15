@@ -103,7 +103,7 @@ class Player extends EventEmitter {
     }
 
     async autoplay(player) {
-        if (!player) throw new Error("Player is undefined. const player = aqua.plaerers.get(guildId);");
+        if (!player) throw new Error("Player is undefined. const player = aqua.players.get(guildId);");
         if (!this.isAutoplayEnabled) {
             this.aqua.emit("debug", this.guildId, "Autoplay is disabled.");
             return this;
