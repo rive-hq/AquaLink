@@ -195,17 +195,23 @@ client.login("Yourtokenhere");
 <div align="center">
 <table>
 <tr>
-<td align="center" width="50%">
+<td align="center" width="33%">
   <img width="120" height="120" src="https://img.icons8.com/fluent/240/000000/musical-notes.png"/>
   <br/>
   <img src="https://img.shields.io/badge/Rive-0061ff?style=for-the-badge&logo=discord&logoColor=white" /><br />
   <a href="https://discord.com/oauth2/authorize?client_id=1350601402325405806">Add to Discord</a>
 </td>
-<td align="center" width="50%">
+<td align="center" width="33%">
   <img width="120" height="120" src="https://img.icons8.com/fluent/240/000000/water-element.png"/>
   <br/>
   <img src="https://img.shields.io/badge/Kenium-00bfff?style=for-the-badge&logo=discord&logoColor=white" /><br />
   <a href="https://discord.com/oauth2/authorize?client_id=1202232935311495209">Add to Discord</a>
+</td>
+<td align="center" width="33%">
+  <img width="120" height="120" src="https://cdn.discordapp.com/attachments/1347414750463660032/1365654298989690930/soya1.jpg?ex=680e182d&is=680cc6ad&hm=3055de34e2af31a3a430f52b147a00215f8b88c8dcc9363cab5359c50ce8d75f&"/>
+  <br/>
+  <img src="https://img.shields.io/badge/SoyaMusic-22c55e?style=for-the-badge&logo=discord&logoColor=white" /><br />
+  <a href="https://discord.com/oauth2/authorize?client_id=997906613082013868&permissions=281357446481&integration_type=0&scope=bot+applications.commands">Add to Discord</a>
 </td>
 </tr>
 </table>
@@ -239,6 +245,7 @@ For detailed usage, API references, and examples, check out our official documen
 |-----|-------------|----------|
 | Rive | [Add to Discord](https://discord.com/oauth2/authorize?client_id=1350601402325405806) | Music playback, Queue management |
 | Kenium | [Add to Discord](https://discord.com/oauth2/authorize?client_id=1202232935311495209) | Audio streaming, Discord integration |
+| Soya Music | [Add to Discord](https://discord.com/oauth2/authorize?client_id=997906613082013868&permissions=281357446481&integration_type=0&scope=bot+applications.commands) | Audio streaming, Discord integration |
 
 ## 🛠️ Advanced Features
 
