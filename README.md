@@ -196,12 +196,6 @@ client.login("Yourtokenhere");
 <table>
 <tr>
 <td align="center" width="33%">
-  <img width="120" height="120" src="https://img.icons8.com/fluent/240/000000/musical-notes.png"/>
-  <br/>
-  <img src="https://img.shields.io/badge/Rive-0061ff?style=for-the-badge&logo=discord&logoColor=white" /><br />
-  <a href="https://discord.com/oauth2/authorize?client_id=1350601402325405806">Add to Discord</a>
-</td>
-<td align="center" width="33%">
   <img width="120" height="120" src="https://img.icons8.com/fluent/240/000000/water-element.png"/>
   <br/>
   <img src="https://img.shields.io/badge/Kenium-00bfff?style=for-the-badge&logo=discord&logoColor=white" /><br />
@@ -243,7 +237,6 @@ For detailed usage, API references, and examples, check out our official documen
 
 | Bot | Invite Link | Features |
 |-----|-------------|----------|
-| Rive | [Add to Discord](https://discord.com/oauth2/authorize?client_id=1350601402325405806) | Music playback, Queue management |
 | Kenium | [Add to Discord](https://discord.com/oauth2/authorize?client_id=1202232935311495209) | Audio streaming, Discord integration |
 | Soya Music | [Add to Discord](https://discord.com/oauth2/authorize?client_id=997906613082013868&permissions=281357446481&integration_type=0&scope=bot+applications.commands) | Audio streaming, Discord integration |
 
