@@ -162,7 +162,7 @@ class Rest {
                 this.validateSessionId();
                 return await this.makeRequest(
                     "GET",
-                    `/${this.version}/sessions/${this.sessionId}/players/${track.guild_id}/track/lyrics?skipTrackSource=false`
+                    `/${this.version}/sessions/${this.sessionId}/players/${track.guild_id}/track/lyrics?skipTrackSource=true`
                 );
             }
         } catch (error) {
