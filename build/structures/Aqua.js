@@ -350,24 +350,13 @@ class Aqua extends EventEmitter {
         try {
             if (player.connection) {
                 try {
-                    await player.connection.disconnect();
+                    await player.destroy()
                     player.connection = null;
                 } catch (error) {
                     console.error(`Error disconnecting player connection: ${error.message}`);
                 }
             }
             
-            player.queue?.clear();
-            
-            if (typeof player.stop === 'function') {
-                try {
-                    await player.stop();
-                } catch (error) {
-                    console.error(`Error stopping player: ${error.message}`);
-                }
-            }
-            
-            player.removeAllListeners();
             this.players.delete(player.guildId);
             this.emit("playerCleanup", player.guildId);
         } catch (error) {
