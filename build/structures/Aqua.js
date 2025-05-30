@@ -154,7 +154,7 @@ class Aqua extends EventEmitter {
             }
             
             if (d.channel_id === null) {
-                this._scheduleCleanup(player);
+                this.cleanupPlayer(player);
             }
         }
     }
