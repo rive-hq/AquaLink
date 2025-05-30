@@ -135,21 +135,30 @@ class Aqua extends EventEmitter {
     }
 
     updateVoiceState({ d, t }) {
+        if (!d?.guild_id) return;
+        
         const player = this.players.get(d.guild_id);
         if (!player) return;
         
-        if (t === "VOICE_SERVER_UPDATE" || (t === "VOICE_STATE_UPDATE" && d.user_id === this.clientId)) {
-            if (t === "VOICE_SERVER_UPDATE") {
-                player.connection?.setServerUpdate?.(d);
+        const isServerUpdate = t === VOICE_EVENTS.SERVER_UPDATE;
+        const isStateUpdate = t === VOICE_EVENTS.STATE_UPDATE && d.user_id === this.clientId;
+        
+        if (isServerUpdate || isStateUpdate) {
+            const connection = player.connection;
+            if (!connection) return;
+            
+            if (isServerUpdate) {
+                connection.setServerUpdate?.(d);
             } else {
-                player.connection?.setStateUpdate?.(d);
+                connection.setStateUpdate?.(d);
             }
             
             if (d.channel_id === null) {
-                this.cleanupPlayer(player);
+                this._scheduleCleanup(player);
             }
         }
     }
+
 
     fetchRegion(region) {
         if (!region) return this.leastUsedNodes;
@@ -199,7 +208,7 @@ class Aqua extends EventEmitter {
         const player = new Player(this, node, options);
         this.players.set(options.guildId, player);
         
-        player.once("destroy", () => {
+        player.on("destroy", () => {
             this.players.delete(options.guildId);
         });
         
