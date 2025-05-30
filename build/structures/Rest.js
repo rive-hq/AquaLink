@@ -1,5 +1,3 @@
-"use strict";
-
 const https = require("https");
 const http = require("http");
 
@@ -42,32 +40,26 @@ class Rest {
             method,
             headers: this.headers,
             timeout: this.timeout,
+            keepAlive: true,
         };
 
         return new Promise((resolve, reject) => {
             const req = this.client.request(url, options, (res) => {
-                let data = "";
-
+                const chunks = [];
                 res.setEncoding("utf8");
-
                 res.on("data", (chunk) => {
-                    data += chunk;
+                    chunks.push(chunk);
                 });
-
                 res.on("end", () => {
-                    if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
-                        if (!data) {
-                            resolve(null);
-                            return;
-                        }
-                        try {
-                            resolve(JSON.parse(data));
-                        } catch (err) {
-                            reject(new Error(`Failed to parse response: ${err.message}`));
-                        }
-                    } else {
-                        const errorMessage = `Request failed with status ${res.statusCode}: ${res.statusMessage || "Unknown error"}`;
-                        reject(new Error(errorMessage));
+                    const data = chunks.join("");
+                    if (!data) {
+                        resolve(null);
+                        return;
+                    }
+                    try {
+                        resolve(JSON.parse(data));
+                    } catch (err) {
+                        reject(new Error(`Failed to parse response: ${err.message}`));
                     }
                 });
             });
@@ -156,7 +148,6 @@ class Rest {
                     );
                     if (res) return res;
                 } catch (_) {
-                    // Silently handle any errors.
                 }
             } else {
                 this.validateSessionId();
@@ -169,6 +160,7 @@ class Rest {
             console.error("Failed to fetch lyrics:", error.message);
             return null;
         }
+        return null;
     }
 }
 
