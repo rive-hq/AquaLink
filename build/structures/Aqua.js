@@ -135,22 +135,14 @@ class Aqua extends EventEmitter {
     }
 
     updateVoiceState({ d, t }) {
-        if (!d?.guild_id) return;
-        
         const player = this.players.get(d.guild_id);
         if (!player) return;
         
-        const isServerUpdate = t === VOICE_EVENTS.SERVER_UPDATE;
-        const isStateUpdate = t === VOICE_EVENTS.STATE_UPDATE && d.user_id === this.clientId;
-        
-        if (isServerUpdate || isStateUpdate) {
-            const connection = player.connection;
-            if (!connection) return;
-            
-            if (isServerUpdate) {
-                connection.setServerUpdate?.(d);
+        if (t === "VOICE_SERVER_UPDATE" || (t === "VOICE_STATE_UPDATE" && d.user_id === this.clientId)) {
+            if (t === "VOICE_SERVER_UPDATE") {
+                player.connection?.setServerUpdate?.(d);
             } else {
-                connection.setStateUpdate?.(d);
+                player.connection?.setStateUpdate?.(d);
             }
             
             if (d.channel_id === null) {
@@ -158,7 +150,6 @@ class Aqua extends EventEmitter {
             }
         }
     }
-
 
     fetchRegion(region) {
         if (!region) return this.leastUsedNodes;
