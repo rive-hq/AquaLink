@@ -21,7 +21,7 @@ class Rest {
         this.secure = secure;
         this.timeout = timeout;
 
-        this.client = secure ? http2 || https : http;
+        this.client = secure ? https || http2: http;
     }
 
     setSessionId(sessionId) {
