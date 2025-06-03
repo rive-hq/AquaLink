@@ -1,6 +1,6 @@
 "use strict";
 
-const { EventEmitter } = require('eventemitter3');
+const { EventEmitter } = require('tseep');
 const Connection = require("./Connection");
 const Queue = require("./Queue");
 const Filters = require("./Filters");
@@ -58,13 +58,12 @@ class Player extends EventEmitter {
         this._updateTimeout = null;
         this._dataStore = new Map();
 
-        this.on("playerUpdate", (state) => {
-            if (state) {
-                this.position = state.position ?? this.position;
-                this.timestamp = state.timestamp ?? this.timestamp;
-                this.ping = state.ping ?? this.ping;
-                this.aqua.emit("playerUpdate", this, { state });
-            }
+        this.on("playerUpdate", (packet) => {
+            this.position = packet.state.position;
+            this.connected = packet.state.connected;
+            this.ping = packet.state.ping;
+
+            this.aqua.emit("playerUpdate", this, packet);
         });
 
         this.on("event", async (payload) => {
