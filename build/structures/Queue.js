@@ -1,4 +1,3 @@
-
 class Queue extends Array {
     /**
      * @param {...*} elements - The elements to initialize the queue with.
@@ -14,19 +13,19 @@ class Queue extends Array {
 
     // Get the first element in the queue
     get first() {
-        return this.length > 0 ? this[0] : null;
+        return this[0] ?? null;
     }
 
     // Get the last element in the queue
     get last() {
-        return this.length > 0 ? this[this.length - 1] : null;
+        return this[this.length - 1] ?? null;
     }
 
     /**
      * Add a track to the end of the queue.
      * @param {*} track - The track to add.
      */
-    add(track) {
+    enqueue(track) {
         this.push(track);
         return this;
     }
@@ -34,15 +33,12 @@ class Queue extends Array {
     /**
      * Remove a specific track from the queue.
      * @param {*} track - The track to remove.
+     * @returns {boolean} True if the track was removed, false otherwise.
      */
     remove(track) {
         const index = this.indexOf(track);
         if (index !== -1) {
-            if (index === this.length - 1) {
-                this.pop();
-            } else {
-                this.splice(index, 1);
-            }
+            this.splice(index, 1);
             return true;
         }
         return false;
@@ -55,23 +51,21 @@ class Queue extends Array {
 
     // Shuffle the tracks in the queue
     shuffle() {
-        const length = this.length;
-        for (let i = length - 1; i > 0; i--) {
+        for (let i = this.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
-            if (i !== j) {
-                [this[i], this[j]] = [this[j], this[i]];
-            }
+            [this[i], this[j]] = [this[j], this[i]];
         }
         return this;
     }
+
     // Peek at the element at the front of the queue without removing it
     peek() {
-        return this.first;
+        return this[0] ?? null;
     }
 
     // Get all tracks in the queue as an array
     toArray() {
-        return this.slice();
+        return [...this];
     }
 
     /**
@@ -82,12 +76,12 @@ class Queue extends Array {
     at(index) {
         return (index >= 0 && index < this.length) ? this[index] : null;
     }
+
     // Remove the first track from the queue
     dequeue() {
-        return this.shift(); // Removes and returns the first element
+        return this.shift();
     }
 
-    // Check if the queue is empty
     /**
      * Check if the queue is empty.
      * @returns {boolean} Whether the queue is empty.
@@ -95,11 +89,15 @@ class Queue extends Array {
     isEmpty() {
         return this.length === 0;
     }
-
-    enqueue(track) {
-        return this.add(track);
+    /**
+     * Add a track to the queue
+     * @param {*} track - The track to find.
+     * @returns {true} The track object that was added to the queue.
+     */
+    add(track) {
+        this.push(track);
+        return this;
     }
-
 }
 
-module.exports =  Queue 
+module.exports = Queue;
