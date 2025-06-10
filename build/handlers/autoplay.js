@@ -119,9 +119,7 @@ async function spotifyAutoPlay(seedTrackId) {
 
     try {
         const tokenData = await quickFetch(`https://open.spotify.com/api/token?${params}`);
-        console.log(tokenData);
         const { accessToken } = JSON.parse(tokenData);
-        console.log(accessToken);
         
         if (!accessToken) throw new Error("Invalid access token");
 
