@@ -110,7 +110,7 @@ function generateToken() {
 async function spotifyAutoPlay(seedTrackId) {
     const [totp, ts] = generateToken();
     const params = new URLSearchParams({
-        reason: "transport",
+        reason: "init",
         productType: "embed",
         totp,
         totpVer: "5",
@@ -118,8 +118,10 @@ async function spotifyAutoPlay(seedTrackId) {
     });
 
     try {
-        const tokenData = await quickFetch(`https://open.spotify.com/get_access_token?${params}`);
+        const tokenData = await quickFetch(`https://open.spotify.com/api/token?${params}`);
+        console.log(tokenData);
         const { accessToken } = JSON.parse(tokenData);
+        console.log(accessToken);
         
         if (!accessToken) throw new Error("Invalid access token");
 
