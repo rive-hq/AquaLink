@@ -96,7 +96,7 @@ class Node {
             this.aqua.emit("nodeConnected", this);
 
             if (this.autoResume && this.sessionId) {
-                await this.resumePlayers();
+                await this.aqua.loadPlayers();
             }
         } catch (err) {
             this.info = null;
@@ -297,10 +297,7 @@ class Node {
 
     async resumePlayers() {
         try {
-            await this.rest.makeRequest("PATCH", `/v4/sessions/${this.sessionId}`, {
-                resuming: true,
-                timeout: this.resumeTimeout
-            });
+            await this.aqua.loadPlayers();
 
             this.aqua.emit("debug", this.name, "Session resumed successfully");
         } catch (err) {
