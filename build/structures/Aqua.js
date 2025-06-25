@@ -266,7 +266,7 @@ class Aqua extends EventEmitter {
         };
     }
 
-    constructResponse(response, requester, requestNode) {
+    async constructResponse(response, requester, requestNode) {
         const baseResponse = {
             loadType: response.loadType,
             exception: null,
@@ -288,14 +288,16 @@ class Aqua extends EventEmitter {
                     baseResponse.tracks.push(trackFactory(response.data));
                 }
                 break;
-
             case "playlist": {
                 const info = response.data?.info;
+                console.log(response)
                 if (info) {
-                    baseResponse.playlistInfo = {
+                    const playlistInfo = {
                         name: info.name ?? info.title,
+                        thumbnail: response.data.pluginInfo?.artworkUrl ?? (response.data.tracks?.[0]?.info?.artworkUrl || null),
                         ...info
                     };
+                    baseResponse.playlistInfo = playlistInfo;
                 }
 
                 const tracks = response.data?.tracks;
