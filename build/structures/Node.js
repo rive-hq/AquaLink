@@ -245,13 +245,36 @@ class Node {
     }
 
     async getStats() {
-        if (this.connected) {
+        if (this.isDestroyed) {
+            throw new Error("Node is destroyed");
+        }
+        
+        if (this.connected && this.stats) {
             return this.stats;
         }
 
         try {
             const newStats = await this.rest.getStats();
-            Object.assign(this.stats, newStats);
+            if (newStats && this.stats) {
+                this.stats.players = newStats.players ?? this.stats.players;
+                this.stats.playingPlayers = newStats.playingPlayers ?? this.stats.playingPlayers;
+                this.stats.uptime = newStats.uptime ?? this.stats.uptime;
+                this.stats.ping = newStats.ping ?? this.stats.ping;
+                
+                if (newStats.memory) {
+                    Object.assign(this.stats.memory, newStats.memory);
+                    this._calculateMemoryPercentages();
+                }
+                
+                if (newStats.cpu) {
+                    Object.assign(this.stats.cpu, newStats.cpu);
+                    this._calculateCpuPercentages();
+                }
+                
+                if (newStats.frameStats) {
+                    Object.assign(this.stats.frameStats, newStats.frameStats);
+                }
+            }
             return this.stats;
         } catch (err) {
             this.emitError(`Failed to fetch node stats: ${err.message}`);
@@ -269,17 +292,31 @@ class Node {
 
         if (payload.memory) {
             Object.assign(this.stats.memory, payload.memory);
-            this.stats.memory.freePercentage = (this.stats.memory.free / this.stats.memory.allocated) * 100;
-            this.stats.memory.usedPercentage = (this.stats.memory.used / this.stats.memory.allocated) * 100;
+            this._calculateMemoryPercentages();
         }
 
         if (payload.cpu) {
             Object.assign(this.stats.cpu, payload.cpu);
-            this.stats.cpu.lavalinkLoadPercentage = (this.stats.cpu.lavalinkLoad / this.stats.cpu.cores) * 100;
+            this._calculateCpuPercentages();
         }
 
         if (payload.frameStats) {
             Object.assign(this.stats.frameStats, payload.frameStats);
+        }
+    }
+
+    _calculateMemoryPercentages() {
+        const { memory } = this.stats;
+        if (memory.allocated > 0) {
+            memory.freePercentage = (memory.free / memory.allocated) * 100;
+            memory.usedPercentage = (memory.used / memory.allocated) * 100;
+        }
+    }
+
+    _calculateCpuPercentages() {
+        const { cpu } = this.stats;
+        if (cpu.cores > 0) {
+            cpu.lavalinkLoadPercentage = (cpu.lavalinkLoad / cpu.cores) * 100;
         }
     }
 
