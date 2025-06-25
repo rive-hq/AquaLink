@@ -3,17 +3,18 @@ const Node = require("./Node");
 const Player = require("./Player");
 const Track = require("./Track");
 const { version: pkgVersion } = require("../../package.json");
-const { EventEmitter } = require('eventemitter3');
+const { EventEmitter } = require('tseep');
+const fs = require('fs-extra');
 
 const URL_REGEX = /^https?:\/\//;
 const DEFAULT_OPTIONS = Object.freeze({
-  shouldDeleteMessage: false,
-  defaultSearchPlatform: 'ytsearch',
-  leaveOnEnd: true,
-  restVersion: 'v4',
-  plugins: [],
-  autoResume: false,
-  infiniteReconnects: false
+    shouldDeleteMessage: false,
+    defaultSearchPlatform: 'ytsearch',
+    leaveOnEnd: true,
+    restVersion: 'v4',
+    plugins: [],
+    autoResume: false,
+    infiniteReconnects: false
 });
 const LEAST_USED_CACHE_TTL = 50;
 
@@ -32,9 +33,9 @@ class Aqua extends EventEmitter {
         this.clientId = null;
         this.initiated = false;
         this.version = pkgVersion;
-        
+
         this.options = Object.assign({}, DEFAULT_OPTIONS, options);
-        
+
         const {
             shouldDeleteMessage,
             defaultSearchPlatform,
@@ -45,7 +46,7 @@ class Aqua extends EventEmitter {
             infiniteReconnects,
             send
         } = this.options;
-        
+
         this.shouldDeleteMessage = shouldDeleteMessage;
         this.defaultSearchPlatform = defaultSearchPlatform;
         this.leaveOnEnd = leaveOnEnd;
@@ -53,9 +54,9 @@ class Aqua extends EventEmitter {
         this.plugins = plugins;
         this.autoResume = autoResume;
         this.infiniteReconnects = infiniteReconnects;
-        
+
         this.send = send || this.defaultSendFunction.bind(this);
-        
+
         this._leastUsedCache = { nodes: [], timestamp: 0 };
     }
 
@@ -69,14 +70,14 @@ class Aqua extends EventEmitter {
         if (now - this._leastUsedCache.timestamp < LEAST_USED_CACHE_TTL) {
             return this._leastUsedCache.nodes;
         }
-        
+
         const connectedNodes = [];
         for (const node of this.nodeMap.values()) {
             if (node.connected) connectedNodes.push(node);
         }
-        
+
         connectedNodes.sort((a, b) => a.rest.calls - b.rest.calls);
-        
+
         this._leastUsedCache = { nodes: connectedNodes, timestamp: now };
         return connectedNodes;
     }
@@ -84,35 +85,35 @@ class Aqua extends EventEmitter {
     async init(clientId) {
         if (this.initiated) return this;
         this.clientId = clientId;
-        
+
         try {
             const nodePromises = [];
             for (const node of this.nodes) {
                 nodePromises.push(this.createNode(node));
             }
             await Promise.all(nodePromises);
-            
+
             for (const plugin of this.plugins) {
                 plugin.load(this);
             }
-            
+
             this.initiated = true;
         } catch (error) {
             this.initiated = false;
             throw error;
         }
-        
+
         return this;
     }
 
     async createNode(options) {
         const nodeId = options.name || options.host;
         this.destroyNode(nodeId);
-        
+
         const node = new Node(this, options, this.options);
         this.nodeMap.set(nodeId, node);
         this._leastUsedCache.timestamp = 0;
-        
+
         try {
             await node.connect();
             this.emit("nodeCreate", node);
@@ -127,7 +128,7 @@ class Aqua extends EventEmitter {
     destroyNode(identifier) {
         const node = this.nodeMap.get(identifier);
         if (!node) return;
-        
+
         node.destroy();
         this.nodeMap.delete(identifier);
         this._leastUsedCache.timestamp = 0;
@@ -137,14 +138,14 @@ class Aqua extends EventEmitter {
     updateVoiceState({ d, t }) {
         const player = this.players.get(d.guild_id);
         if (!player) return;
-        
+
         if (t === "VOICE_SERVER_UPDATE" || (t === "VOICE_STATE_UPDATE" && d.user_id === this.clientId)) {
             if (t === "VOICE_SERVER_UPDATE") {
                 player.connection?.setServerUpdate?.(d);
             } else {
                 player.connection?.setStateUpdate?.(d);
             }
-            
+
             if (d.channel_id === null) {
                 this.cleanupPlayer(player);
             }
@@ -153,23 +154,23 @@ class Aqua extends EventEmitter {
 
     fetchRegion(region) {
         if (!region) return this.leastUsedNodes;
-        
+
         const lowerRegion = region.toLowerCase();
         const regionNodes = [];
-        
+
         for (const node of this.nodeMap.values()) {
             if (node.connected && node.regions?.includes(lowerRegion)) {
                 regionNodes.push(node);
             }
         }
-        
+
         const loadCache = new Map();
         regionNodes.sort((a, b) => {
             if (!loadCache.has(a)) loadCache.set(a, this.calculateLoad(a));
             if (!loadCache.has(b)) loadCache.set(b, this.calculateLoad(b));
             return loadCache.get(a) - loadCache.get(b);
         });
-        
+
         return regionNodes;
     }
 
@@ -182,27 +183,28 @@ class Aqua extends EventEmitter {
 
     createConnection(options) {
         if (!this.initiated) throw new Error("Aqua must be initialized before this operation");
-        
+
         const existingPlayer = this.players.get(options.guildId);
         if (existingPlayer && existingPlayer.voiceChannel) return existingPlayer;
-        
+
         const availableNodes = options.region ? this.fetchRegion(options.region) : this.leastUsedNodes;
         const node = availableNodes[0];
         if (!node) throw new Error("No nodes are available");
-        
+
         return this.createPlayer(node, options);
     }
 
     createPlayer(node, options) {
         this.destroyPlayer(options.guildId);
-        
+
         const player = new Player(this, node, options);
         this.players.set(options.guildId, player);
-        
+
         player.on("destroy", () => {
             this.players.delete(options.guildId);
+            this.emit("playerDestroy", player);
         });
-        
+
         player.connect(options);
         this.emit("playerCreate", player);
         return player;
@@ -211,12 +213,9 @@ class Aqua extends EventEmitter {
     async destroyPlayer(guildId) {
         const player = this.players.get(guildId);
         if (!player) return;
-        
+
         try {
-            await player.clearData();
-            player.removeAllListeners();
-            this.players.delete(guildId);
-            this.emit("playerDestroy", player);
+            await player.destroy();
         } catch (error) {
             console.error(`Error destroying player for guild ${guildId}:`, error);
         }
@@ -224,18 +223,18 @@ class Aqua extends EventEmitter {
 
     async resolve({ query, source = this.defaultSearchPlatform, requester, nodes }) {
         if (!this.initiated) throw new Error("Aqua must be initialized before this operation");
-        
+
         const requestNode = this.getRequestNode(nodes);
         const formattedQuery = URL_REGEX.test(query) ? query : `${source}:${query}`;
-        
+
         try {
             const endpoint = `/v4/loadtracks?identifier=${encodeURIComponent(formattedQuery)}`;
             const response = await requestNode.rest.makeRequest("GET", endpoint);
-            
+
             if (["empty", "NO_MATCHES"].includes(response.loadType)) {
                 return await this.handleNoMatches(query);
             }
-            
+
             return this.constructResponse(response, requester, requestNode);
         } catch (error) {
             if (error.name === "AbortError") {
@@ -244,19 +243,19 @@ class Aqua extends EventEmitter {
             throw new Error(`Failed to resolve track: ${error.message}`);
         }
     }
-    
+
     getRequestNode(nodes) {
         if (!nodes) return this.leastUsedNodes[0];
-        
+
         if (nodes instanceof Node) return nodes;
         if (typeof nodes === "string") {
             const mappedNode = this.nodeMap.get(nodes);
             return mappedNode || this.leastUsedNodes[0];
         }
-        
+
         throw new TypeError(`'nodes' must be a string or Node instance, received: ${typeof nodes}`);
     }
-    
+
     async handleNoMatches(query) {
         return {
             loadType: "empty",
@@ -266,7 +265,7 @@ class Aqua extends EventEmitter {
             tracks: []
         };
     }
-    
+
     constructResponse(response, requester, requestNode) {
         const baseResponse = {
             loadType: response.loadType,
@@ -275,14 +274,14 @@ class Aqua extends EventEmitter {
             pluginInfo: response.pluginInfo ?? {},
             tracks: []
         };
-        
+
         if (response.loadType === "error" || response.loadType === "LOAD_FAILED") {
             baseResponse.exception = response.data ?? response.exception;
             return baseResponse;
         }
-        
+
         const trackFactory = (trackData) => new Track(trackData, requester, requestNode);
-        
+
         switch (response.loadType) {
             case "track":
                 if (response.data) {
@@ -322,7 +321,7 @@ class Aqua extends EventEmitter {
                 break;
             }
         }
-        
+
         return baseResponse;
     }
 
@@ -334,7 +333,7 @@ class Aqua extends EventEmitter {
 
     async search(query, requester, source = this.defaultSearchPlatform) {
         if (!query || !requester) return null;
-        
+
         try {
             const { tracks } = await this.resolve({ query, source, requester });
             return tracks || null;
@@ -344,21 +343,94 @@ class Aqua extends EventEmitter {
         }
     }
 
-    async cleanupPlayer(player) {
-        if (!player) return;
-        
+    async savePlayer(filePath = "./AquaPlayers.json") {
+        const data = Array.from(this.players.values()).map(player => ({
+            guildId: player.guildId,
+            textChannel: player.textChannel,
+            voiceChannel: player.voiceChannel,
+            track: player.current ? {
+                identifier: player.current.identifier,
+                author: player.current.author,
+                title: player.current.title,
+                uri: player.current.uri,
+                sourceName: player.current.sourceName,
+                artworkUrl: player.current.artworkUrl,
+                duration: player.current.duration,
+                position: player.position,
+            } : null,
+            requester: player.requester || player.current?.requester,
+            volume: player.volume,
+            paused: player.paused
+        }));
+        console.log(`Saving ${data.length} players to ${filePath}`);
+        await fs.writeJSON(filePath, data, { spaces: 2 });
+        this.emit("debug", "Aqua", `Saved players to ${filePath}`);
+    }
+
+    async waitForFirstNode() {
+        if (this.leastUsedNodes.length > 0) return;
+        return new Promise(resolve => {
+            const check = () => {
+                if (this.leastUsedNodes.length > 0) {
+                    resolve();
+                } else {
+                    setTimeout(check, 100);
+                }
+            };
+            check();
+        });
+    }
+
+    async loadPlayers(filePath = "./AquaPlayers.json") {
+        if (!fs.existsSync(filePath)) {
+            this.emit("debug", "Aqua", `No player data found at ${filePath}`);
+            return;
+        }
         try {
-            if (player.connection) {
-                try {
-                    await player.destroy()
-                    player.connection = null;
-                } catch (error) {
-                    console.error(`Error disconnecting player connection: ${error.message}`);
+            await this.waitForFirstNode();
+            const data = await fs.readJSON(filePath);
+            for (const playerData of data) {
+                const { guildId, textChannel, voiceChannel, track, volume, paused, requester } = playerData;
+                let player = this.players.get(guildId);
+
+                if (!player) {
+                    player = await this.createConnection({
+                        guildId: guildId,
+                        textChannel: textChannel,
+                        voiceChannel: voiceChannel,
+                        defaultVolume: volume || 65,
+                        deaf: true
+                    });
+                }
+
+                if (track && player) {
+                    const resolved = await this.resolve({ query: track.uri, requester });
+                    if (resolved.tracks && resolved.tracks.length > 0) {
+                        player.queue.add(resolved.tracks[0]);
+                        player.position = track.position || 0;
+                    } else {
+                        this.emit("debug", "Aqua", `Could not resolve track for guild ${guildId}: ${track.uri}`);
+                    }
+                }
+
+                if (player) {
+                    player.paused = paused || false;
+                    if (!player.playing && !player.paused && player.queue.size > 0) {
+                        player.play();
+                    }
                 }
             }
-            
-            this.players.delete(player.guildId);
-            this.emit("playerCleanup", player.guildId);
+            this.emit("debug", "Aqua", `Loaded players from ${filePath}`);
+        } catch (error) {
+            console.error(`Failed to load players from ${filePath}:`, error);
+        }
+    }
+
+    async cleanupPlayer(player) {
+        if (!player) return;
+
+        try {
+            await player.destroy();
         } catch (error) {
             console.error(`Error during player cleanup: ${error.message}`);
         }
