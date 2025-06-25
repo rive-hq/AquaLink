@@ -245,9 +245,6 @@ class Node {
     }
 
     async getStats() {
-        if (this.isDestroyed) {
-            throw new Error("Node is destroyed");
-        }
         
         if (this.connected && this.stats) {
             return this.stats;
