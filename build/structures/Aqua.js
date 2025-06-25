@@ -215,7 +215,10 @@ class Aqua extends EventEmitter {
         if (!player) return;
 
         try {
-            await player.destroy();
+            await player.clearData();
+            player.removeAllListeners();
+            this.players.delete(guildId);
+            this.emit("playerDestroy", player);
         } catch (error) {
             console.error(`Error destroying player for guild ${guildId}:`, error);
         }
@@ -290,7 +293,6 @@ class Aqua extends EventEmitter {
                 break;
             case "playlist": {
                 const info = response.data?.info;
-                console.log(response)
                 if (info) {
                     const playlistInfo = {
                         name: info.name ?? info.title,
