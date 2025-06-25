@@ -62,6 +62,7 @@ class Player extends EventEmitter {
             this.position = packet.state.position;
             this.connected = packet.state.connected;
             this.ping = packet.state.ping;
+            this.timestamp = packet.state.timestamp;
 
             this.aqua.emit("playerUpdate", this, packet);
         });
@@ -184,18 +185,18 @@ class Player extends EventEmitter {
         return this.batchUpdatePlayer({ track: { encoded: this.current.track } }, true);
     }
 
-    connect({ deaf = true, mute = false } = {}) {
+    connect(options = this) {
+        const { guildId, voiceChannel, deaf = true, mute = false } = options;
         this.deaf = deaf;
         this.mute = mute;
-        const payload = {
-            guild_id: this.guildId,
-            channel_id: this.voiceChannel,
+        this.send({
+            guild_id: guildId,
+            channel_id: voiceChannel,
             self_deaf: deaf,
-            self_mute: mute
-        };
-        this.send(payload);
+            self_mute: mute,
+        });
         this.connected = true;
-        this.aqua.emit("debug", this.guildId, `Player connected to voice channel: ${this.voiceChannel}.`);
+        this.aqua.emit("debug", guildId, `Player connected to voice channel: ${voiceChannel}.`);
         return this;
     }
 
@@ -288,7 +289,13 @@ class Player extends EventEmitter {
         if (!channel?.length) throw new TypeError("Channel must be a non-empty string.");
         if (this.connected && channel === this.voiceChannel) throw new ReferenceError(`Player already connected to ${channel}.`);
         this.voiceChannel = channel;
-        this.connect({ deaf: this.deaf, mute: this.mute });
+        this.connect({
+            deaf: this.deaf,
+            guildId: this.guildId,
+            voiceChannel: this.voiceChannel,
+            textChannel: this.textChannel,
+            mute: this.mute,
+        });
         return this;
     }
 
