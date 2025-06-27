@@ -10,14 +10,14 @@ class Player extends EventEmitter {
     static LOOP_MODES = Object.freeze({
         NONE: "none", TRACK: "track", QUEUE: "queue"
     });
-
     static EVENT_HANDLERS = Object.freeze({
         TrackStartEvent: "trackStart",
         TrackEndEvent: "trackEnd",
         TrackExceptionEvent: "trackError",
         TrackStuckEvent: "trackStuck",
         TrackChangeEvent: "trackChange",
-        WebSocketClosedEvent: "socketClosed"
+        WebSocketClosedEvent: "socketClosed",
+        LyricsFoundEvent: "lyricsFound"
     });
 
     static validModes = new Set(Object.values(Player.LOOP_MODES));
@@ -244,9 +244,9 @@ class Player extends EventEmitter {
     }
 
     async getLyrics(options = {}) {
-        const { query = null, useCurrentTrack = true } = options;
-        if (query) return this.nodes.rest.getLyrics({ track: { info: { title: query }, search: true } }) || null;
-        if (useCurrentTrack && this.playing) return this.nodes.rest.getLyrics({ track: { encoded: this.current.track, guild_id: this.guildId } }) || null;
+        const { query = null, useCurrentTrack = true, skipTrackSource = false } = options;
+        if (query) return this.nodes.rest.getLyrics({ track: { info: { title: query }, search: true }, skipTrackSource }) || null;
+        if (useCurrentTrack && this.playing) return this.nodes.rest.getLyrics({ track: { encoded: this.current.track, guild_id: this.guildId }, skipTrackSource }) || null;
         return null;
     }
 
@@ -418,6 +418,11 @@ class Player extends EventEmitter {
         this.aqua.emit("socketClosed", player, payload);
         this.pause(true);
         this.aqua.emit("debug", this.guildId, "Player paused due to socket closure.");
+    }
+
+    async lyricsFound(player, track, payload) {
+
+        this.aqua.emit("lyricsFound", player, track, payload);
     }
 
     send(data) {
