@@ -17,7 +17,6 @@ class Player extends EventEmitter {
         TrackStuckEvent: "trackStuck",
         TrackChangeEvent: "trackChange",
         WebSocketClosedEvent: "socketClosed",
-        LyricsFoundEvent: "lyricsFound"
     });
 
     static validModes = new Set(Object.values(Player.LOOP_MODES));
@@ -418,11 +417,6 @@ class Player extends EventEmitter {
         this.aqua.emit("socketClosed", player, payload);
         this.pause(true);
         this.aqua.emit("debug", this.guildId, "Player paused due to socket closure.");
-    }
-
-    async lyricsFound(player, track, payload) {
-
-        this.aqua.emit("lyricsFound", player, track, payload);
     }
 
     send(data) {
