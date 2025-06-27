@@ -61,7 +61,7 @@ class Player extends EventEmitter {
             this.position = packet.state.position;
             this.connected = packet.state.connected;
             this.ping = packet.state.ping;
-            this.timestamp = packet.state.timestamp;
+            this.timestamp = packet.state.time;
 
             this.aqua.emit("playerUpdate", this, packet);
         });
