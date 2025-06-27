@@ -162,7 +162,6 @@ class Rest {
     async getLyrics({ track }) {
         if (!track) return null;
 
-
         try {
             if (track.search) {
                 const query = encodeURIComponent(track.info.title);
@@ -181,7 +180,6 @@ class Rest {
                     "GET",
                     `/${this.version}/sessions/${this.sessionId}/players/${track.guild_id}/lyrics`
                 );
-                console.log(res);
                 return res;
             }
         } catch (error) {
