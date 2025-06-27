@@ -6,20 +6,75 @@ const Queue = require("./Queue");
 const Filters = require("./Filters");
 const { spAutoPlay, scAutoPlay } = require('../handlers/autoplay');
 
-class Player extends EventEmitter {
-    static LOOP_MODES = Object.freeze({
-        NONE: "none", TRACK: "track", QUEUE: "queue"
-    });
-    static EVENT_HANDLERS = Object.freeze({
-        TrackStartEvent: "trackStart",
-        TrackEndEvent: "trackEnd",
-        TrackExceptionEvent: "trackError",
-        TrackStuckEvent: "trackStuck",
-        TrackChangeEvent: "trackChange",
-        WebSocketClosedEvent: "socketClosed",
-    });
+const LOOP_MODES = Object.freeze({
+    NONE: "none", TRACK: "track", QUEUE: "queue"
+});
 
-    static validModes = new Set(Object.values(Player.LOOP_MODES));
+const EVENT_HANDLERS = Object.freeze({
+    TrackStartEvent: "trackStart",
+    TrackEndEvent: "trackEnd",
+    TrackExceptionEvent: "trackError",
+    TrackStuckEvent: "trackStuck",
+    TrackChangeEvent: "trackChange",
+    WebSocketClosedEvent: "socketClosed",
+});
+
+const VALID_MODES = new Set(Object.values(LOOP_MODES));
+const FAILURE_REASONS = new Set(["LOAD_FAILED", "CLEANUP"]);
+const RECONNECT_CODES = new Set([4015, 4009]);
+const FAIL_LOAD_TYPES = new Set(["error", "empty", "LOAD_FAILED", "NO_MATCHES"]);
+
+class UpdateBatcher {
+    constructor(player) {
+        this.player = player;
+        this.pendingUpdates = {};
+        this.timeout = null;
+        this.hasUpdates = false;
+    }
+
+    batch(data, immediate = false) {
+        Object.assign(this.pendingUpdates, data);
+        this.hasUpdates = true;
+
+        if (this.timeout) {
+            clearTimeout(this.timeout);
+            this.timeout = null;
+        }
+
+        if (immediate || data.track) {
+            const updates = this.pendingUpdates;
+            this.pendingUpdates = {};
+            this.hasUpdates = false;
+            return this.player.updatePlayer(updates);
+        }
+
+        this.timeout = setTimeout(() => {
+            if (this.hasUpdates) {
+                const updates = this.pendingUpdates;
+                this.pendingUpdates = {};
+                this.hasUpdates = false;
+                this.player.updatePlayer(updates);
+            }
+            this.timeout = null;
+        }, 32);
+
+        return Promise.resolve();
+    }
+
+    destroy() {
+        if (this.timeout) {
+            clearTimeout(this.timeout);
+            this.timeout = null;
+        }
+        this.pendingUpdates = {};
+        this.hasUpdates = false;
+    }
+}
+
+class Player extends EventEmitter {
+    static LOOP_MODES = LOOP_MODES;
+    static EVENT_HANDLERS = EVENT_HANDLERS;
+    static validModes = VALID_MODES;
 
     constructor(aqua, nodes, options = {}) {
         super();
@@ -33,10 +88,12 @@ class Player extends EventEmitter {
         this.filters = new Filters(this);
         this.queue = new Queue();
 
-        this.volume = Math.min(Math.max(options.defaultVolume ?? 100, 0), 200);
-        this.loop = Player.validModes.has(options.loop) ? options.loop : Player.LOOP_MODES.NONE;
-        this.shouldDeleteMessage = !!this.aqua.options.shouldDeleteMessage;
-        this.leaveOnEnd = !!this.aqua.options.leaveOnEnd;
+        const vol = options.defaultVolume ?? 100;
+        this.volume = vol < 0 ? 0 : vol > 200 ? 200 : vol;
+        
+        this.loop = VALID_MODES.has(options.loop) ? options.loop : LOOP_MODES.NONE;
+        this.shouldDeleteMessage = Boolean(this.aqua.options.shouldDeleteMessage);
+        this.leaveOnEnd = Boolean(this.aqua.options.leaveOnEnd);
 
         this.previousTracks = new Array(50);
         this.previousTracksIndex = 0;
@@ -53,32 +110,36 @@ class Player extends EventEmitter {
         this.isAutoplayEnabled = false;
         this.isAutoplay = false;
 
-        this._pendingUpdates = {};
-        this._updateTimeout = null;
+        this._updateBatcher = new UpdateBatcher(this);
         this._dataStore = new Map();
 
-        this.on("playerUpdate", (packet) => {
-            this.position = packet.state.position;
-            this.connected = packet.state.connected;
-            this.ping = packet.state.ping;
-            this.timestamp = packet.state.time;
+        this._handlePlayerUpdate = this._handlePlayerUpdate.bind(this);
+        this._handleEvent = this._handleEvent.bind(this);
 
-            this.aqua.emit("playerUpdate", this, packet);
-        });
+        this.on("playerUpdate", this._handlePlayerUpdate);
+        this.on("event", this._handleEvent);
+    }
 
-        this.on("event", async (payload) => {
-            try {
-                const handlerName = Player.EVENT_HANDLERS[payload.type];
-                if (handlerName && typeof this[handlerName] === "function") {
-                    await this[handlerName](this, this.current, payload);
-                } else {
-                    this.aqua.emit("nodeError", this, new Error(`Node encountered an unknown event: '${payload.type}'`));
-                }
-            } catch (error) {
-                console.error(`Error handling event ${payload.type}:`, error);
-                this.aqua.emit("error", error);
+    _handlePlayerUpdate(packet) {
+        this.position = packet.state.position;
+        this.connected = packet.state.connected;
+        this.ping = packet.state.ping;
+        this.timestamp = packet.state.time;
+        this.aqua.emit("playerUpdate", this, packet);
+    }
+
+    async _handleEvent(payload) {
+        try {
+            const handlerName = EVENT_HANDLERS[payload.type];
+            if (handlerName && typeof this[handlerName] === "function") {
+                await this[handlerName](this, this.current, payload);
+            } else {
+                this.aqua.emit("nodeError", this, new Error(`Node encountered an unknown event: '${payload.type}'`));
             }
-        });
+        } catch (error) {
+            console.error(`Error handling event ${payload.type}:`, error);
+            this.aqua.emit("error", error);
+        }
     }
 
     get previous() {
@@ -90,23 +151,7 @@ class Player extends EventEmitter {
     }
 
     batchUpdatePlayer(data, immediate = false) {
-        this._pendingUpdates = { ...this._pendingUpdates, ...data };
-        if (this._updateTimeout) clearTimeout(this._updateTimeout);
-
-        if (immediate || data.track) {
-            const updates = this._pendingUpdates;
-            this._pendingUpdates = {};
-            return this.updatePlayer(updates);
-        }
-
-        this._updateTimeout = setTimeout(() => {
-            const updates = this._pendingUpdates;
-            this._pendingUpdates = {};
-            this.updatePlayer(updates);
-            this._updateTimeout = null;
-        }, 50);
-
-        return Promise.resolve();
+        return this._updateBatcher.batch(data, immediate);
     }
 
     async autoplay(player) {
@@ -123,36 +168,37 @@ class Player extends EventEmitter {
             const { sourceName, identifier, uri, requester } = this.previous.info;
             this.aqua.emit("debug", this.guildId, `Attempting autoplay for ${sourceName}`);
 
-            const sourceHandlers = {
-                youtube: async () => ({
-                    query: `https://www.youtube.com/watch?v=${identifier}&list=RD${identifier}`,
-                    source: "ytmsearch"
-                }),
-                soundcloud: async () => {
+            let query, source;
+
+            switch (sourceName) {
+                case "youtube":
+                    query = `https://www.youtube.com/watch?v=${identifier}&list=RD${identifier}`;
+                    source = "ytmsearch";
+                    break;
+                case "soundcloud":
                     const scResults = await scAutoPlay(uri);
-                    return scResults?.length ? { query: scResults[0], source: "scsearch" } : null;
-                },
-                spotify: async () => {
+                    if (!scResults?.length) return this;
+                    query = scResults[0];
+                    source = "scsearch";
+                    break;
+                case "spotify":
                     const spResult = await spAutoPlay(identifier);
-                    return spResult ? { query: `https://open.spotify.com/track/${spResult}`, source: "spotify" } : null;
-                }
-            };
+                    if (!spResult) return this;
+                    query = `https://open.spotify.com/track/${spResult}`;
+                    source = "spotify";
+                    break;
+                default:
+                    return this;
+            }
 
-            const handler = sourceHandlers[sourceName];
-            if (!handler) return this;
-
-            const result = await handler();
-            if (!result) return this;
-
-            const { query, source } = result;
             const response = await this.aqua.resolve({ query, source, requester });
 
-            const failTypes = new Set(["error", "empty", "LOAD_FAILED", "NO_MATCHES"]);
-            if (!response?.tracks?.length || failTypes.has(response.loadType)) {
+            if (!response?.tracks?.length || FAIL_LOAD_TYPES.has(response.loadType)) {
                 return this.stop();
             }
 
-            const track = response.tracks[Math.floor(Math.random() * response.tracks.length)];
+            const tracks = response.tracks;
+            const track = tracks[Math.floor(Math.random() * tracks.length)];
             if (!track?.info?.title) throw new Error("Invalid track object: missing title or info.");
 
             track.requester = this.previous.requester || { id: "Unknown" };
@@ -203,11 +249,7 @@ class Player extends EventEmitter {
         if (!this.connected) return this;
 
         const voiceChannelId = this.voiceChannel ? this.voiceChannel.id || this.voiceChannel : null;
-        if (this._updateTimeout) {
-            clearTimeout(this._updateTimeout);
-            this._updateTimeout = null;
-            this._pendingUpdates = {};
-        }
+        this._updateBatcher.destroy();
 
         this.send({ guild_id: this.guildId, channel_id: null });
         this._lastVoiceChannel = voiceChannelId;
@@ -272,7 +314,7 @@ class Player extends EventEmitter {
     }
 
     setLoop(mode) {
-        if (!Player.validModes.has(mode)) throw new Error("Loop mode must be 'none', 'track', or 'queue'.");
+        if (!VALID_MODES.has(mode)) throw new Error("Loop mode must be 'none', 'track', or 'queue'.");
         this.loop = mode;
         this.batchUpdatePlayer({ loop: mode });
         return this;
@@ -309,11 +351,33 @@ class Player extends EventEmitter {
 
     shuffle() {
         const queue = this.queue;
-        for (let i = queue.length - 1; i > 0; i--) {
+        const len = queue.length;
+        
+        if (len <= 1) return this;
+
+        if (len < 200) {
+            for (let i = len - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [queue[i], queue[j]] = [queue[j], queue[i]];
+            }
+        } else {
+            this._shuffleAsync(queue, len - 1);
+        }
+        
+        return this;
+    }
+
+    _shuffleAsync(queue, i, chunkSize = 100) {
+        const end = Math.max(0, i - chunkSize);
+        
+        for (; i > end; i--) {
             const j = Math.floor(Math.random() * (i + 1));
             [queue[i], queue[j]] = [queue[j], queue[i]];
         }
-        return this;
+        
+        if (i > 0) {
+            setImmediate(() => this._shuffleAsync(queue, i, chunkSize));
+        }
     }
 
     getQueue() {
@@ -353,8 +417,7 @@ class Player extends EventEmitter {
         }
 
         const reason = payload.reason;
-        const failureReasons = new Set(["LOAD_FAILED", "CLEANUP"]);
-        if (failureReasons.has(reason)) {
+        if (FAILURE_REASONS.has(reason)) {
             if (!player.queue.length) {
                 this.previousTracksCount = 0;
                 this._dataStore.clear();
@@ -366,14 +429,12 @@ class Player extends EventEmitter {
             return;
         }
 
-        switch (this.loop) {
-            case Player.LOOP_MODES.TRACK:
-                player.queue.unshift(track);
-                break;
-            case Player.LOOP_MODES.QUEUE:
-                player.queue.push(track);
-                break;
+        if (this.loop === LOOP_MODES.TRACK) {
+            player.queue.unshift(track);
+        } else if (this.loop === LOOP_MODES.QUEUE) {
+            player.queue.push(track);
         }
+
 
         if (player.queue.isEmpty()) {
             if (this.isAutoplayEnabled) {
@@ -405,8 +466,7 @@ class Player extends EventEmitter {
 
     async socketClosed(player, payload) {
         const { code, guildId } = payload || {};
-        const reconnectCodes = new Set([4015, 4009]);
-        if (reconnectCodes.has(code)) {
+        if (RECONNECT_CODES.has(code)) {
             this.send({
                 guild_id: guildId,
                 channel_id: this.voiceChannel,
