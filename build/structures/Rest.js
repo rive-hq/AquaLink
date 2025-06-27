@@ -21,7 +21,7 @@ class Rest {
         this.secure = secure;
         this.timeout = timeout;
 
-        this.client = secure ? https || http2: http;
+        this.client = secure ? https || http2 : http;
     }
 
     setSessionId(sessionId) {
@@ -34,28 +34,48 @@ class Rest {
         }
     }
 
-    async makeRequest(method, endpoint, body = null) {
+ async makeRequest(method, endpoint, body = null) {
         const url = `${this.baseUrl}${endpoint}`;
+
+        if (!this.agent) {
+            const AgentClass = this.secure ? https.Agent : http.Agent;
+            this.agent = new AgentClass({
+                keepAlive: true,
+                maxSockets: 10,
+                maxFreeSockets: 5,
+                timeout: this.timeout,
+                freeSocketTimeout: 30000
+            });
+        }
+
         const options = {
             method,
             headers: this.headers,
             timeout: this.timeout,
-            keepAlive: true,
+            agent: this.agent
         };
 
         return new Promise((resolve, reject) => {
-            const req = this.client.request(url, options, (res) => {
+            const client = this.secure ? https : http;
+            const req = client.request(url, options, (res) => {
+                if (res.statusCode === 204) return;
+
                 const chunks = [];
-                res.setEncoding("utf8");
-                res.on("data", (chunk) => {
+                let totalLength = 0;
+
+                res.on('data', (chunk) => {
                     chunks.push(chunk);
+                    totalLength += chunk.length;
                 });
-                res.on("end", () => {
-                    const data = chunks.join("");
-                    if (!data) {
-                        resolve(null);
-                        return;
+
+                res.on('end', () => {
+                    if (totalLength === 0) {
+                        return resolve(null);
                     }
+
+                    const buffer = Buffer.concat(chunks, totalLength);
+                    const data = buffer.toString('utf8');
+
                     try {
                         resolve(JSON.parse(data));
                     } catch (err) {
@@ -64,15 +84,20 @@ class Rest {
                 });
             });
 
-            req.on("error", (err) => reject(new Error(`Request failed (${method} ${url}): ${err.message}`)));
-            req.on("timeout", () => {
+            req.on('error', (err) => {
+                reject(new Error(`Request failed (${method} ${url}): ${err.message}`));
+            });
+
+            req.on('timeout', () => {
                 req.destroy();
                 reject(new Error(`Request timed out after ${this.timeout}ms (${method} ${url})`));
             });
 
             if (body) {
-                req.write(JSON.stringify(body));
+                const bodyStr = typeof body === 'string' ? body : JSON.stringify(body);
+                req.write(bodyStr);
             }
+
             req.end();
         });
     }
@@ -134,27 +159,30 @@ class Rest {
         const endpoint = `/${this.version}/routeplanner/free/address`;
         return this.makeRequest("POST", endpoint, { address });
     }
-
     async getLyrics({ track }) {
         if (!track) return null;
+
 
         try {
             if (track.search) {
                 const query = encodeURIComponent(track.info.title);
                 try {
                     const res = await this.makeRequest(
-                        "GET", 
+                        "GET",
                         `/${this.version}/lyrics/search?query=${query}&source=genius`
                     );
+
                     if (res) return res;
                 } catch (_) {
                 }
             } else {
                 this.validateSessionId();
-                return await this.makeRequest(
+                const res = await this.makeRequest(
                     "GET",
-                    `/${this.version}/sessions/${this.sessionId}/players/${track.guild_id}/track/lyrics?skipTrackSource=true`
+                    `/${this.version}/sessions/${this.sessionId}/players/${track.guild_id}/lyrics`
                 );
+                console.log(res);
+                return res;
             }
         } catch (error) {
             console.error("Failed to fetch lyrics:", error.message);
