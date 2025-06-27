@@ -349,26 +349,19 @@ class Aqua extends EventEmitter {
 
     async savePlayer(filePath = "./AquaPlayers.json") {
         const data = Array.from(this.players.values()).map(player => ({
-            guildId: player.guildId,
-            textChannel: player.textChannel,
-            voiceChannel: player.voiceChannel,
-            track: player.current ? {
-                identifier: player.current.identifier,
-                author: player.current.author,
-                title: player.current.title,
-                uri: player.current.uri,
-                sourceName: player.current.sourceName,
-                artworkUrl: player.current.artworkUrl,
-                duration: player.current.duration,
-                position: player.position,
-            } : null,
-            requester: player.requester || player.current?.requester,
-            volume: player.volume,
-            paused: player.paused
+            g: player.guildId,
+            t: player.textChannel,
+            v: player.voiceChannel,
+            u: player.current?.uri || null,
+            p: player.position || 0,
+            ts: player.timestamp || 0,
+            q: player.queue?.tracks?.map(tr => tr.uri).slice(0, 5) || [],
+            r: player.requester || player.current?.requester,
+            vol: player.volume,
+            pa: player.paused
         }));
-        console.log(`Saving ${data.length} players to ${filePath}`);
-        await fs.writeJSON(filePath, data, { spaces: 2 });
-        this.emit("debug", "Aqua", `Saved players to ${filePath}`);
+        await fs.writeFile(filePath, JSON.stringify(data), "utf8");
+        this.emit("debug", "Aqua", `Saved ${data.length} players to ${filePath}`);
     }
 
     async waitForFirstNode() {
@@ -386,45 +379,60 @@ class Aqua extends EventEmitter {
     }
 
     async loadPlayers(filePath = "./AquaPlayers.json") {
-        if (!fs.existsSync(filePath)) {
-            this.emit("debug", "Aqua", `No player data found at ${filePath}`);
+        try {
+            await fs.promises.access(filePath);
+        } catch {
+            this.emit("debug", "Aqua", `File ${filePath} does not exist, skipping load.`);
             return;
         }
         try {
             await this.waitForFirstNode();
-            const data = await fs.readJSON(filePath);
-            for (const playerData of data) {
-                const { guildId, textChannel, voiceChannel, track, volume, paused, requester } = playerData;
-                let player = this.players.get(guildId);
-
+            const data = JSON.parse(await fs.readFile(filePath, "utf8"));
+            for (const p of data) {
+                let player = this.players.get(p.g);
                 if (!player) {
                     player = await this.createConnection({
-                        guildId: guildId,
-                        textChannel: textChannel,
-                        voiceChannel: voiceChannel,
-                        defaultVolume: volume || 65,
+                        guildId: p.g,
+                        textChannel: p.t,
+                        voiceChannel: p.v,
+                        defaultVolume: p.vol || 65,
                         deaf: true
                     });
                 }
 
-                if (track && player) {
-                    const resolved = await this.resolve({ query: track.uri, requester });
+                if (p.u && player) {
+                    const resolved = await this.resolve({ query: p.u, requester: p.r });
                     if (resolved.tracks && resolved.tracks.length > 0) {
                         player.queue.add(resolved.tracks[0]);
-                        player.position = track.position || 0;
-                    } else {
-                        this.emit("debug", "Aqua", `Could not resolve track for guild ${guildId}: ${track.uri}`);
+                        player.position = p.p || 0;
+                        if (typeof p.ts === "number") {
+                            player.timestamp = p.ts;
+                        }
                     }
                 }
-
+                if (Array.isArray(p.q) && player) {
+                    for (const uri of p.q) {
+                        if (!p.u || uri !== p.u) {
+                            const resolved = await this.resolve({ query: uri, requester: p.r });
+                            if (resolved.tracks && resolved.tracks.length > 0) {
+                                player.queue.add(resolved.tracks[0]);
+                                player.position = p.p || 0;
+                                if (typeof p.ts === "number") {
+                                    player.timestamp = p.ts;
+                                }
+                            }
+                        }
+                    }
+                }
                 if (player) {
-                    player.paused = paused || false;
+                    player.paused = !!p.pa;
                     if (!player.playing && !player.paused && player.queue.size > 0) {
                         player.play();
                     }
                 }
             }
-            this.emit("debug", "Aqua", `Loaded players from ${filePath}`);
+            await fs.writeFile(filePath, "[]", "utf8");
+            this.emit("debug", "Aqua", `Loaded players from ${filePath} and cleared its content.`);
         } catch (error) {
             console.error(`Failed to load players from ${filePath}:`, error);
         }
