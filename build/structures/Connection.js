@@ -14,29 +14,27 @@ class Connection {
         this.region = null;
         this.selfDeaf = false;
         this.selfMute = false;
-
     }
 
     setServerUpdate(data) {
-        if (!data || !data.endpoint) return;
+        if (!data?.endpoint) return;
 
         const { endpoint, token } = data;
-
-        const [newRegion] = endpoint.split('.');
+        const newRegion = endpoint.split('.')[0];
         if (!newRegion) return;
 
         if (this.region !== newRegion) {
+            const oldRegion = this.region;
             this.endpoint = endpoint;
             this.token = token;
             this.region = newRegion;
 
-                this.aqua.emit(
-                    "debug",
-                    `[Player ${this.guildId} - CONNECTION] Voice Server: ${
-                        this.region ? `Changed from ${this.region} to ${newRegion}` : newRegion
-                    }`
-                );
-            
+            this.aqua.emit(
+                "debug",
+                `[Player ${this.guildId} - CONNECTION] Voice Server: ${
+                    oldRegion ? `Changed from ${oldRegion} to ${newRegion}` : newRegion
+                }`
+            );
 
             this._updatePlayerVoiceData();
         }
@@ -49,7 +47,6 @@ class Connection {
         }
 
         const { channel_id, session_id, self_deaf, self_mute } = data;
-
         if (!channel_id || !session_id) {
             this.player?.destroy();
             return;
@@ -60,8 +57,8 @@ class Connection {
             this.voiceChannel = channel_id;
         }
 
-        this.selfDeaf = !!self_deaf;
-        this.selfMute = !!self_mute;
+        this.selfDeaf = Boolean(self_deaf);
+        this.selfMute = Boolean(self_mute);
         this.sessionId = session_id;
     }
 
@@ -73,6 +70,7 @@ class Connection {
             endpoint: this.endpoint,
             token: this.token
         };
+
         try {
             this.nodes.rest.updatePlayer({
                 guildId: this.guildId,
@@ -82,13 +80,11 @@ class Connection {
                 }
             });
         } catch (error) {
-            if (this.aqua.listenerCount('apiError') > 0) {
-                this.aqua.emit("apiError", "updatePlayer", {
-                    error,
-                    guildId: this.guildId,
-                    voiceData
-                });
-            }
+            this.aqua.emit("apiError", "updatePlayer", {
+                error,
+                guildId: this.guildId,
+                voiceData
+            });
         }
     }
 }
