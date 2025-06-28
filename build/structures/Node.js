@@ -127,6 +127,18 @@ class Node {
             case "ready":
                 this._handleReadyOp(payload);
                 break;
+            case "LyricsLineEvent": {
+                const player = payload.guildId ? this.aqua.players.get(payload.guildId) : null;
+                const track = payload.track || null;
+                this.aqua.emit("LyricsLineEvent", player, track, payload);
+                break;
+            }
+            case "LyricsFoundEvent": {
+                const player = payload.guildId ? this.aqua.players.get(payload.guildId) : null;
+                const track = payload.track || null;
+                this.aqua.emit("LyricsFoundEvent", player, track, payload);
+                break;
+            }
             default:
                 if (payload.guildId) {
                     const player = this.aqua.players.get(payload.guildId);
