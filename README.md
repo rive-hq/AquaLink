@@ -306,6 +306,15 @@ For detailed usage, API references, and examples, check out our official documen
         <a href="#code-ToddyTheNoobDud" title="Code">💻</a>
         <a href="#doc-ToddyTheNoobDud" title="Documentation">📖</a>
       </td>
+      <td align="center" valign="top" width="80%">
+        <a href="https://github.com/SoulDevs">
+          <img src="https://avatars.githubusercontent.com/u/114820381?v=4" width="100px;" alt="SoulDevs"/>
+          <br />
+          <sub><b>SoulDevs</b></sub>
+        </a>
+        <br />
+        <a href="#code-SoulDevs title="Code">💻</a>
+      </td>
     </tr>
   </tbody>
 </table>
