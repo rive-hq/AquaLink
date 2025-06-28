@@ -17,7 +17,10 @@ const EVENT_HANDLERS = Object.freeze({
     TrackStuckEvent: "trackStuck",
     TrackChangeEvent: "trackChange",
     WebSocketClosedEvent: "socketClosed",
+    LyricsLineEvent: "lyricsLine",
+    LyricsFoundEvent: "lyricsFound" // <-- add this line
 });
+
 
 const VALID_MODES = new Set(Object.values(LOOP_MODES));
 const FAILURE_REASONS = new Set(["LOAD_FAILED", "CLEANUP"]);
@@ -312,7 +315,15 @@ class Player extends EventEmitter {
         this.aqua.emit("debug", `[Aqua/Player] getLyrics called but no query was provided and no track is playing.`);
         return null;
     }
-    
+
+    async subscribeLiveLyrics() {
+        return this.nodes.rest.subscribeLiveLyrics(this.guildId, false);
+    }
+
+    async unsubscribeLiveLyrics() {
+        return this.nodes.rest.unsubscribeLiveLyrics(this.guildId);
+    }
+
     seek(position) {
         if (!this.playing) return this;
         this.position += position;
@@ -499,6 +510,14 @@ class Player extends EventEmitter {
         this.aqua.emit("socketClosed", player, payload);
         this.pause(true);
         this.aqua.emit("debug", this.guildId, "Player paused due to socket closure.");
+    }
+
+    async lyricsLine(player, track, payload) {
+        this.aqua.emit("lyricsLine", player, track, payload);
+    }
+
+    async lyricsFound(player, track, payload) {
+        this.aqua.emit("lyricsFound", player, track, payload);
     }
 
     send(data) {
