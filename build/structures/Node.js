@@ -120,31 +120,25 @@ class Node {
         const op = payload?.op;
         if (!op) return;
 
-        switch (op) {
-            case "stats":
-                this._updateStats(payload);
-                break;
-            case "ready":
-                this._handleReadyOp(payload);
-                break;
-            case "LyricsLineEvent": {
-                const player = payload.guildId ? this.aqua.players.get(payload.guildId) : null;
-                const track = payload.track || null;
-                this.aqua.emit("LyricsLineEvent", player, track, payload);
-                break;
-            }
-            case "LyricsFoundEvent": {
-                const player = payload.guildId ? this.aqua.players.get(payload.guildId) : null;
-                const track = payload.track || null;
-                this.aqua.emit("LyricsFoundEvent", player, track, payload);
-                break;
-            }
-            default:
-                if (payload.guildId) {
-                    const player = this.aqua.players.get(payload.guildId);
-                    if (player) player.emit(op, payload);
-                }
-                break;
+        if (op === "stats") {
+            this._updateStats(payload);
+            return;
+        }
+        if (op === "ready") {
+            this._handleReadyOp(payload);
+            return;
+        }
+
+        if (op.startsWith("Lyrics")) {
+            const player = payload.guildId ? this.aqua.players.get(payload.guildId) : null;
+            const track = payload.track || null;
+            this.aqua.emit(op, player, track, payload);
+            return;
+        }
+
+        if (payload.guildId) {
+            const player = this.aqua.players.get(payload.guildId);
+            if (player) player.emit(op, payload);
         }
     }
 
