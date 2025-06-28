@@ -160,81 +160,86 @@ class Rest {
         return this.makeRequest("POST", endpoint, { address });
     }
 
-    async getLyrics({ track }) {
-        if (!track) {
-            console.error("Invalid track object provided.");
+    async getLyrics({ track, skipTrackSource = false }) {
+        if (!track || (!track.identifier && !track.info?.title && !track.guild_id)) {
+            this.aqua.emit("error", "[Aqua/Lyrics] Invalid or insufficient track object provided for lyrics search.");
             return null;
         }
 
-        const title = track.title || track.info?.title;
-        const author = track.author || track.info?.author;
-
-        let videoId = track.identifier;
-
-        try {
-            if (videoId) {
-                try {
-                    const youtubeLyrics = await this.makeRequest(
-                        "GET",
-                        `/${this.version}/lyrics/${encodeURIComponent(videoId)}`
-                    );
-                    // Only return if lyrics were found (status 200 and not 404)
-                    if (youtubeLyrics && !youtubeLyrics.error && youtubeLyrics.text) {
-                        console.log("Fetched YouTube lyrics:", youtubeLyrics);
-                        return youtubeLyrics;
-                    }
-                } catch (error) {
-                    console.warn(`Failed to fetch YouTube lyrics: ${error.message}`);
-                }
-            }
-
-            if (track.guild_id) {
+        // --- Attempt 1: Get lyrics via the Player endpoint ---
+        // This is often the most accurate method as the server has full track context.
+        if (track.guild_id) {
+            try {
                 this.validateSessionId();
-                try {
-                    const playerLyrics = await this.makeRequest(
+                const playerLyrics = await this.makeRequest(
+                    "GET",
+                    `/${this.version}/sessions/${this.sessionId}/players/${track.guild_id}/lyrics?skipTrackSource=${skipTrackSource}`
+                ).catch(() => {
+                     this.aqua.emit("debug", `[Aqua/Lyrics] First player endpoint failed, trying fallback path for Guild ${track.guild_id}`);
+                     return this.makeRequest(
                         "GET",
-                        `/${this.version}/sessions/${this.sessionId}/players/${track.guild_id}/track/lyrics?skipTrackSource=true`
-                    );
-                    console.log(playerLyrics)
-                    if (playerLyrics && playerLyrics.text) {
-                        console.log("Fetched player lyrics:", playerLyrics);
-                        return playerLyrics;
-                    }
-                } catch (error) {
-                    console.warn(`Failed to fetch player lyrics: ${error.message}`);
+                        `/${this.version}/sessions/${this.sessionId}/players/${track.guild_id}/track/lyrics?skipTrackSource=${skipTrackSource}`
+                     );
+                });
+
+                if (playerLyrics && !playerLyrics.error) {
+                    this.aqua.emit("debug", `[Aqua/Lyrics] Fetched lyrics using Player endpoint for Guild: ${track.guild_id}`);
+                    return playerLyrics;
+                } else if (playerLyrics && playerLyrics.error) {
+                    this.aqua.emit("debug", `[Aqua/Lyrics] Player endpoint returned error for Guild ${track.guild_id}: ${playerLyrics.message || playerLyrics.error}`);
                 }
+            } catch (error) {
+                this.aqua.emit("debug", `[Aqua/Lyrics] Player endpoint failed for Guild ${track.guild_id}: ${error.message}`);
             }
-
-            if (title) {
-                console.log("Fetching lyrics for track:", { title, author });
-                const normalizedQuery = title.trim();
-                const encodedQuery = encodeURIComponent(normalizedQuery);
-
-                try {
-                    const searchLyrics = await this.makeRequest(
-                        "GET",
-                        `/${this.version}/lyrics/search?query=${encodedQuery}&source=genius`
-                    );
-                    if (searchLyrics && searchLyrics.text) {
-                        console.log("Fetched Genius lyrics:", searchLyrics);
-                        return searchLyrics;
-                    }
-                    console.warn(`No results for query "${normalizedQuery}" on Genius`);
-                } catch (error) {
-                    console.warn(`Failed to fetch Genius lyrics for "${normalizedQuery}": ${error.message}`);
-                }
-            } else {
-                console.warn("Track title missing, skipping Genius lyrics search.");
-            }
-
-            console.error("All lyric fetch attempts failed for track:", { title, author });
-            return null;
-        } catch (error) {
-            console.error(`Failed to fetch lyrics: ${error.message}`);
-            return null;
         }
 
-}
+        // --- Attempt 2: Get lyrics using the track's direct identifier ---
+        // Ideal for sources like YouTube that have timed captions linked to the video ID.
+        if (track.identifier) {
+            try {
+                const identifierLyrics = await this.makeRequest(
+                    "GET",
+                    `/${this.version}/lyrics/${encodeURIComponent(track.identifier)}`
+                );
+                if (
+                    identifierLyrics &&
+                    !(identifierLyrics.status === 404 && identifierLyrics.error === 'Not Found')
+                ) {
+                    this.aqua.emit("debug", `[Aqua/Lyrics] Fetched lyrics using Identifier: ${track.identifier}`);
+                    return identifierLyrics;
+                } else if (identifierLyrics && identifierLyrics.status === 404 && identifierLyrics.error === 'Not Found') {
+                    this.aqua.emit("debug", `[Aqua/Lyrics] No lyrics found for Identifier: ${track.identifier}`);
+                }
+            } catch (error) {
+                this.aqua.emit("debug", `[Aqua/Lyrics] Identifier endpoint failed for ${track.identifier}: ${error.message}`);
+            }
+        }
+        
+        // --- Attempt 3: Fallback to searching with track metadata ---
+        // This is the final attempt if more specific methods fail.
+        if (track.info?.title) {
+            try {
+                const title = track.info.title;
+                const author = track.info.author;
+                const query = encodeURIComponent(author ? `${title} ${author}` : title);
+                
+                const searchLyrics = await this.makeRequest(
+                    "GET",
+                    `/${this.version}/lyrics/search?query=${query}&source=genius`
+                );
+
+                if (searchLyrics) {
+                    this.aqua.emit("debug", `[Aqua/Lyrics] Fetched lyrics using Search Query: "${author ? `${title} ${author}` : title}"`);
+                    return searchLyrics;
+                }
+            } catch (error) {
+                this.aqua.emit("debug", `[Aqua/Lyrics] Search endpoint failed: ${error.message}`);
+            }
+        }
+
+        this.aqua.emit("debug", "[Aqua/Lyrics] All lyric fetch attempts failed for the track.");
+        return null;
+    }
 }
 
 module.exports = Rest;
