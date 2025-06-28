@@ -167,7 +167,6 @@ class Rest {
         }
 
         // --- Attempt 1: Get lyrics via the Player endpoint ---
-        // This is often the most accurate method as the server has full track context.
         if (track.guild_id) {
             try {
                 this.validateSessionId();
@@ -194,7 +193,6 @@ class Rest {
         }
 
         // --- Attempt 2: Get lyrics using the track's direct identifier ---
-        // Ideal for sources like YouTube that have timed captions linked to the video ID.
         if (track.identifier) {
             try {
                 const identifierLyrics = await this.makeRequest(
@@ -203,29 +201,36 @@ class Rest {
                 );
                 if (
                     identifierLyrics &&
-                    !(identifierLyrics.status === 404 && identifierLyrics.error === 'Not Found')
+                    !(identifierLyrics.status === 404 && identifierLyrics.error === 'Not Found') &&
+                    !(identifierLyrics.status === 500 && identifierLyrics.error === 'Internal Server Error')
                 ) {
                     this.aqua.emit("debug", `[Aqua/Lyrics] Fetched lyrics using Identifier: ${track.identifier}`);
+                    console.log(identifierLyrics);
                     return identifierLyrics;
-                } else if (identifierLyrics && identifierLyrics.status === 404 && identifierLyrics.error === 'Not Found') {
+                } else if (
+                    identifierLyrics &&
+                    (
+                        (identifierLyrics.status === 404 && identifierLyrics.error === 'Not Found') ||
+                        (identifierLyrics.status === 500 && identifierLyrics.error === 'Internal Server Error')
+                    )
+                ) {
                     this.aqua.emit("debug", `[Aqua/Lyrics] No lyrics found for Identifier: ${track.identifier}`);
                 }
             } catch (error) {
                 this.aqua.emit("debug", `[Aqua/Lyrics] Identifier endpoint failed for ${track.identifier}: ${error.message}`);
             }
         }
+
         
         // --- Attempt 3: Fallback to searching with track metadata ---
-        // This is the final attempt if more specific methods fail.
         if (track.info?.title) {
             try {
                 const title = track.info.title;
                 const author = track.info.author;
-                const query = encodeURIComponent(author ? `${title} ${author}` : title);
-                
+
                 const searchLyrics = await this.makeRequest(
                     "GET",
-                    `/${this.version}/lyrics/search?query=${query}&source=genius`
+                    `/${this.version}/lyrics/search?query=${title}&source=genius`
                 );
 
                 if (searchLyrics) {
@@ -239,6 +244,30 @@ class Rest {
 
         this.aqua.emit("debug", "[Aqua/Lyrics] All lyric fetch attempts failed for the track.");
         return null;
+    }
+
+    async subscribeLiveLyrics(guildId, skipTrackSource = false) {
+        this.validateSessionId();
+        const endpoint = `/${this.version}/sessions/${this.sessionId}/players/${guildId}/lyrics/subscribe?skipTrackSource=${skipTrackSource}`;
+        try {
+            const res = await this.makeRequest("POST", endpoint);
+            return res === null;
+        } catch (error) {
+            this.aqua.emit("debug", `[Aqua/Lyrics] Failed to subscribe to live lyrics for Guild ${guildId}: ${error.message}`);
+            return false;
+        }
+    }
+
+    async unsubscribeLiveLyrics(guildId) {
+        this.validateSessionId();
+        const endpoint = `/${this.version}/sessions/${this.sessionId}/players/${guildId}/lyrics/subscribe`;
+        try {
+            const res = await this.makeRequest("DELETE", endpoint);
+            return res === null;
+        } catch (error) {
+            this.aqua.emit("debug", `[Aqua/Lyrics] Failed to unsubscribe from live lyrics for Guild ${guildId}: ${error.message}`);
+            return false;
+        }
     }
 }
 
