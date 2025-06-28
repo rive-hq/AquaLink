@@ -34,7 +34,7 @@ class Rest {
         }
     }
 
- async makeRequest(method, endpoint, body = null) {
+    async makeRequest(method, endpoint, body = null) {
         const url = `${this.baseUrl}${endpoint}`;
 
         if (!this.agent) {
@@ -58,7 +58,7 @@ class Rest {
         return new Promise((resolve, reject) => {
             const client = this.secure ? https : http;
             const req = client.request(url, options, (res) => {
-                if (res.statusCode === 204) return;
+                if (res.statusCode === 204) return resolve(null);
 
                 const chunks = [];
                 let totalLength = 0;
@@ -159,34 +159,69 @@ class Rest {
         const endpoint = `/${this.version}/routeplanner/free/address`;
         return this.makeRequest("POST", endpoint, { address });
     }
+
     async getLyrics({ track }) {
-        if (!track) return null;
-
-        try {
-            if (track.search) {
-                const query = encodeURIComponent(track.info.title);
-                try {
-                    const res = await this.makeRequest(
-                        "GET",
-                        `/${this.version}/lyrics/search?query=${query}&source=genius`
-                    );
-
-                    if (res) return res;
-                } catch (_) {
-                }
-            } else {
-                this.validateSessionId();
-                const res = await this.makeRequest(
-                    "GET",
-                    `/${this.version}/sessions/${this.sessionId}/players/${track.guild_id}/lyrics`
-                );
-                return res;
-            }
-        } catch (error) {
-            console.error("Failed to fetch lyrics:", error.message);
+        if (!track || !track) {
+            console.error("Invalid track object provided.");
             return null;
         }
-        return null;
+
+        console.log(track)
+
+        try {
+            // Extract video ID for YouTube tracks
+            let videoId = track.identifier;
+            // Try fetching YouTube timed lyrics if applicable
+            if (videoId) {
+                try {
+                    const youtubeLyrics = await this.makeRequest(
+                        "GET",
+                        `/${this.version}/lyrics/${encodeURIComponent(videoId)}`
+                    );
+                    if (youtubeLyrics) {
+                        return youtubeLyrics;
+                    }
+                } catch (error) {
+                    console.warn(`Failed to fetch YouTube lyrics: ${error.message}`);
+                }
+            }
+
+            // Fallback to player-based lyrics if guild_id is provided
+            if (track.guild_id) {
+                this.validateSessionId();
+                try {
+                    const playerLyrics = await this.makeRequest(
+                        "GET",
+                        `/${this.version}/sessions/${this.sessionId}/players/${track.guild_id}/track/lyrics?skipTrackSource=true`
+                    );
+                    if (playerLyrics) {
+                        return playerLyrics;
+                    }
+                } catch (error) {
+                    console.warn(`Failed to fetch player lyrics: ${error.message}`);
+                }
+            }
+
+            // Fallback to search-based lyrics using Genius
+            const query = encodeURIComponent(`${track.info.title} ${track.info.author || ""}`.trim());
+            try {
+                const searchLyrics = await this.makeRequest(
+                    "GET",
+                    `/${this.version}/lyrics/search?query=${query}&source=genius`
+                );
+                if (searchLyrics) {
+                    return searchLyrics;
+                }
+            } catch (error) {
+                console.warn(`Failed to fetch search lyrics: ${error.message}`);
+            }
+
+            console.error("All lyric fetch attempts failed.");
+            return null;
+        } catch (error) {
+            console.error(`Failed to fetch lyrics: ${error.message}`);
+            return null;
+        }
     }
 }
 
