@@ -161,24 +161,26 @@ class Rest {
     }
 
     async getLyrics({ track }) {
-        if (!track || !track) {
+        if (!track) {
             console.error("Invalid track object provided.");
             return null;
         }
 
-        console.log(track)
+        const title = track.title || track.info?.title;
+        const author = track.author || track.info?.author;
+
+        let videoId = track.identifier;
 
         try {
-            // Extract video ID for YouTube tracks
-            let videoId = track.identifier;
-            // Try fetching YouTube timed lyrics if applicable
             if (videoId) {
                 try {
                     const youtubeLyrics = await this.makeRequest(
                         "GET",
                         `/${this.version}/lyrics/${encodeURIComponent(videoId)}`
                     );
-                    if (youtubeLyrics) {
+                    // Only return if lyrics were found (status 200 and not 404)
+                    if (youtubeLyrics && !youtubeLyrics.error && youtubeLyrics.text) {
+                        console.log("Fetched YouTube lyrics:", youtubeLyrics);
                         return youtubeLyrics;
                     }
                 } catch (error) {
@@ -186,7 +188,6 @@ class Rest {
                 }
             }
 
-            // Fallback to player-based lyrics if guild_id is provided
             if (track.guild_id) {
                 this.validateSessionId();
                 try {
@@ -194,7 +195,9 @@ class Rest {
                         "GET",
                         `/${this.version}/sessions/${this.sessionId}/players/${track.guild_id}/track/lyrics?skipTrackSource=true`
                     );
-                    if (playerLyrics) {
+                    console.log(playerLyrics)
+                    if (playerLyrics && playerLyrics.text) {
+                        console.log("Fetched player lyrics:", playerLyrics);
                         return playerLyrics;
                     }
                 } catch (error) {
@@ -202,27 +205,36 @@ class Rest {
                 }
             }
 
-            // Fallback to search-based lyrics using Genius
-            const query = encodeURIComponent(`${track.info.title} ${track.info.author || ""}`.trim());
-            try {
-                const searchLyrics = await this.makeRequest(
-                    "GET",
-                    `/${this.version}/lyrics/search?query=${query}&source=genius`
-                );
-                if (searchLyrics) {
-                    return searchLyrics;
+            if (title) {
+                console.log("Fetching lyrics for track:", { title, author });
+                const normalizedQuery = title.trim();
+                const encodedQuery = encodeURIComponent(normalizedQuery);
+
+                try {
+                    const searchLyrics = await this.makeRequest(
+                        "GET",
+                        `/${this.version}/lyrics/search?query=${encodedQuery}&source=genius`
+                    );
+                    if (searchLyrics && searchLyrics.text) {
+                        console.log("Fetched Genius lyrics:", searchLyrics);
+                        return searchLyrics;
+                    }
+                    console.warn(`No results for query "${normalizedQuery}" on Genius`);
+                } catch (error) {
+                    console.warn(`Failed to fetch Genius lyrics for "${normalizedQuery}": ${error.message}`);
                 }
-            } catch (error) {
-                console.warn(`Failed to fetch search lyrics: ${error.message}`);
+            } else {
+                console.warn("Track title missing, skipping Genius lyrics search.");
             }
 
-            console.error("All lyric fetch attempts failed.");
+            console.error("All lyric fetch attempts failed for track:", { title, author });
             return null;
         } catch (error) {
             console.error(`Failed to fetch lyrics: ${error.message}`);
             return null;
         }
-    }
+
+}
 }
 
 module.exports = Rest;
