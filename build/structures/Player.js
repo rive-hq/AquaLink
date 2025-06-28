@@ -18,7 +18,8 @@ const EVENT_HANDLERS = Object.freeze({
     TrackChangeEvent: "trackChange",
     WebSocketClosedEvent: "socketClosed",
     LyricsLineEvent: "lyricsLine",
-    LyricsFoundEvent: "lyricsFound" // <-- add this line
+    LyricsFoundEvent: "lyricsFound" ,
+    LyricsNotFoundEvent: "lyricsNotFound"
 });
 
 
@@ -518,6 +519,10 @@ class Player extends EventEmitter {
 
     async lyricsFound(player, track, payload) {
         this.aqua.emit("lyricsFound", player, track, payload);
+    }
+
+    async lyricsNotFound(player, track, payload) {
+        this.aqua.emit("lyricsNotFound", player, track, payload);
     }
 
     send(data) {
