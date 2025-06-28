@@ -287,7 +287,7 @@ class Player extends EventEmitter {
     async getLyrics(options = {}) {
         const { query = null, useCurrentTrack = true, skipTrackSource = false } = options;
         if (query) return this.nodes.rest.getLyrics({ track: { info: { title: query }, search: true }, skipTrackSource }) || null;
-        if (useCurrentTrack && this.playing) return this.nodes.rest.getLyrics({ track: { encoded: this.current.track, guild_id: this.guildId }, skipTrackSource }) || null;
+        if (useCurrentTrack && this.playing) return this.nodes.rest.getLyrics({ track: { encoded: this.current.track, guild_id: this.guildId, identifier: this.current._rawInfo.identifier }, skipTrackSource }) || null;
         return null;
     }
 
