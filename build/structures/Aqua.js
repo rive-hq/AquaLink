@@ -60,10 +60,13 @@ class Aqua extends EventEmitter {
         this._leastUsedCache = { nodes: [], timestamp: 0 };
     }
 
-    defaultSendFunction(payload) {
-        const guild = this.client.guilds.cache.get(payload.d.guild_id);
-        if (guild) guild.shard.send(payload);
+    defaultSendFunction(packet) {
+        const guild = this.client?.cache?.guilds.get(packet.d.guild_id) ?? this.client.guilds.cache.get(packet.d.guild_id);
+        if (guild && this.client.gateway) {
+            this.client.gateway.send(this.client.gateway.calculateShardId(packet.d.guild_id), packet)
+        } else guild.shard.send(packet);
     }
+
 
     get leastUsedNodes() {
         const now = Date.now();
