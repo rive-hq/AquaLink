@@ -148,7 +148,6 @@ class Aqua extends EventEmitter {
         const node = this.nodeMap.get(identifier);
         if (!node) return;
 
-        node.destroy();
         this._cleanupNode(identifier);
         this.emit("nodeDestroy", node);
     }
@@ -235,7 +234,6 @@ class Aqua extends EventEmitter {
     async _migratePlayersWithRetry(players, availableNodes) {
         const results = [];
         
-        // Process migrations in parallel with concurrency limit
         const concurrency = 3;
         for (let i = 0; i < players.length; i += concurrency) {
             const batch = players.slice(i, i + concurrency);
