@@ -247,6 +247,7 @@ class Node {
         }
 
         this.connected = false;
+        this.aqua.destroyNode(this.name);
         this.aqua.emit("nodeDestroy", this);
         this.info = null;
     }
