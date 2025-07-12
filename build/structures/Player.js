@@ -249,37 +249,47 @@ class Player extends EventEmitter {
         return this;
     }
 
-    destroy() {
-        if (!this.connected) return this;
+  destroy() {
+    if (!this.connected) return this;
 
-        const voiceChannelId = this.voiceChannel ? this.voiceChannel.id || this.voiceChannel : null;
-        this._updateBatcher.destroy();
+    const voiceChannelId = this.voiceChannel ? this.voiceChannel.id || this.voiceChannel : null;
+    this._updateBatcher.destroy();
 
-        this.send({ guild_id: this.guildId, channel_id: null });
-        this._lastVoiceChannel = voiceChannelId;
-        this.voiceChannel = null;
-        this.connected = false;
-        this.send({ guild_id: this.guildId, channel_id: null });
+    this.send({ guild_id: this.guildId, channel_id: null });
+    this._lastVoiceChannel = voiceChannelId;
+    this.voiceChannel = null;
+    this.connected = false;
+    this.send({ guild_id: this.guildId, channel_id: null });
 
-        if (this.nowPlayingMessage) {
-            this.nowPlayingMessage.delete().catch(() => { });
-            this.nowPlayingMessage = null;
-        }
-
-        this.isAutoplay = false;
-        this.aqua.destroyPlayer(this.guildId);
-        this.nodes.rest.destroyPlayer(this.guildId);
-        this.previousTracksCount = 0;
-        this._dataStore.clear();
-        this.removeAllListeners();
-
-        this.queue = null;
-        this.previousTracks = null;
-        this.connection = null;
-        this.filters = null;
-
-        return this;
+    if (this.nowPlayingMessage) {
+        this.nowPlayingMessage.delete().catch(() => { });
+        this.nowPlayingMessage = null;
     }
+
+    this.isAutoplay = false;
+    this.aqua.destroyPlayer(this.guildId);
+    
+    if (this.nodes?.connected) {
+        try {
+            this.nodes.rest.destroyPlayer(this.guildId);
+        } catch (error) {
+            if (!error.message.includes('ECONNREFUSED')) {
+                console.error('Error destroying player on node:', error);
+            }
+        }
+    }
+    
+    this.previousTracksCount = 0;
+    this._dataStore.clear();
+    this.removeAllListeners();
+
+    this.queue = null;
+    this.previousTracks = null;
+    this.connection = null;
+    this.filters = null;
+
+    return this;
+}
 
     pause(paused) {
         if (this.paused === paused) return this;
