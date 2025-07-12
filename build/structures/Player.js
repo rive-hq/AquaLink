@@ -325,12 +325,16 @@ class Player extends EventEmitter {
         return this.nodes.rest.unsubscribeLiveLyrics(this.guildId);
     }
 
-    seek(position) {
-        if (!this.playing) return this;
-        this.position += position;
-        this.batchUpdatePlayer({ position: this.position });
-        return this;
+  seek(position) {
+    if (!this.playing) return this;
+    if (position < 0) position = 0;
+    if (this.current?.info?.length && position > this.current.info.length) {
+      position = this.current.info.length;
     }
+    this.position = position;
+    this.batchUpdatePlayer({ position: this.position });
+    return this;
+  }
 
     stop() {
         if (!this.playing) return this;
