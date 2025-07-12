@@ -51,9 +51,10 @@ class Node {
         this.ws = null;
         this.reconnectAttempted = 0;
         this.reconnectTimeoutId = null;
+        this.isDestroyed = false;
+        this.lastHealthCheck = Date.now();
 
         this._headers = this._constructHeaders();
-
         this.initializeStats();
     }
 
@@ -73,7 +74,7 @@ class Node {
         const headers = {
             Authorization: this.password,
             "User-Id": this.aqua.clientId,
-            "Client-Name": `Aqua/${this.aqua.version} (https://github.com/ToddyTheNoobDud/AquaLink`
+            "Client-Name": `Aqua/${this.aqua.version} (https://github.com/ToddyTheNoobDud/AquaLink)`
         };
 
         if (this.sessionId) {
@@ -86,13 +87,13 @@ class Node {
     async _onOpen() {
         this.connected = true;
         this.reconnectAttempted = 0;
+        this.lastHealthCheck = Date.now();
         this.aqua.emit("debug", this.name, "WebSocket connection established");
 
         if (this.aqua.bypassChecks?.nodeFetchInfo) return;
 
         try {
             this.info = await this.rest.makeRequest("GET", "/v4/info");
-
             this.aqua.emit("nodeConnected", this);
 
             if (this.autoResume && this.sessionId) {
@@ -120,6 +121,8 @@ class Node {
         const op = payload?.op;
         if (!op) return;
 
+        this.lastHealthCheck = Date.now();
+
         if (op === "stats") {
             this._updateStats(payload);
             return;
@@ -144,11 +147,11 @@ class Node {
 
     _onClose(code, reason) {
         this.connected = false;
+        const reasonStr = reason?.toString() || "No reason provided";
 
-        this.aqua.emit("nodeDisconnect", this, {
-            code,
-            reason: reason?.toString() || "No reason provided"
-        });
+        this.aqua.emit("nodeDisconnect", this, { code, reason: reasonStr });
+
+        this.aqua.handleNodeFailover(this);
 
         this.scheduleReconnect(code);
     }
@@ -156,7 +159,7 @@ class Node {
     scheduleReconnect(code) {
         this.clearReconnectTimeout();
 
-        if (code === Node.WS_CLOSE_NORMAL) {
+        if (code === Node.WS_CLOSE_NORMAL || this.isDestroyed) {
             this.aqua.emit("debug", this.name, "WebSocket closed normally, not reconnecting");
             return;
         }
@@ -198,6 +201,8 @@ class Node {
     }
 
     async connect() {
+        if (this.isDestroyed) return;
+        
         if (this.ws && this.ws.readyState === Node.WS_OPEN) {
             this.aqua.emit("debug", this.name, "WebSocket already connected");
             return;
@@ -225,7 +230,7 @@ class Node {
             try {
                 this.ws.close();
             } catch (err) {
-               this.emitError(`Failed to close WebSocket: ${err.message}`);
+                this.emitError(`Failed to close WebSocket: ${err.message}`);
             }
         }
 
@@ -233,25 +238,20 @@ class Node {
     }
 
     destroy(clean = false) {
+        this.isDestroyed = true;
         this.clearReconnectTimeout();
         this.cleanupExistingConnection();
 
         if (!clean) {
-            for (const player of this.aqua.players.values()) {
-                if (player.nodes === this) {
-                    player.destroy();
-                }
-            }
+            this.aqua.handleNodeFailover(this);
         }
 
         this.connected = false;
-        this.aqua.nodes.delete(this.name);
         this.aqua.emit("nodeDestroy", this);
         this.info = null;
     }
 
     async getStats() {
-        
         if (this.connected && this.stats) {
             return this.stats;
         }
@@ -338,13 +338,11 @@ class Node {
     async resumePlayers() {
         try {
             await this.aqua.loadPlayers();
-
             this.aqua.emit("debug", this.name, "Session resumed successfully");
         } catch (err) {
             this.emitError(`Failed to resume session: ${err.message}`);
         }
     }
-
     emitError(error) {
         const errorObj = error instanceof Error ? error : new Error(error);
         console.error(`[Aqua] [${this.name}] Error:`, errorObj);
