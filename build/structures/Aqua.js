@@ -624,7 +624,8 @@ class Aqua extends EventEmitter {
                     avatar: requester.avatar
                 } : null,
                 vol: player.volume,
-                pa: player.paused
+                pa: player.paused,
+                isPlaying: !!player.current && !player.paused
             };
         });
 
@@ -668,7 +669,6 @@ class Aqua extends EventEmitter {
                 });
             }
 
-            // Restore current track
             if (p.u && player) {
                 const resolved = await this.resolve({ query: p.u, requester: p.r });
                 if (resolved.tracks?.[0]) {
@@ -678,7 +678,6 @@ class Aqua extends EventEmitter {
                 }
             }
 
-            // Restore queue
             if (p.q?.length && player) {
                 const queuePromises = p.q
                     .filter(uri => uri !== p.u)
@@ -694,12 +693,11 @@ class Aqua extends EventEmitter {
 
             if (player) {
                 player.paused = !!p.pa;
-                if (!player.playing && !player.paused && player.queue.size > 0) {
+                if ((p.isPlaying || (p.pa && p.u)) && player.queue.size > 0) {
                     player.play();
                 }
             }
         } catch (error) {
-            // Silent fail for individual player restoration
         }
     }
 
