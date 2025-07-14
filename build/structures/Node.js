@@ -1,4 +1,5 @@
 "use strict";
+
 const WebSocket = require('ws');
 const Rest = require("./Rest");
 
@@ -29,9 +30,6 @@ class Node {
         this.sessionId = sessionId;
         this.regions = regions;
 
-        this.wsUrl = `ws${this.secure ? "s" : ""}://${this.host}:${this.port}/v4/websocket`;
-        this.rest = new Rest(aqua, this);
-
         const {
             resumeTimeout = 60,
             autoResume = false,
@@ -46,15 +44,24 @@ class Node {
         this.reconnectTries = reconnectTries;
         this.infiniteReconnects = infiniteReconnects;
 
+        this.wsUrl = `ws${this.secure ? "s" : ""}://${this.host}:${this.port}/v4/websocket`;
+        this.rest = new Rest(aqua, this);
+        this._headers = this._constructHeaders();
+
         this.connected = false;
+        this.isDestroyed = false;
         this.info = null;
         this.ws = null;
         this.reconnectAttempted = 0;
         this.reconnectTimeoutId = null;
-        this.isDestroyed = false;
         this.lastHealthCheck = Date.now();
 
-        this._headers = this._constructHeaders();
+        // Pre-bind event handlers for efficiency
+        this._onOpen = this._onOpen.bind(this);
+        this._onError = this._onError.bind(this);
+        this._onMessage = this._onMessage.bind(this);
+        this._onClose = this._onClose.bind(this);
+
         this.initializeStats();
     }
 
@@ -89,6 +96,9 @@ class Node {
         this.reconnectAttempted = 0;
         this.lastHealthCheck = Date.now();
         this.aqua.emit("debug", this.name, "WebSocket connection established");
+        
+        clearTimeout(this.reconnectTimeoutId);
+        this.reconnectTimeoutId = null;
 
         if (this.aqua.bypassChecks?.nodeFetchInfo) return;
 
@@ -97,7 +107,7 @@ class Node {
             this.aqua.emit("nodeConnected", this);
 
             if (this.autoResume && this.sessionId) {
-                await this.aqua.loadPlayers();
+                await this.resumePlayers();
             }
         } catch (err) {
             this.info = null;
@@ -118,30 +128,27 @@ class Node {
             return;
         }
 
-        const op = payload?.op;
+        const { op, guildId } = payload;
         if (!op) return;
 
         this.lastHealthCheck = Date.now();
-
-        if (op === "stats") {
-            this._updateStats(payload);
-            return;
-        }
-        if (op === "ready") {
-            this._handleReadyOp(payload);
-            return;
-        }
-
-        if (op.startsWith("Lyrics")) {
-            const player = payload.guildId ? this.aqua.players.get(payload.guildId) : null;
-            const track = payload.track || null;
-            this.aqua.emit(op, player, track, payload);
-            return;
-        }
-
-        if (payload.guildId) {
-            const player = this.aqua.players.get(payload.guildId);
-            if (player) player.emit(op, payload);
+        
+        switch (op) {
+            case "stats":
+                this._updateStats(payload);
+                break;
+            case "ready":
+                this._handleReadyOp(payload);
+                break;
+            default:
+                if (op.startsWith("Lyrics")) {
+                    const player = guildId ? this.aqua.players.get(guildId) : null;
+                    this.aqua.emit(op, player, payload.track || null, payload);
+                } else if (guildId) {
+                    const player = this.aqua.players.get(guildId);
+                    player?.emit(op, payload);
+                }
+                break;
         }
     }
 
@@ -150,22 +157,20 @@ class Node {
         const reasonStr = reason?.toString() || "No reason provided";
 
         this.aqua.emit("nodeDisconnect", this, { code, reason: reasonStr });
-
         this.aqua.handleNodeFailover(this);
-
         this.scheduleReconnect(code);
     }
 
     scheduleReconnect(code) {
-        this.clearReconnectTimeout();
-
         if (code === Node.WS_CLOSE_NORMAL || this.isDestroyed) {
-            this.aqua.emit("debug", this.name, "WebSocket closed normally, not reconnecting");
+            this.aqua.emit("debug", this.name, "WebSocket closed normally, not reconnecting.");
             return;
         }
 
+        if (this.reconnectTimeoutId) return;
+
         if (this.infiniteReconnects) {
-            this.aqua.emit("nodeReconnect", this, "Infinite reconnects enabled, trying again in 10 seconds");
+            this.aqua.emit("nodeReconnect", this, "Infinite reconnects enabled, trying again in 10 seconds.");
             this.reconnectTimeoutId = setTimeout(() => this.connect(), 10000);
             return;
         }
@@ -188,26 +193,19 @@ class Node {
     }
 
     calculateBackoff() {
-        const baseBackoff = this.reconnectTimeout * Math.pow(Node.BACKOFF_MULTIPLIER, this.reconnectAttempted);
+        const baseBackoff = this.reconnectTimeout * Math.pow(Node.BACKOFF_MULTIPLIER, this.reconnectAttempted - 1);
         const jitter = Math.random() * Math.min(2000, baseBackoff * 0.2);
         return Math.min(baseBackoff + jitter, Node.MAX_BACKOFF);
     }
 
-    clearReconnectTimeout() {
-        if (this.reconnectTimeoutId) {
-            clearTimeout(this.reconnectTimeoutId);
-            this.reconnectTimeoutId = null;
-        }
-    }
-
-    async connect() {
+    connect() {
         if (this.isDestroyed) return;
-        
+
         if (this.ws && this.ws.readyState === Node.WS_OPEN) {
             this.aqua.emit("debug", this.name, "WebSocket already connected");
             return;
         }
-
+        
         this.cleanupExistingConnection();
 
         this.ws = new WebSocket(this.wsUrl, {
@@ -215,31 +213,35 @@ class Node {
             perMessageDeflate: false
         });
 
-        this.ws.once("open", this._onOpen.bind(this));
-        this.ws.once("error", this._onError.bind(this));
-        this.ws.on("message", this._onMessage.bind(this));
-        this.ws.once("close", this._onClose.bind(this));
+        this.ws.once("open", this._onOpen);
+        this.ws.once("error", this._onError);
+        this.ws.on("message", this._onMessage);
+        this.ws.once("close", this._onClose);
     }
 
     cleanupExistingConnection() {
         if (!this.ws) return;
 
         this.ws.removeAllListeners();
-
-        if (this.ws.readyState === Node.WS_OPEN) {
-            try {
-                this.ws.close();
-            } catch (err) {
-                this.emitError(`Failed to close WebSocket: ${err.message}`);
+        try {
+            if (this.ws.readyState === Node.WS_OPEN) {
+                this.ws.close(Node.WS_CLOSE_NORMAL, "Manual closure");
             }
+        } catch (err) {
+            this.emitError(`Failed to close WebSocket: ${err.message}`);
         }
-
         this.ws = null;
     }
 
     destroy(clean = false) {
+        if (this.isDestroyed) return;
         this.isDestroyed = true;
-        this.clearReconnectTimeout();
+
+        if (this.reconnectTimeoutId) {
+            clearTimeout(this.reconnectTimeoutId);
+            this.reconnectTimeoutId = null;
+        }
+
         this.cleanupExistingConnection();
 
         if (!clean) {
@@ -251,61 +253,29 @@ class Node {
         this.aqua.emit("nodeDestroy", this);
         this.info = null;
     }
-
-    async getStats() {
-        if (this.connected && this.stats) {
-            return this.stats;
-        }
-
-        try {
-            const newStats = await this.rest.getStats();
-            if (newStats && this.stats) {
-                this.stats.players = newStats.players ?? this.stats.players;
-                this.stats.playingPlayers = newStats.playingPlayers ?? this.stats.playingPlayers;
-                this.stats.uptime = newStats.uptime ?? this.stats.uptime;
-                this.stats.ping = newStats.ping ?? this.stats.ping;
-                
-                if (newStats.memory) {
-                    Object.assign(this.stats.memory, newStats.memory);
-                    this._calculateMemoryPercentages();
-                }
-                
-                if (newStats.cpu) {
-                    Object.assign(this.stats.cpu, newStats.cpu);
-                    this._calculateCpuPercentages();
-                }
-                
-                if (newStats.frameStats) {
-                    Object.assign(this.stats.frameStats, newStats.frameStats);
-                }
-            }
-            return this.stats;
-        } catch (err) {
-            this.emitError(`Failed to fetch node stats: ${err.message}`);
-            return this.stats;
-        }
-    }
-
+    
     _updateStats(payload) {
         if (!payload) return;
+        
+        const { players, playingPlayers, uptime, memory, cpu, frameStats, ping } = payload;
+        
+        this.stats.players = players;
+        this.stats.playingPlayers = playingPlayers;
+        this.stats.uptime = uptime;
+        this.stats.ping = ping ?? this.stats.ping;
 
-        this.stats.players = payload.players;
-        this.stats.playingPlayers = payload.playingPlayers;
-        this.stats.uptime = payload.uptime;
-        this.stats.ping = payload.ping;
-
-        if (payload.memory) {
-            Object.assign(this.stats.memory, payload.memory);
+        if (memory) {
+            Object.assign(this.stats.memory, memory);
             this._calculateMemoryPercentages();
         }
 
-        if (payload.cpu) {
-            Object.assign(this.stats.cpu, payload.cpu);
+        if (cpu) {
+            Object.assign(this.stats.cpu, cpu);
             this._calculateCpuPercentages();
         }
 
-        if (payload.frameStats) {
-            Object.assign(this.stats.frameStats, payload.frameStats);
+        if (frameStats) {
+            Object.assign(this.stats.frameStats, frameStats);
         }
     }
 
@@ -324,16 +294,16 @@ class Node {
         }
     }
 
-    _handleReadyOp(payload) {
-        if (!payload.sessionId) {
+    _handleReadyOp({ sessionId }) {
+        if (!sessionId) {
             this.emitError("Ready payload missing sessionId");
             return;
         }
 
-        this.sessionId = payload.sessionId;
-        this.rest.setSessionId(payload.sessionId);
+        this.sessionId = sessionId;
+        this.rest.setSessionId(sessionId);
         this._headers = this._constructHeaders();
-        this.aqua.emit("nodeConnect", this);
+        this.aqua.emit("nodeReady", this);
     }
 
     async resumePlayers() {
@@ -344,6 +314,7 @@ class Node {
             this.emitError(`Failed to resume session: ${err.message}`);
         }
     }
+
     emitError(error) {
         const errorObj = error instanceof Error ? error : new Error(error);
         console.error(`[Aqua] [${this.name}] Error:`, errorObj);
