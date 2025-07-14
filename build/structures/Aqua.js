@@ -57,11 +57,11 @@ class Aqua extends EventEmitter {
         this.send = this.options.send || this.defaultSendFunction.bind(this);
 
         this._leastUsedCache = { nodes: [], timestamp: 0 };
-        
+
         this._nodeStates = new Map();
         this._failoverQueue = new Map();
         this._lastFailoverAttempt = new Map();
-        
+
         this._boundCleanupPlayer = this.cleanupPlayer.bind(this);
         this._boundHandlePlayerDestroy = this._handlePlayerDestroy.bind(this);
     }
@@ -100,16 +100,16 @@ class Aqua extends EventEmitter {
                 console.error(`Failed to create node ${node.name || node.host}:`, err);
                 return null;
             }));
-            
+
             const results = await Promise.allSettled(nodePromises);
             const successfulNodes = results.filter(r => r.status === 'fulfilled' && r.value).length;
-            
+
             if (successfulNodes === 0) {
                 throw new Error("No nodes could be connected");
             }
 
-            await Promise.all(this.plugins.map(plugin => 
-                Promise.resolve(plugin.load(this)).catch(err => 
+            await Promise.all(this.plugins.map(plugin =>
+                Promise.resolve(plugin.load(this)).catch(err =>
                     console.error("Plugin load error:", err)
                 )
             ));
@@ -166,10 +166,10 @@ class Aqua extends EventEmitter {
 
     async handleNodeFailover(failedNode) {
         if (!this.failoverOptions.enabled) return;
-        
+
         const nodeId = failedNode.name || failedNode.host;
         const now = Date.now();
-        
+
         const nodeState = this._nodeStates.get(nodeId);
         if (nodeState?.failoverInProgress) return;
 
@@ -182,10 +182,10 @@ class Aqua extends EventEmitter {
         this._nodeStates.set(nodeId, { connected: false, failoverInProgress: true });
         this._lastFailoverAttempt.set(nodeId, now);
         this._failoverQueue.set(nodeId, currentAttempts + 1);
-        
+
         try {
             this.emit("nodeFailover", failedNode);
-            
+
             const affectedPlayers = this._getPlayersForNode(failedNode);
             if (affectedPlayers.length === 0) {
                 this._nodeStates.set(nodeId, { connected: false, failoverInProgress: false });
@@ -200,14 +200,14 @@ class Aqua extends EventEmitter {
             }
 
             const failoverResults = await this._migratePlayersWithRetry(affectedPlayers, availableNodes);
-            
+
             const successful = failoverResults.filter(r => r.success).length;
             const failed = failoverResults.length - successful;
-            
+
             if (successful > 0) {
                 this.emit("nodeFailoverComplete", failedNode, successful, failed);
             }
-            
+
         } catch (error) {
             this.emit("error", null, new Error(`Failover failed for node ${nodeId}: ${error.message}`));
         } finally {
@@ -226,14 +226,14 @@ class Aqua extends EventEmitter {
     }
 
     _getAvailableNodesForFailover(failedNode) {
-        return this.leastUsedNodes.filter(node => 
+        return this.leastUsedNodes.filter(node =>
             node !== failedNode && node.name !== failedNode.name
         );
     }
 
     async _migratePlayersWithRetry(players, availableNodes) {
         const results = [];
-        
+
         const concurrency = 3;
         for (let i = 0; i < players.length; i += concurrency) {
             const batch = players.slice(i, i + concurrency);
@@ -246,11 +246,11 @@ class Aqua extends EventEmitter {
                     return { player, success: false, error };
                 }
             });
-            
+
             const batchResults = await Promise.allSettled(batchPromises);
             results.push(...batchResults.map(r => r.value || r.reason));
         }
-        
+
         return results;
     }
 
@@ -261,7 +261,7 @@ class Aqua extends EventEmitter {
 
         const guildId = player.guildId;
         let retryCount = 0;
-        
+
         while (retryCount < this.failoverOptions.maxRetries) {
             try {
                 const targetNode = this._selectBestNode(availableNodes, player);
@@ -274,15 +274,15 @@ class Aqua extends EventEmitter {
                 if (!newPlayer) throw new Error("Failed to create player on target node");
 
                 await this._restorePlayerState(newPlayer, playerState);
-                
+
                 newPlayer.destroy();
                 if (playerState.current) {
                     newPlayer.queue.add(playerState.current);
                 }
-                
+
                 this.emit("playerMigrated", player, newPlayer, targetNode);
                 return newPlayer;
-                
+
             } catch (error) {
                 retryCount++;
                 if (retryCount < this.failoverOptions.maxRetries) {
@@ -296,12 +296,12 @@ class Aqua extends EventEmitter {
 
     _selectBestNode(availableNodes, player) {
         if (player.region) {
-            const regionNode = availableNodes.find(node => 
+            const regionNode = availableNodes.find(node =>
                 node.regions?.includes(player.region.toLowerCase())
             );
             if (regionNode) return regionNode;
         }
-        
+
         return availableNodes[0];
     }
 
@@ -349,7 +349,7 @@ class Aqua extends EventEmitter {
         try {
             // Batch operations where possible
             const operations = [];
-            
+
             if (playerState.volume !== undefined) {
                 operations.push(newPlayer.setVolume(playerState.volume));
             }
@@ -365,15 +365,15 @@ class Aqua extends EventEmitter {
             // Handle current track restoration
             if (playerState.current && this.failoverOptions.preservePosition) {
                 newPlayer.queue.unshift(playerState.current);
-                
+
                 if (this.failoverOptions.resumePlayback) {
                     await newPlayer.play();
-                    
+
                     if (playerState.position > 0) {
                         await this._delay(300); // Reduced delay
                         await newPlayer.seek(playerState.position);
                     }
-                    
+
                     if (playerState.paused) {
                         await newPlayer.pause();
                     }
@@ -557,7 +557,7 @@ class Aqua extends EventEmitter {
                     baseResponse.tracks.push(new Track(response.data, requester, requestNode));
                 }
                 break;
-                
+
             case "playlist": {
                 const info = response.data?.info;
                 if (info) {
@@ -604,39 +604,47 @@ class Aqua extends EventEmitter {
         }
     }
 
-    // Optimized save/load methods
     async savePlayer(filePath = "./AquaPlayers.json") {
-        const data = Array.from(this.players.values(), player => ({
-            g: player.guildId,
-            t: player.textChannel,
-            v: player.voiceChannel,
-            u: player.current?.uri || null,
-            p: player.position || 0,
-            ts: player.timestamp || 0,
-            q: player.queue?.tracks?.slice(0, 5).map(tr => tr.uri) || [],
-            r: player.requester || player.current?.requester,
-            vol: player.volume,
-            pa: player.paused,
-            n: player.nodes?.name || null
-        }));
-        
-        await fs.writeFile(filePath, JSON.stringify(data), "utf8");
-    }
+        const data = Array.from(this.players.values()).map(player => {
+            const requester = player.requester || player.current?.requester;
 
+            return {
+                g: player.guildId,
+                t: player.textChannel,
+                v: player.voiceChannel,
+                u: player.current?.uri || null,
+                p: player.position || 0,
+                ts: player.timestamp || 0,
+                q: player.queue?.tracks?.map(tr => tr.uri).slice(0, 5) || [],
+                r: requester ? {
+                    id: requester.id,
+                    username: requester.username,
+                    globalName: requester.globalName,
+                    discriminator: requester.discriminator,
+                    avatar: requester.avatar
+                } : null,
+                vol: player.volume,
+                pa: player.paused
+            };
+        });
+
+        await fs.writeJSON(filePath, data);
+        this.emit("debug", "Aqua", `Saved ${data.length} players to ${filePath}`);
+    }
     async loadPlayers(filePath = "./AquaPlayers.json") {
         try {
             await fs.access(filePath);
             await this._waitForFirstNode();
-            
+
             const data = JSON.parse(await fs.readFile(filePath, "utf8"));
-            
+
             // Process in batches to avoid overwhelming
             const batchSize = 5;
             for (let i = 0; i < data.length; i += batchSize) {
                 const batch = data.slice(i, i + batchSize);
                 await Promise.all(batch.map(p => this._restorePlayer(p)));
             }
-            
+
             await fs.writeFile(filePath, "[]", "utf8");
         } catch (error) {
             // Silent fail if file doesn't exist
@@ -647,11 +655,11 @@ class Aqua extends EventEmitter {
         try {
             let player = this.players.get(p.g);
             if (!player) {
-                const targetNode = (p.n && this.nodeMap.get(p.n)?.connected) ? 
+                const targetNode = (p.n && this.nodeMap.get(p.n)?.connected) ?
                     this.nodeMap.get(p.n) : this.leastUsedNodes[0];
-                
+
                 if (!targetNode) return;
-                
+
                 player = await this.createConnection({
                     guildId: p.g,
                     textChannel: p.t,
@@ -670,13 +678,13 @@ class Aqua extends EventEmitter {
                     if (typeof p.ts === "number") player.timestamp = p.ts;
                 }
             }
-            
+
             // Restore queue
             if (p.q?.length && player) {
                 const queuePromises = p.q
                     .filter(uri => uri !== p.u)
                     .map(uri => this.resolve({ query: uri, requester: p.r }));
-                
+
                 const queueResults = await Promise.allSettled(queuePromises);
                 queueResults.forEach(result => {
                     if (result.status === 'fulfilled' && result.value.tracks?.[0]) {
@@ -684,7 +692,7 @@ class Aqua extends EventEmitter {
                     }
                 });
             }
-            
+
             if (player) {
                 player.paused = !!p.pa;
                 if (!player.playing && !player.paused && player.queue.size > 0) {
@@ -698,7 +706,7 @@ class Aqua extends EventEmitter {
 
     async _waitForFirstNode() {
         if (this.leastUsedNodes.length > 0) return;
-        
+
         return new Promise(resolve => {
             const checkInterval = setInterval(() => {
                 if (this.leastUsedNodes.length > 0) {
@@ -747,15 +755,15 @@ class Aqua extends EventEmitter {
         }
         return stats;
     }
-    
+
     async forceFailover(nodeIdentifier) {
         const node = this.nodeMap.get(nodeIdentifier);
         if (!node) return;
-        
+
         if (node.connected) {
             await node.destroy();
         }
-        
+
         this._cleanupNode(nodeIdentifier);
     }
 }
