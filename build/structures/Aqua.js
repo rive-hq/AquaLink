@@ -4,7 +4,7 @@ const Player = require("./Player");
 const Track = require("./Track");
 const { version: pkgVersion } = require("../../package.json");
 const { EventEmitter } = require('tseep');
-const fs = require('fs-extra');
+const fs = require('fs/promises');
 
 const URL_REGEX = /^https?:\/\//;
 const DEFAULT_OPTIONS = Object.freeze({
@@ -628,9 +628,10 @@ class Aqua extends EventEmitter {
             };
         });
 
-        await fs.writeJSON(filePath, data);
+        await fs.writeFile(filePath, JSON.stringify(data), "utf8");
         this.emit("debug", "Aqua", `Saved ${data.length} players to ${filePath}`);
     }
+
     async loadPlayers(filePath = "./AquaPlayers.json") {
         try {
             await fs.access(filePath);
@@ -638,7 +639,6 @@ class Aqua extends EventEmitter {
 
             const data = JSON.parse(await fs.readFile(filePath, "utf8"));
 
-            // Process in batches to avoid overwhelming
             const batchSize = 5;
             for (let i = 0; i < data.length; i += batchSize) {
                 const batch = data.slice(i, i + batchSize);
@@ -647,7 +647,6 @@ class Aqua extends EventEmitter {
 
             await fs.writeFile(filePath, "[]", "utf8");
         } catch (error) {
-            // Silent fail if file doesn't exist
         }
     }
 
