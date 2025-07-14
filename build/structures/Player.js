@@ -458,7 +458,7 @@ class Player extends EventEmitter {
             try {
                 await this.nowPlayingMessage.delete();
             } catch (error) {
-                console.error("Error deleting now playing message:", error);
+                // Ignore
             } finally {
                 this.nowPlayingMessage = null;
             }
