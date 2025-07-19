@@ -25,7 +25,7 @@ const EVENT_HANDLERS = Object.freeze({
 
 const VALID_MODES = new Set(Object.values(LOOP_MODES));
 const FAILURE_REASONS = new Set(["LOAD_FAILED", "CLEANUP"]);
-const RECONNECT_CODES = new Set([4015, 4009]);
+const RECONNECT_CODES = new Set([4015, 4009, 4006, 1000]);
 const FAIL_LOAD_TYPES = new Set(["error", "empty", "LOAD_FAILED", "NO_MATCHES"]);
 
 class UpdateBatcher {
@@ -512,8 +512,9 @@ class Player extends EventEmitter {
         return this.stop();
     }
 
-    async socketClosed(player, payload) {
+    async socketClosed(player, track, payload) {
         const { code, guildId } = payload || {};
+        console.warn(`Socket closed for player [${guildId}], code: ${code}, reason: ${payload.reason}`);
         if (RECONNECT_CODES.has(code)) {
             this.send({
                 guild_id: guildId,
@@ -521,10 +522,15 @@ class Player extends EventEmitter {
                 self_mute: this.mute,
                 self_deaf: this.deaf
             });
+            this.connected = true;
+            this.aqua.emit("debug", guildId, `Reconnected to voice channel: ${this.voiceChannel}.`);
+            return;
         }
         this.aqua.emit("socketClosed", player, payload);
-        this.pause(true);
-        this.aqua.emit("debug", this.guildId, "Player paused due to socket closure.");
+    
+        if(this.playing) {
+            await this.play();
+        }
     }
 
     async lyricsLine(player, track, payload) {
