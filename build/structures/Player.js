@@ -25,7 +25,7 @@ const EVENT_HANDLERS = Object.freeze({
 
 const VALID_MODES = new Set(Object.values(LOOP_MODES));
 const FAILURE_REASONS = new Set(["LOAD_FAILED", "CLEANUP"]);
-const RECONNECT_CODES = new Set([4015, 4009]);
+const RECONNECT_CODES = new Set([4015, 4009, 4006, 1000]);
 const FAIL_LOAD_TYPES = new Set(["error", "empty", "LOAD_FAILED", "NO_MATCHES"]);
 
 class UpdateBatcher {
@@ -135,6 +135,8 @@ class Player extends EventEmitter {
     async _handleEvent(payload) {
         try {
             const handlerName = EVENT_HANDLERS[payload.type];
+
+            console.log(`Event: ${payload.type} for Player ${handlerName}`);
             if (handlerName && typeof this[handlerName] === "function") {
                 await this[handlerName](this, this.current, payload);
             } else {
@@ -512,20 +514,64 @@ class Player extends EventEmitter {
         return this.stop();
     }
 
-    async socketClosed(player, payload) {
-        const { code, guildId } = payload || {};
-        if (RECONNECT_CODES.has(code)) {
+  async socketClosed(player, track, payload) {
+    const { code, guildId, reason } = payload || {};
+    
+    console.warn(`Socket closed for player [${guildId}], code: ${code}, reason: ${reason}`);
+    
+    // Handle reconnectable codes
+    if (RECONNECT_CODES.has(code)) {
+        console.warn(`Attempting to reconnect player [${guildId}] due to code: ${code}`);
+        try {
+            this.connected = false;
+            
+            const voiceChannelId = this.voiceChannel?.id || this.voiceChannel;
+            
+            if (!voiceChannelId) {
+                console.error(`Cannot reconnect: No voice channel available for guild ${guildId}`);
+                this.aqua.emit("socketClosed", player, payload);
+                return;
+            }
+            
+            this.aqua.emit("debug", guildId, `Attempting to reconnect to voice channel: ${voiceChannelId}`);
+            
             this.send({
                 guild_id: guildId,
-                channel_id: this.voiceChannel,
-                self_mute: this.mute,
-                self_deaf: this.deaf
+                channel_id: voiceChannelId,
+                self_mute: this.mute || false,
+                self_deaf: this.deaf || true
             });
+            
+            setTimeout(() => {
+                if (!this.connected) {
+                    console.error(`Reconnection failed for guild ${guildId} after timeout`);
+                    this.aqua.emit("socketClosed", player, payload);
+                }
+            }, 5000);
+            
+            this.aqua.emit("debug", guildId, `Reconnection attempt sent for voice channel: ${voiceChannelId}`);
+            return;
+            
+        } catch (error) {
+            console.error(`Failed to reconnect socket for guild ${guildId}:`, error);
+            this.connected = false;
+            // Fall through to emit socketClosed event
         }
-        this.aqua.emit("socketClosed", player, payload);
-        this.pause(true);
-        this.aqua.emit("debug", this.guildId, "Player paused due to socket closure.");
     }
+    
+    this.connected = false;
+    this.aqua.emit("socketClosed", player, payload);
+    
+    if (this.playing && this.current && this.queue.length > 0) {
+        try {
+            this.aqua.emit("debug", guildId, "Attempting to resume playback after socket close");
+            await this.play();
+        } catch (error) {
+            console.error(`Failed to resume playback after socket close for guild ${guildId}:`, error);
+            this.stop();
+        }
+    }
+}
 
     async lyricsLine(player, track, payload) {
         this.aqua.emit("lyricsLine", player, track, payload);
