@@ -1,5 +1,7 @@
 "use strict";
 
+const REGION_REGEX = /^([a-z]+)/;
+
 class Connection {
     constructor(player) {
         this.player = player;
@@ -20,38 +22,42 @@ class Connection {
         if (!data?.endpoint) return;
 
         const { endpoint, token } = data;
-        const newRegion = endpoint.split(".").shift()?.replace(/[0-9]/g, "") || null;
-        if (!newRegion) return;
-
-        if (this.endpoint !== endpoint || this.token !== token || this.region !== newRegion) {
-            const oldRegion = this.region;
-            this.endpoint = endpoint;
-            this.token = token;
-            this.region = newRegion;
-
-            this.aqua.emit("debug", `[Player ${this.guildId} - CONNECTION] Voice Server: ${oldRegion ? `Changed from ${oldRegion} to ${newRegion}` : newRegion
-                }`);
-
-            if (this.player.paused) {
-                this.player.paused = false;
-            }
-
-            this._updatePlayerVoiceData();
+        
+        const regionMatch = REGION_REGEX.exec(endpoint);
+        if (!regionMatch) return;
+        
+        const newRegion = regionMatch[1];
+        
+        if (this.endpoint === endpoint && this.token === token && this.region === newRegion) {
+            return;
         }
+
+        const oldRegion = this.region;
+        this.endpoint = endpoint;
+        this.token = token;
+        this.region = newRegion;
+
+        this.aqua.emit("debug", 
+            `[Player ${this.guildId} - CONNECTION] Voice Server: ${oldRegion ? `Changed from ${oldRegion} to ${newRegion}` : newRegion}`
+        );
+
+        if (this.player.paused) {
+            this.player.paused = false;
+        }
+
+        this._updatePlayerVoiceData();
     }
 
     setStateUpdate(data) {
         if (!data) {
-            this.player?.destroy();
+            this._destroyPlayer();
             return;
         }
 
-
-
         const { channel_id, session_id, self_deaf, self_mute } = data;
+        
         if (!channel_id || !session_id) {
-            this.player?.destroy();
-            this.aqua.emit("playerDestroy", this.player);
+            this._destroyPlayer();
             return;
         }
 
@@ -61,12 +67,19 @@ class Connection {
             this.player.voiceChannel = channel_id;
         }
 
-        this.selfDeaf = Boolean(self_deaf);
-        this.selfMute = Boolean(self_mute);
+        this.selfDeaf = !!self_deaf;
+        this.selfMute = !!self_mute;
 
         if (this.sessionId !== session_id) {
             this.sessionId = session_id;
             this._updatePlayerVoiceData();
+        }
+    }
+
+    _destroyPlayer() {
+        if (this.player) {
+            this.player.destroy();
+            this.aqua.emit("playerDestroy", this.player);
         }
     }
 
@@ -100,6 +113,7 @@ class Connection {
             });
         }
     }
+
 }
 
 module.exports = Connection;
