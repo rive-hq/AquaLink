@@ -20,21 +20,21 @@ class Connection {
         if (!data?.endpoint) return;
 
         const { endpoint, token } = data;
-        const newRegion = endpoint.split('.')[0];
+        const newRegion = endpoint.split(".").shift()?.replace(/[0-9]/g, "") || null;
         if (!newRegion) return;
 
-        if (this.region !== newRegion) {
+        if (this.endpoint !== endpoint || this.token !== token || this.region !== newRegion) {
             const oldRegion = this.region;
             this.endpoint = endpoint;
             this.token = token;
             this.region = newRegion;
 
-            this.aqua.emit(
-                "debug",
-                `[Player ${this.guildId} - CONNECTION] Voice Server: ${
-                    oldRegion ? `Changed from ${oldRegion} to ${newRegion}` : newRegion
-                }`
-            );
+            this.aqua.emit("debug", `[Player ${this.guildId} - CONNECTION] Voice Server: ${oldRegion ? `Changed from ${oldRegion} to ${newRegion}` : newRegion
+                }`);
+
+            if (this.player.paused) {
+                this.player.paused = false;
+            }
 
             this._updatePlayerVoiceData();
         }
@@ -46,24 +46,37 @@ class Connection {
             return;
         }
 
+
+
         const { channel_id, session_id, self_deaf, self_mute } = data;
         if (!channel_id || !session_id) {
             this.player?.destroy();
+            this.aqua.emit("playerDestroy", this.player);
             return;
         }
 
         if (this.voiceChannel !== channel_id) {
             this.aqua.emit("playerMove", this.voiceChannel, channel_id);
             this.voiceChannel = channel_id;
+            this.player.voiceChannel = channel_id;
         }
 
         this.selfDeaf = Boolean(self_deaf);
         this.selfMute = Boolean(self_mute);
-        this.sessionId = session_id;
+
+        if (this.sessionId !== session_id) {
+            this.sessionId = session_id;
+            this._updatePlayerVoiceData();
+        }
     }
 
     _updatePlayerVoiceData() {
         if (!this.player) return;
+
+        if (!this.sessionId || !this.endpoint || !this.token) {
+            this.aqua.emit("debug", `[Player ${this.guildId}] Incomplete voice data, waiting for complete data`);
+            return;
+        }
 
         const voiceData = {
             sessionId: this.sessionId,
