@@ -205,7 +205,6 @@ class Rest {
                     !(identifierLyrics.status === 500 && identifierLyrics.error === 'Internal Server Error')
                 ) {
                     this.aqua.emit("debug", `[Aqua/Lyrics] Fetched lyrics using Identifier: ${track.identifier}`);
-                    console.log(identifierLyrics);
                     return identifierLyrics;
                 } else if (
                     identifierLyrics &&
