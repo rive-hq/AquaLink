@@ -1,12 +1,9 @@
 const https = require("https");
 const http = require("http");
 
-let http2;
 
-try {
-    http2 = require("http2");
-} catch (e) {
-}
+const URL_PATTERN = /^https?:\/\/.+/;
+const JSON_CONTENT_TYPE = /^application\/json/i;
 
 class Rest {
     constructor(aqua, { secure = false, host, port, sessionId = null, password, timeout = 30000 }) {
@@ -21,7 +18,17 @@ class Rest {
         this.secure = secure;
         this.timeout = timeout;
 
-        this.client = secure ? https || http2 : http;
+        const AgentClass = secure ? https.Agent : http.Agent;
+        this.agent = new AgentClass({
+            keepAlive: true,
+            maxSockets: 20,
+            maxFreeSockets: 10,
+            timeout: this.timeout,
+            freeSocketTimeout: 30000,
+            keepAliveMsecs: 1000
+        });
+
+        this.client = secure ? https : http;
     }
 
     setSessionId(sessionId) {
@@ -36,18 +43,6 @@ class Rest {
 
     async makeRequest(method, endpoint, body = null) {
         const url = `${this.baseUrl}${endpoint}`;
-
-        if (!this.agent) {
-            const AgentClass = this.secure ? https.Agent : http.Agent;
-            this.agent = new AgentClass({
-                keepAlive: true,
-                maxSockets: 10,
-                maxFreeSockets: 5,
-                timeout: this.timeout,
-                freeSocketTimeout: 30000
-            });
-        }
-
         const options = {
             method,
             headers: this.headers,
@@ -56,46 +51,47 @@ class Rest {
         };
 
         return new Promise((resolve, reject) => {
-            const client = this.secure ? https : http;
-            const req = client.request(url, options, (res) => {
+            const req = this.client.request(url, options, (res) => {
                 if (res.statusCode === 204) return resolve(null);
 
                 const chunks = [];
                 let totalLength = 0;
+                const maxSize = 10 * 1024 * 1024;
 
                 res.on('data', (chunk) => {
-                    chunks.push(chunk);
                     totalLength += chunk.length;
+                    if (totalLength > maxSize) {
+                        req.destroy();
+                        return reject(new Error('Response too large'));
+                    }
+                    chunks.push(chunk);
                 });
 
                 res.on('end', () => {
-                    if (totalLength === 0) {
-                        return resolve(null);
-                    }
+                    if (totalLength === 0) return resolve(null);
 
-                    const buffer = Buffer.concat(chunks, totalLength);
-                    const data = buffer.toString('utf8');
-
-                    try {
-                        resolve(JSON.parse(data));
-                    } catch (err) {
-                        reject(new Error(`Failed to parse response: ${err.message}`));
+                    const data = Buffer.concat(chunks, totalLength).toString('utf8');
+                    
+                    if (JSON_CONTENT_TYPE.test(res.headers['content-type'] || '')) {
+                        try {
+                            resolve(JSON.parse(data));
+                        } catch (err) {
+                            reject(new Error(`JSON parse error: ${err.message}`));
+                        }
+                    } else {
+                        resolve(data);
                     }
                 });
             });
 
-            req.on('error', (err) => {
-                reject(new Error(`Request failed (${method} ${url}): ${err.message}`));
-            });
-
+            req.on('error', reject);
             req.on('timeout', () => {
                 req.destroy();
-                reject(new Error(`Request timed out after ${this.timeout}ms (${method} ${url})`));
+                reject(new Error(`Timeout after ${this.timeout}ms`));
             });
 
             if (body) {
-                const bodyStr = typeof body === 'string' ? body : JSON.stringify(body);
-                req.write(bodyStr);
+                req.write(typeof body === 'string' ? body : JSON.stringify(body));
             }
 
             req.end();
@@ -104,168 +100,143 @@ class Rest {
 
     async updatePlayer({ guildId, data }) {
         if (data.track?.encoded && data.track?.identifier) {
-            throw new Error("You cannot provide both 'encoded' and 'identifier' for a track.");
+            throw new Error("Cannot provide both 'encoded' and 'identifier' for track");
         }
 
         this.validateSessionId();
-
-        const endpoint = `/${this.version}/sessions/${this.sessionId}/players/${guildId}?noReplace=false`;
-        return this.makeRequest("PATCH", endpoint, data);
+        return this.makeRequest("PATCH", `/${this.version}/sessions/${this.sessionId}/players/${guildId}?noReplace=false`, data);
     }
 
     async getPlayers() {
         this.validateSessionId();
-        const endpoint = `/${this.version}/sessions/${this.sessionId}/players`;
-        return this.makeRequest("GET", endpoint);
+        return this.makeRequest("GET", `/${this.version}/sessions/${this.sessionId}/players`);
     }
 
     async destroyPlayer(guildId) {
         this.validateSessionId();
-        const endpoint = `/${this.version}/sessions/${this.sessionId}/players/${guildId}`;
-        return this.makeRequest("DELETE", endpoint);
+        return this.makeRequest("DELETE", `/${this.version}/sessions/${this.sessionId}/players/${guildId}`);
     }
 
     async getTracks(identifier) {
-        const endpoint = `/${this.version}/loadtracks?identifier=${encodeURIComponent(identifier)}`;
-        return this.makeRequest("GET", endpoint);
+        return this.makeRequest("GET", `/${this.version}/loadtracks?identifier=${encodeURIComponent(identifier)}`);
     }
 
     async decodeTrack(track) {
-        const endpoint = `/${this.version}/decodetrack?encodedTrack=${encodeURIComponent(track)}`;
-        return this.makeRequest("GET", endpoint);
+        return this.makeRequest("GET", `/${this.version}/decodetrack?encodedTrack=${encodeURIComponent(track)}`);
     }
 
     async decodeTracks(tracks) {
-        const endpoint = `/${this.version}/decodetracks`;
-        return this.makeRequest("POST", endpoint, tracks);
+        return this.makeRequest("POST", `/${this.version}/decodetracks`, tracks);
     }
 
     async getStats() {
-        const endpoint = `/${this.version}/stats`;
-        return this.makeRequest("GET", endpoint);
+        return this.makeRequest("GET", `/${this.version}/stats`);
     }
 
     async getInfo() {
-        const endpoint = `/${this.version}/info`;
-        return this.makeRequest("GET", endpoint);
+        return this.makeRequest("GET", `/${this.version}/info`);
     }
 
     async getRoutePlannerStatus() {
-        const endpoint = `/${this.version}/routeplanner/status`;
-        return this.makeRequest("GET", endpoint);
+        return this.makeRequest("GET", `/${this.version}/routeplanner/status`);
     }
 
     async getRoutePlannerAddress(address) {
-        const endpoint = `/${this.version}/routeplanner/free/address`;
-        return this.makeRequest("POST", endpoint, { address });
+        return this.makeRequest("POST", `/${this.version}/routeplanner/free/address`, { address });
     }
 
     async getLyrics({ track, skipTrackSource = false }) {
         if (!track || (!track.identifier && !track.info?.title && !track.guild_id)) {
-            this.aqua.emit("error", "[Aqua/Lyrics] Invalid or insufficient track object provided for lyrics search.");
+            this.aqua.emit("error", "[Aqua/Lyrics] Invalid track object");
             return null;
         }
 
-        // --- Attempt 1: Get lyrics via the Player endpoint ---
-        if (track.guild_id) {
-            try {
-                this.validateSessionId();
-                const playerLyrics = await this.makeRequest(
-                    "GET",
-                    `/${this.version}/sessions/${this.sessionId}/players/${track.guild_id}/lyrics?skipTrackSource=${skipTrackSource}`
-                ).catch(() => {
-                     this.aqua.emit("debug", `[Aqua/Lyrics] First player endpoint failed, trying fallback path for Guild ${track.guild_id}`);
-                     return this.makeRequest(
-                        "GET",
-                        `/${this.version}/sessions/${this.sessionId}/players/${track.guild_id}/track/lyrics?skipTrackSource=${skipTrackSource}`
-                     );
-                });
+        const strategies = [
+            () => this._getPlayerLyrics(track, skipTrackSource),
+            () => this._getIdentifierLyrics(track),
+            () => this._getSearchLyrics(track)
+        ].filter(Boolean);
 
-                if (playerLyrics && !playerLyrics.error) {
-                    this.aqua.emit("debug", `[Aqua/Lyrics] Fetched lyrics using Player endpoint for Guild: ${track.guild_id}`);
-                    return playerLyrics;
-                } else if (playerLyrics && playerLyrics.error) {
-                    this.aqua.emit("debug", `[Aqua/Lyrics] Player endpoint returned error for Guild ${track.guild_id}: ${playerLyrics.message || playerLyrics.error}`);
+        for (const strategy of strategies) {
+            try {
+                const result = await strategy();
+                if (result && !this._isErrorResponse(result)) {
+                    return result;
                 }
             } catch (error) {
-                this.aqua.emit("debug", `[Aqua/Lyrics] Player endpoint failed for Guild ${track.guild_id}: ${error.message}`);
+                this.aqua.emit("debug", `[Aqua/Lyrics] Strategy failed: ${error.message}`);
             }
         }
 
-        // --- Attempt 2: Get lyrics using the track's direct identifier ---
-        if (track.identifier) {
-            try {
-                const identifierLyrics = await this.makeRequest(
-                    "GET",
-                    `/${this.version}/lyrics/${encodeURIComponent(track.identifier)}`
-                );
-                if (
-                    identifierLyrics &&
-                    !(identifierLyrics.status === 404 && identifierLyrics.error === 'Not Found') &&
-                    !(identifierLyrics.status === 500 && identifierLyrics.error === 'Internal Server Error')
-                ) {
-                    this.aqua.emit("debug", `[Aqua/Lyrics] Fetched lyrics using Identifier: ${track.identifier}`);
-                    return identifierLyrics;
-                } else if (
-                    identifierLyrics &&
-                    (
-                        (identifierLyrics.status === 404 && identifierLyrics.error === 'Not Found') ||
-                        (identifierLyrics.status === 500 && identifierLyrics.error === 'Internal Server Error')
-                    )
-                ) {
-                    this.aqua.emit("debug", `[Aqua/Lyrics] No lyrics found for Identifier: ${track.identifier}`);
-                }
-            } catch (error) {
-                this.aqua.emit("debug", `[Aqua/Lyrics] Identifier endpoint failed for ${track.identifier}: ${error.message}`);
-            }
-        }
-
-        
-        // --- Attempt 3: Fallback to searching with track metadata ---
-        if (track.info?.title) {
-            try {
-                const title = track.info.title;
-                const author = track.info.author;
-
-                const searchLyrics = await this.makeRequest(
-                    "GET",
-                    `/${this.version}/lyrics/search?query=${title}&source=genius`
-                );
-
-                if (searchLyrics) {
-                    this.aqua.emit("debug", `[Aqua/Lyrics] Fetched lyrics using Search Query: "${author ? `${title} ${author}` : title}"`);
-                    return searchLyrics;
-                }
-            } catch (error) {
-                this.aqua.emit("debug", `[Aqua/Lyrics] Search endpoint failed: ${error.message}`);
-            }
-        }
-
-        this.aqua.emit("debug", "[Aqua/Lyrics] All lyric fetch attempts failed for the track.");
+        this.aqua.emit("debug", "[Aqua/Lyrics] All strategies failed");
         return null;
+    }
+
+    async _getPlayerLyrics(track, skipTrackSource) {
+        if (!track.guild_id) return null;
+        
+        this.validateSessionId();
+        const baseUrl = `/${this.version}/sessions/${this.sessionId}/players/${track.guild_id}`;
+        const query = `?skipTrackSource=${skipTrackSource}`;
+        
+        try {
+            return await this.makeRequest("GET", `${baseUrl}/lyrics${query}`);
+        } catch {
+            return await this.makeRequest("GET", `${baseUrl}/track/lyrics${query}`);
+        }
+    }
+
+    async _getIdentifierLyrics(track) {
+        if (!track.identifier) return null;
+        
+        return this.makeRequest("GET", `/${this.version}/lyrics/${encodeURIComponent(track.identifier)}`);
+    }
+
+    async _getSearchLyrics(track) {
+        if (!track.info?.title) return null;
+        
+        const query = track.info.title;
+        return this.makeRequest("GET", `/${this.version}/lyrics/search?query=${encodeURIComponent(query)}&source=genius`);
+    }
+
+    _isErrorResponse(response) {
+        return response && (
+            (response.status === 404 && response.error === 'Not Found') ||
+            (response.status === 500 && response.error === 'Internal Server Error')
+        );
     }
 
     async subscribeLiveLyrics(guildId, skipTrackSource = false) {
         this.validateSessionId();
-        const endpoint = `/${this.version}/sessions/${this.sessionId}/players/${guildId}/lyrics/subscribe?skipTrackSource=${skipTrackSource}`;
         try {
-            const res = await this.makeRequest("POST", endpoint);
-            return res === null;
+            const result = await this.makeRequest(
+                "POST", 
+                `/${this.version}/sessions/${this.sessionId}/players/${guildId}/lyrics/subscribe?skipTrackSource=${skipTrackSource}`
+            );
+            return result === null;
         } catch (error) {
-            this.aqua.emit("debug", `[Aqua/Lyrics] Failed to subscribe to live lyrics for Guild ${guildId}: ${error.message}`);
+            this.aqua.emit("debug", `[Aqua/Lyrics] Subscribe failed: ${error.message}`);
             return false;
         }
     }
 
     async unsubscribeLiveLyrics(guildId) {
         this.validateSessionId();
-        const endpoint = `/${this.version}/sessions/${this.sessionId}/players/${guildId}/lyrics/subscribe`;
         try {
-            const res = await this.makeRequest("DELETE", endpoint);
-            return res === null;
+            const result = await this.makeRequest(
+                "DELETE", 
+                `/${this.version}/sessions/${this.sessionId}/players/${guildId}/lyrics/subscribe`
+            );
+            return result === null;
         } catch (error) {
-            this.aqua.emit("debug", `[Aqua/Lyrics] Failed to unsubscribe from live lyrics for Guild ${guildId}: ${error.message}`);
+            this.aqua.emit("debug", `[Aqua/Lyrics] Unsubscribe failed: ${error.message}`);
             return false;
+        }
+    }
+
+    destroy() {
+        if (this.agent) {
+            this.agent.destroy();
         }
     }
 }
