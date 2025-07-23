@@ -18,7 +18,7 @@ const EVENT_HANDLERS = Object.freeze({
     TrackChangeEvent: "trackChange",
     WebSocketClosedEvent: "socketClosed",
     LyricsLineEvent: "lyricsLine",
-    LyricsFoundEvent: "lyricsFound" ,
+    LyricsFoundEvent: "lyricsFound",
     LyricsNotFoundEvent: "lyricsNotFound"
 });
 
@@ -94,7 +94,7 @@ class Player extends EventEmitter {
 
         const vol = options.defaultVolume ?? 100;
         this.volume = vol < 0 ? 0 : vol > 200 ? 200 : vol;
-        
+
         this.loop = VALID_MODES.has(options.loop) ? options.loop : LOOP_MODES.NONE;
         this.shouldDeleteMessage = Boolean(this.aqua.options.shouldDeleteMessage);
         this.leaveOnEnd = Boolean(this.aqua.options.leaveOnEnd);
@@ -251,47 +251,47 @@ class Player extends EventEmitter {
         return this;
     }
 
-  destroy() {
-    if (!this.connected) return this;
+    destroy() {
+        if (!this.connected) return this;
 
-    const voiceChannelId = this.voiceChannel ? this.voiceChannel.id || this.voiceChannel : null;
-    this._updateBatcher.destroy();
+        const voiceChannelId = this.voiceChannel ? this.voiceChannel.id || this.voiceChannel : null;
+        this._updateBatcher.destroy();
 
-    this.send({ guild_id: this.guildId, channel_id: null });
-    this._lastVoiceChannel = voiceChannelId;
-    this.voiceChannel = null;
-    this.connected = false;
-    this.send({ guild_id: this.guildId, channel_id: null });
+        this.send({ guild_id: this.guildId, channel_id: null });
+        this._lastVoiceChannel = voiceChannelId;
+        this.voiceChannel = null;
+        this.connected = false;
+        this.send({ guild_id: this.guildId, channel_id: null });
 
-    if (this.nowPlayingMessage) {
-        this.nowPlayingMessage.delete().catch(() => { });
-        this.nowPlayingMessage = null;
-    }
+        if (this.nowPlayingMessage) {
+            this.nowPlayingMessage.delete().catch(() => { });
+            this.nowPlayingMessage = null;
+        }
 
-    this.isAutoplay = false;
-    this.aqua.destroyPlayer(this.guildId);
-    
-    if (this.nodes?.connected) {
-        try {
-            this.nodes.rest.destroyPlayer(this.guildId);
-        } catch (error) {
-            if (!error.message.includes('ECONNREFUSED')) {
-                console.error('Error destroying player on node:', error);
+        this.isAutoplay = false;
+        this.aqua.destroyPlayer(this.guildId);
+
+        if (this.nodes?.connected) {
+            try {
+                this.nodes.rest.destroyPlayer(this.guildId);
+            } catch (error) {
+                if (!error.message.includes('ECONNREFUSED')) {
+                    console.error('Error destroying player on node:', error);
+                }
             }
         }
+
+        this.previousTracksCount = 0;
+        this._dataStore.clear();
+        this.removeAllListeners();
+
+        this.queue = null;
+        this.previousTracks = null;
+        this.connection = null;
+        this.filters = null;
+
+        return this;
     }
-    
-    this.previousTracksCount = 0;
-    this._dataStore.clear();
-    this.removeAllListeners();
-
-    this.queue = null;
-    this.previousTracks = null;
-    this.connection = null;
-    this.filters = null;
-
-    return this;
-}
 
     pause(paused) {
         if (this.paused === paused) return this;
@@ -337,16 +337,16 @@ class Player extends EventEmitter {
         return this.nodes.rest.unsubscribeLiveLyrics(this.guildId);
     }
 
-  seek(position) {
-    if (!this.playing) return this;
-    if (position < 0) position = 0;
-    if (this.current?.info?.length && position > this.current.info.length) {
-      position = this.current.info.length;
+    seek(position) {
+        if (!this.playing) return this;
+        if (position < 0) position = 0;
+        if (this.current?.info?.length && position > this.current.info.length) {
+            position = this.current.info.length;
+        }
+        this.position = position;
+        this.batchUpdatePlayer({ position: this.position });
+        return this;
     }
-    this.position = position;
-    this.batchUpdatePlayer({ position: this.position });
-    return this;
-  }
 
     stop() {
         if (!this.playing) return this;
@@ -402,7 +402,7 @@ class Player extends EventEmitter {
     shuffle() {
         const queue = this.queue;
         const len = queue.length;
-        
+
         if (len <= 1) return this;
 
         if (len < 200) {
@@ -413,18 +413,18 @@ class Player extends EventEmitter {
         } else {
             this._shuffleAsync(queue, len - 1);
         }
-        
+
         return this;
     }
 
     _shuffleAsync(queue, i, chunkSize = 100) {
         const end = Math.max(0, i - chunkSize);
-        
+
         for (; i > end; i--) {
             const j = Math.floor(Math.random() * (i + 1));
             [queue[i], queue[j]] = [queue[j], queue[i]];
         }
-        
+
         if (i > 0) {
             setImmediate(() => this._shuffleAsync(queue, i, chunkSize));
         }
@@ -514,64 +514,67 @@ class Player extends EventEmitter {
         return this.stop();
     }
 
-  async socketClosed(player, track, payload) {
-    const { code, guildId, reason } = payload || {};
-    
-    console.warn(`Socket closed for player [${guildId}], code: ${code}, reason: ${reason}`);
-    
-    // Handle reconnectable codes
-    if (RECONNECT_CODES.has(code)) {
-        console.warn(`Attempting to reconnect player [${guildId}] due to code: ${code}`);
-        try {
-            this.connected = false;
-            
-            const voiceChannelId = this.voiceChannel?.id || this.voiceChannel;
-            
-            if (!voiceChannelId) {
-                console.error(`Cannot reconnect: No voice channel available for guild ${guildId}`);
-                this.aqua.emit("socketClosed", player, payload);
-                return;
-            }
-            
-            this.aqua.emit("debug", guildId, `Attempting to reconnect to voice channel: ${voiceChannelId}`);
-            
-            this.send({
-                guild_id: guildId,
-                channel_id: voiceChannelId,
-                self_mute: this.mute || false,
-                self_deaf: this.deaf || true
-            });
-            
-            setTimeout(() => {
-                if (!this.connected) {
-                    console.error(`Reconnection failed for guild ${guildId} after timeout`);
+    async socketClosed(player, track, payload) {
+        const { code, guildId, reason } = payload || {};
+
+        if (RECONNECT_CODES.has(code)) {
+            try {
+                this.connected = false;
+
+                const voiceChannelId = this.voiceChannel?.id || this.voiceChannel;
+                const textChannelId = this.textChannel?.id || this.textChannel;
+
+                if (!voiceChannelId) {
+                    console.error(`Cannot reconnect: No voice channel available for guild ${guildId}`);
                     this.aqua.emit("socketClosed", player, payload);
+                    return;
                 }
-            }, 5000);
-            
-            this.aqua.emit("debug", guildId, `Reconnection attempt sent for voice channel: ${voiceChannelId}`);
-            return;
-            
-        } catch (error) {
-            console.error(`Failed to reconnect socket for guild ${guildId}:`, error);
-            this.connected = false;
-            // Fall through to emit socketClosed event
+                
+                if (!textChannelId) {
+                    console.error(`Cannot reconnect: No text channel available for guild ${guildId}`);
+                    this.aqua.emit("socketClosed", player, payload);
+                    return;
+                }
+
+                this.aqua.emit("debug", guildId, `Attempting to reconnect to voice channel: ${voiceChannelId}`);
+
+                this.aqua.createConnection({
+                    guildId,
+                    voiceChannel: voiceChannelId,
+                    textChannel: textChannelId,
+                    deaf: this.deaf,
+                    mute: this.mute,
+                    defaultVolume: this.volume
+                });
+
+                setTimeout(() => {
+                    if (!this.connected) {
+                        console.error(`Reconnection failed for guild ${guildId} after timeout`);
+                        this.aqua.emit("socketClosed", player, payload);
+                    }
+                }, 5000);
+
+                this.aqua.emit("debug", guildId, `Reconnection attempt sent for voice channel: ${voiceChannelId}`);
+                return;
+
+            } catch (error) {
+                console.error(`Failed to reconnect socket for guild ${guildId}:`, error);
+                this.connected = false;
+            }
+        }
+
+        this.aqua.emit("socketClosed", player, payload);
+
+        if (this.playing && this.current && this.queue.length > 0) {
+            try {
+                this.aqua.emit("debug", guildId, "Attempting to resume playback after socket close");
+                await this.play();
+            } catch (error) {
+                console.error(`Failed to resume playback after socket close for guild ${guildId}:`, error);
+                this.stop();
+            }
         }
     }
-    
-    this.connected = false;
-    this.aqua.emit("socketClosed", player, payload);
-    
-    if (this.playing && this.current && this.queue.length > 0) {
-        try {
-            this.aqua.emit("debug", guildId, "Attempting to resume playback after socket close");
-            await this.play();
-        } catch (error) {
-            console.error(`Failed to resume playback after socket close for guild ${guildId}:`, error);
-            this.stop();
-        }
-    }
-}
 
     async lyricsLine(player, track, payload) {
         this.aqua.emit("lyricsLine", player, track, payload);
