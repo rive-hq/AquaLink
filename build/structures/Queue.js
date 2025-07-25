@@ -1,4 +1,3 @@
-
 class Queue extends Array {
     /**
      * @param {...*} elements - The elements to initialize the queue with.
@@ -14,12 +13,12 @@ class Queue extends Array {
 
     // Get the first element in the queue
     get first() {
-        return this.length > 0 ? this[0] : null;
+        return this[0] ?? null;
     }
 
     // Get the last element in the queue
     get last() {
-        return this.length > 0 ? this[this.length - 1] : null;
+        return this[this.length - 1] ?? null;
     }
 
     /**
@@ -37,15 +36,10 @@ class Queue extends Array {
      */
     remove(track) {
         const index = this.indexOf(track);
-        if (index !== -1) {
-            if (index === this.length - 1) {
-                this.pop();
-            } else {
-                this.splice(index, 1);
-            }
-            return true;
-        }
-        return false;
+        if (index === -1) return false;
+        
+        this.splice(index, 1);
+        return true;
     }
 
     // Clear all tracks from the queue
@@ -55,15 +49,13 @@ class Queue extends Array {
 
     // Shuffle the tracks in the queue
     shuffle() {
-        const length = this.length;
-        for (let i = length - 1; i > 0; i--) {
+        for (let i = this.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
-            if (i !== j) {
-                [this[i], this[j]] = [this[j], this[i]];
-            }
+            [this[i], this[j]] = [this[j], this[i]];
         }
         return this;
     }
+
     // Peek at the element at the front of the queue without removing it
     peek() {
         return this.first;
@@ -80,14 +72,14 @@ class Queue extends Array {
      * @returns {*} The track at the specified index or null if out of bounds.
      */
     at(index) {
-        return (index >= 0 && index < this.length) ? this[index] : null;
-    }
-    // Remove the first track from the queue
-    dequeue() {
-        return this.shift(); // Removes and returns the first element
+        return this[index] ?? null;
     }
 
-    // Check if the queue is empty
+    // Remove the first track from the queue
+    dequeue() {
+        return this.shift();
+    }
+
     /**
      * Check if the queue is empty.
      * @returns {boolean} Whether the queue is empty.
@@ -99,7 +91,6 @@ class Queue extends Array {
     enqueue(track) {
         return this.add(track);
     }
-
 }
 
-module.exports =  Queue 
+module.exports = Queue;
