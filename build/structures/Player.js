@@ -22,56 +22,58 @@ const EVENT_HANDLERS = Object.freeze({
     LyricsNotFoundEvent: "lyricsNotFound"
 });
 
-
+// Use Sets for O(1) lookups
 const VALID_MODES = new Set(Object.values(LOOP_MODES));
 const FAILURE_REASONS = new Set(["LOAD_FAILED", "CLEANUP"]);
 const RECONNECT_CODES = new Set([4015, 4009, 4006, 1000]);
 const FAIL_LOAD_TYPES = new Set(["error", "empty", "LOAD_FAILED", "NO_MATCHES"]);
 
-class UpdateBatcher {
+class OptimizedUpdateBatcher {
     constructor(player) {
         this.player = player;
-        this.pendingUpdates = {};
-        this.timeout = null;
-        this.hasUpdates = false;
+        this.updates = Object.create(null); // Faster than {}
+        this.timeoutId = 0;
+        this.hasPending = false;
     }
 
     batch(data, immediate = false) {
-        Object.assign(this.pendingUpdates, data);
-        this.hasUpdates = true;
+        // Merge updates efficiently
+        for (const key in data) {
+            this.updates[key] = data[key];
+        }
+        this.hasPending = true;
 
-        if (this.timeout) {
-            clearTimeout(this.timeout);
-            this.timeout = null;
+        if (this.timeoutId) {
+            clearTimeout(this.timeoutId);
+            this.timeoutId = 0;
         }
 
         if (immediate || data.track) {
-            const updates = this.pendingUpdates;
-            this.pendingUpdates = {};
-            this.hasUpdates = false;
-            return this.player.updatePlayer(updates);
+            return this._flush();
         }
 
-        this.timeout = setTimeout(() => {
-            if (this.hasUpdates) {
-                const updates = this.pendingUpdates;
-                this.pendingUpdates = {};
-                this.hasUpdates = false;
-                this.player.updatePlayer(updates);
-            }
-            this.timeout = null;
-        }, 32);
-
+        this.timeoutId = setTimeout(() => this._flush(), 32);
         return Promise.resolve();
     }
 
+    _flush() {
+        if (!this.hasPending) return Promise.resolve();
+
+        const updates = this.updates;
+        this.updates = Object.create(null);
+        this.hasPending = false;
+        this.timeoutId = 0;
+
+        return this.player.updatePlayer(updates);
+    }
+
     destroy() {
-        if (this.timeout) {
-            clearTimeout(this.timeout);
-            this.timeout = null;
+        if (this.timeoutId) {
+            clearTimeout(this.timeoutId);
+            this.timeoutId = 0;
         }
-        this.pendingUpdates = {};
-        this.hasUpdates = false;
+        this.updates = Object.create(null);
+        this.hasPending = false;
     }
 }
 
@@ -82,74 +84,87 @@ class Player extends EventEmitter {
 
     constructor(aqua, nodes, options = {}) {
         super();
+
+        // Core references
         this.aqua = aqua;
         this.nodes = nodes;
         this.guildId = options.guildId;
         this.textChannel = options.textChannel;
         this.voiceChannel = options.voiceChannel;
 
+        // Initialize components
         this.connection = new Connection(this);
         this.filters = new Filters(this);
         this.queue = new Queue();
 
+        // Optimized volume clamping
         const vol = options.defaultVolume ?? 100;
-        this.volume = vol < 0 ? 0 : vol > 200 ? 200 : vol;
+        this.volume = Math.max(0, Math.min(200, vol));
 
+        // Direct assignment with validation
         this.loop = VALID_MODES.has(options.loop) ? options.loop : LOOP_MODES.NONE;
-        this.shouldDeleteMessage = Boolean(this.aqua.options.shouldDeleteMessage);
-        this.leaveOnEnd = Boolean(this.aqua.options.leaveOnEnd);
+        this.shouldDeleteMessage = !!this.aqua.options.shouldDeleteMessage;
+        this.leaveOnEnd = !!this.aqua.options.leaveOnEnd;
 
+        // Circular buffer for previous tracks (more memory efficient)
         this.previousTracks = new Array(50);
-        this.previousTracksIndex = 0;
-        this.previousTracksCount = 0;
+        this.previousIndex = 0;
+        this.previousCount = 0;
 
+        // State flags - grouped for better cache locality
         this.playing = false;
         this.paused = false;
         this.connected = false;
+        this.isAutoplayEnabled = false;
+        this.isAutoplay = false;
+
+        // Track state
         this.current = null;
         this.position = 0;
         this.timestamp = 0;
         this.ping = 0;
         this.nowPlayingMessage = null;
-        this.isAutoplayEnabled = false;
-        this.isAutoplay = false;
 
-        this._updateBatcher = new UpdateBatcher(this);
+        // Optimized components
+        this._updateBatcher = new OptimizedUpdateBatcher(this);
         this._dataStore = new Map();
 
-        this._handlePlayerUpdate = this._handlePlayerUpdate.bind(this);
-        this._handleEvent = this._handleEvent.bind(this);
+        // Bind methods once
+        this._boundPlayerUpdate = this._handlePlayerUpdate.bind(this);
+        this._boundEvent = this._handleEvent.bind(this);
 
-        this.on("playerUpdate", this._handlePlayerUpdate);
-        this.on("event", this._handleEvent);
+        this.on("playerUpdate", this._boundPlayerUpdate);
+        this.on("event", this._boundEvent);
     }
 
     _handlePlayerUpdate(packet) {
-        this.position = packet.state.position;
-        this.connected = packet.state.connected;
-        this.ping = packet.state.ping;
-        this.timestamp = packet.state.time;
+        const state = packet.state;
+        this.position = state.position;
+        this.connected = state.connected;
+        this.ping = state.ping;
+        this.timestamp = state.time;
         this.aqua.emit("playerUpdate", this, packet);
     }
 
     async _handleEvent(payload) {
-        try {
-            const handlerName = EVENT_HANDLERS[payload.type];
+        const handlerName = EVENT_HANDLERS[payload.type];
 
-            console.log(`Event: ${payload.type} for Player ${handlerName}`);
-            if (handlerName && typeof this[handlerName] === "function") {
-                await this[handlerName](this, this.current, payload);
-            } else {
-                this.aqua.emit("nodeError", this, new Error(`Node encountered an unknown event: '${payload.type}'`));
-            }
+        if (!handlerName || typeof this[handlerName] !== "function") {
+            this.aqua.emit("nodeError", this, new Error(`Unknown event: ${payload.type}`));
+            return;
+        }
+
+        try {
+            await this[handlerName](this, this.current, payload);
         } catch (error) {
-            console.error(`Error handling event ${payload.type}:`, error);
             this.aqua.emit("error", error);
         }
     }
 
     get previous() {
-        return this.previousTracksCount ? this.previousTracks[(this.previousTracksIndex - 1 + 50) % 50] : null;
+        return this.previousCount > 0
+            ? this.previousTracks[(this.previousIndex - 1 + 50) % 50]
+            : null;
     }
 
     get currenttrack() {
@@ -161,19 +176,13 @@ class Player extends EventEmitter {
     }
 
     async autoplay(player) {
-        if (!player) throw new Error("Player is undefined. const player = aqua.players.get(guildId);");
-        if (!this.isAutoplayEnabled) {
-            this.aqua.emit("debug", this.guildId, "Autoplay is disabled.");
-            return this;
-        }
+        if (!this.isAutoplayEnabled || !this.previous) return this;
 
         this.isAutoplay = true;
-        if (!this.previous) return this;
+        const prevInfo = this.previous.info;
+        const { sourceName, identifier, uri, requester } = prevInfo;
 
         try {
-            const { sourceName, identifier, uri, requester } = this.previous.info;
-            this.aqua.emit("debug", this.guildId, `Attempting autoplay for ${sourceName}`);
-
             let query, source;
 
             switch (sourceName) {
@@ -205,7 +214,10 @@ class Player extends EventEmitter {
 
             const tracks = response.tracks;
             const track = tracks[Math.floor(Math.random() * tracks.length)];
-            if (!track?.info?.title) throw new Error("Invalid track object: missing title or info.");
+
+            if (!track?.info?.title) {
+                throw new Error("Invalid track object");
+            }
 
             track.requester = this.previous.requester || { id: "Unknown" };
             this.queue.push(track);
@@ -213,14 +225,12 @@ class Player extends EventEmitter {
 
             return this;
         } catch (error) {
-            console.error("Autoplay error:", error);
             return this.stop();
         }
     }
 
     setAutoplay(enabled) {
-        this.isAutoplayEnabled = Boolean(enabled);
-        this.aqua.emit("debug", this.guildId, `Autoplay has been ${enabled ? "enabled" : "disabled"}.`);
+        this.isAutoplayEnabled = !!enabled;
         return this;
     }
 
@@ -232,36 +242,34 @@ class Player extends EventEmitter {
         this.playing = true;
         this.position = 0;
 
-        this.aqua.emit("debug", this.guildId, `Playing track: ${this.current.track}`);
         return this.batchUpdatePlayer({ track: { encoded: this.current.track } }, true);
     }
 
     connect(options = this) {
         const { guildId, voiceChannel, deaf = true, mute = false } = options;
+
         this.deaf = deaf;
         this.mute = mute;
+        this.connected = true;
+
         this.send({
             guild_id: guildId,
             channel_id: voiceChannel,
             self_deaf: deaf,
             self_mute: mute,
         });
-        this.connected = true;
-        this.aqua.emit("debug", guildId, `Player connected to voice channel: ${voiceChannel}.`);
+
         return this;
     }
 
     destroy() {
         if (!this.connected) return this;
 
-        const voiceChannelId = this.voiceChannel ? this.voiceChannel.id || this.voiceChannel : null;
         this._updateBatcher.destroy();
 
         this.send({ guild_id: this.guildId, channel_id: null });
-        this._lastVoiceChannel = voiceChannelId;
-        this.voiceChannel = null;
         this.connected = false;
-        this.send({ guild_id: this.guildId, channel_id: null });
+        this.voiceChannel = null;
 
         if (this.nowPlayingMessage) {
             this.nowPlayingMessage.delete().catch(() => { });
@@ -276,15 +284,17 @@ class Player extends EventEmitter {
                 this.nodes.rest.destroyPlayer(this.guildId);
             } catch (error) {
                 if (!error.message.includes('ECONNREFUSED')) {
-                    console.error('Error destroying player on node:', error);
+                    console.error('Error destroying player:', error);
                 }
             }
         }
 
-        this.previousTracksCount = 0;
+        // Clean up efficiently
+        this.previousCount = 0;
         this._dataStore.clear();
         this.removeAllListeners();
 
+        // Nullify references
         this.queue = null;
         this.previousTracks = null;
         this.connection = null;
@@ -301,20 +311,16 @@ class Player extends EventEmitter {
     }
 
     async getLyrics(options = {}) {
-        const { query = null, useCurrentTrack = true, skipTrackSource = false } = options;
+        const { query, useCurrentTrack = true, skipTrackSource = false } = options;
 
         if (query) {
-            this.aqua.emit("debug", `[Aqua/Player] Searching lyrics for query: "${query}"`);
             return this.nodes.rest.getLyrics({
-                track: {
-                    info: { title: query }
-                },
+                track: { info: { title: query } },
                 skipTrackSource
             });
         }
 
         if (useCurrentTrack && this.playing && this.current?.info) {
-            this.aqua.emit("debug", `[Aqua/Player] Getting lyrics for current track: "${this.current.info.title}"`);
             return this.nodes.rest.getLyrics({
                 track: {
                     info: this.current.info,
@@ -325,25 +331,24 @@ class Player extends EventEmitter {
             });
         }
 
-        this.aqua.emit("debug", `[Aqua/Player] getLyrics called but no query was provided and no track is playing.`);
         return null;
     }
 
-    async subscribeLiveLyrics() {
+    subscribeLiveLyrics() {
         return this.nodes.rest.subscribeLiveLyrics(this.guildId, false);
     }
 
-    async unsubscribeLiveLyrics() {
+    unsubscribeLiveLyrics() {
         return this.nodes.rest.unsubscribeLiveLyrics(this.guildId);
     }
 
     seek(position) {
         if (!this.playing) return this;
-        if (position < 0) position = 0;
-        if (this.current?.info?.length && position > this.current.info.length) {
-            position = this.current.info.length;
-        }
-        this.position = position;
+
+        // Clamp position efficiently
+        const maxPos = this.current?.info?.length;
+        this.position = Math.max(0, maxPos ? Math.min(position, maxPos) : position);
+
         this.batchUpdatePlayer({ position: this.position });
         return this;
     }
@@ -357,14 +362,18 @@ class Player extends EventEmitter {
     }
 
     setVolume(volume) {
-        if (volume < 0 || volume > 200) throw new Error("Volume must be between 0 and 200.");
-        this.volume = volume;
-        this.batchUpdatePlayer({ volume });
+        const vol = Math.max(0, Math.min(200, volume));
+        if (this.volume === vol) return this;
+
+        this.volume = vol;
+        this.batchUpdatePlayer({ volume: vol });
         return this;
     }
 
     setLoop(mode) {
-        if (!VALID_MODES.has(mode)) throw new Error("Loop mode must be 'none', 'track', or 'queue'.");
+        if (!VALID_MODES.has(mode)) {
+            throw new Error("Invalid loop mode");
+        }
         this.loop = mode;
         this.batchUpdatePlayer({ loop: mode });
         return this;
@@ -377,13 +386,16 @@ class Player extends EventEmitter {
     }
 
     setVoiceChannel(channel) {
-        if (!channel?.length) throw new TypeError("Channel must be a non-empty string.");
-        if (this.connected && channel === this.voiceChannel) throw new ReferenceError(`Player already connected to ${channel}.`);
+        if (!channel) throw new TypeError("Channel required");
+        if (this.connected && channel === this.voiceChannel) {
+            throw new ReferenceError(`Already connected to ${channel}`);
+        }
+
         this.voiceChannel = channel;
         this.connect({
             deaf: this.deaf,
             guildId: this.guildId,
-            voiceChannel: this.voiceChannel,
+            voiceChannel: channel,
             textChannel: this.textChannel,
             mute: this.mute,
         });
@@ -393,41 +405,27 @@ class Player extends EventEmitter {
     disconnect() {
         if (!this.connected) return this;
         this.connected = false;
-        this.send({ guild_id: this.guildId, channel_id: null });
         this.voiceChannel = null;
-        this.aqua.emit("debug", this.guildId, "Player disconnected.");
+        this.send({ guild_id: this.guildId, channel_id: null });
         return this;
     }
 
+    // Optimized Fisher-Yates shuffle
     shuffle() {
         const queue = this.queue;
         const len = queue.length;
 
         if (len <= 1) return this;
 
-        if (len < 200) {
-            for (let i = len - 1; i > 0; i--) {
-                const j = Math.floor(Math.random() * (i + 1));
-                [queue[i], queue[j]] = [queue[j], queue[i]];
-            }
-        } else {
-            this._shuffleAsync(queue, len - 1);
+        // Inline shuffle for better performance
+        for (let i = len - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            const temp = queue[i];
+            queue[i] = queue[j];
+            queue[j] = temp;
         }
 
         return this;
-    }
-
-    _shuffleAsync(queue, i, chunkSize = 100) {
-        const end = Math.max(0, i - chunkSize);
-
-        for (; i > end; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [queue[i], queue[j]] = [queue[j], queue[i]];
-        }
-
-        if (i > 0) {
-            setImmediate(() => this._shuffleAsync(queue, i, chunkSize));
-        }
     }
 
     getQueue() {
@@ -435,7 +433,7 @@ class Player extends EventEmitter {
     }
 
     replay() {
-        return this.seek(-this.position);
+        return this.seek(0);
     }
 
     skip() {
@@ -451,25 +449,20 @@ class Player extends EventEmitter {
 
     async trackEnd(player, track, payload) {
         if (track) {
-            this.previousTracks[this.previousTracksIndex] = track;
-            this.previousTracksIndex = (this.previousTracksIndex + 1) % 50;
-            if (this.previousTracksCount < 50) this.previousTracksCount++;
+            this.previousTracks[this.previousIndex] = track;
+            this.previousIndex = (this.previousIndex + 1) % 50;
+            if (this.previousCount < 50) this.previousCount++;
         }
 
         if (this.shouldDeleteMessage && this.nowPlayingMessage) {
-            try {
-                await this.nowPlayingMessage.delete();
-            } catch (error) {
-                // Ignore
-            } finally {
-                this.nowPlayingMessage = null;
-            }
+            this.nowPlayingMessage.delete().catch(() => { });
+            this.nowPlayingMessage = null;
         }
 
         const reason = payload.reason;
         if (FAILURE_REASONS.has(reason)) {
-            if (!player.queue.length) {
-                this.previousTracksCount = 0;
+            if (this.queue.length === 0) {
+                this.previousCount = 0;
                 this._dataStore.clear();
                 this.aqua.emit("queueEnd", player);
             } else {
@@ -485,14 +478,13 @@ class Player extends EventEmitter {
             player.queue.push(track);
         }
 
-
         if (player.queue.isEmpty()) {
             if (this.isAutoplayEnabled) {
                 await player.autoplay(player);
             } else {
                 this.playing = false;
                 if (this.leaveOnEnd) {
-                    this.previousTracksCount = 0;
+                    this.previousCount = 0;
                     this._dataStore.clear();
                     this.destroy();
                 }
@@ -515,30 +507,26 @@ class Player extends EventEmitter {
     }
 
     async socketClosed(player, track, payload) {
-        const { code, guildId, reason } = payload || {};
+        const { code, guildId } = payload || {};
 
         if (RECONNECT_CODES.has(code)) {
             try {
-                this.connected = false;
-
                 const voiceChannelId = this.voiceChannel?.id || this.voiceChannel;
                 const textChannelId = this.textChannel?.id || this.textChannel;
+                const currentTrack = this.current;
 
                 if (!voiceChannelId) {
-                    console.error(`Cannot reconnect: No voice channel available for guild ${guildId}`);
-                    this.aqua.emit("socketClosed", player, payload);
-                    return;
-                }
-                
-                if (!textChannelId) {
-                    console.error(`Cannot reconnect: No text channel available for guild ${guildId}`);
                     this.aqua.emit("socketClosed", player, payload);
                     return;
                 }
 
-                this.aqua.emit("debug", guildId, `Attempting to reconnect to voice channel: ${voiceChannelId}`);
 
-                this.aqua.createConnection({
+                if (!player.destroyed) {
+                    await player.destroy();
+                    this.aqua.emit("playerDestroy", player);
+                }
+
+                const newPlayer = await this.aqua.createConnection({
                     guildId,
                     voiceChannel: voiceChannelId,
                     textChannel: textChannelId,
@@ -547,34 +535,22 @@ class Player extends EventEmitter {
                     defaultVolume: this.volume
                 });
 
-                setTimeout(() => {
-                    if (!this.connected) {
-                        console.error(`Reconnection failed for guild ${guildId} after timeout`);
-                        this.aqua.emit("socketClosed", player, payload);
-                    }
-                }, 5000);
-
-                this.aqua.emit("debug", guildId, `Reconnection attempt sent for voice channel: ${voiceChannelId}`);
+                if (track) {
+                    newPlayer.queue.add(track);
+                    await newPlayer.play();
+                }
                 return;
 
             } catch (error) {
-                console.error(`Failed to reconnect socket for guild ${guildId}:`, error);
-                this.connected = false;
+                console.error("Reconnection failed:", error);
+                this.aqua.emit("socketClosed", player, payload);
             }
+            return;
         }
 
         this.aqua.emit("socketClosed", player, payload);
-
-        if (this.playing && this.current && this.queue.length > 0) {
-            try {
-                this.aqua.emit("debug", guildId, "Attempting to resume playback after socket close");
-                await this.play();
-            } catch (error) {
-                console.error(`Failed to resume playback after socket close for guild ${guildId}:`, error);
-                this.stop();
-            }
-        }
     }
+
 
     async lyricsLine(player, track, payload) {
         this.aqua.emit("lyricsLine", player, track, payload);
@@ -601,7 +577,7 @@ class Player extends EventEmitter {
     }
 
     clearData() {
-        this.previousTracksCount = 0;
+        this.previousCount = 0;
         this._dataStore.clear();
         return this;
     }
@@ -611,7 +587,9 @@ class Player extends EventEmitter {
     }
 
     async cleanup() {
-        if (!this.playing && !this.paused && this.queue.isEmpty()) this.destroy();
+        if (!this.playing && !this.paused && this.queue.isEmpty()) {
+            this.destroy();
+        }
     }
 }
 
