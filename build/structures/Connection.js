@@ -14,20 +14,22 @@ class Connection {
         this.endpoint = null;
         this.token = null;
         this.region = null;
-        this.selfDeaf = false;
-        this.selfMute = false;
     }
 
     setServerUpdate(data) {
-        if (!data?.endpoint) return;
+        if (!data?.endpoint || !data.token) {
+            this.aqua.emit("debug", `[Player ${this.guildId}] Received incomplete server update.`);
+            return;
+        }
 
         const { endpoint, token } = data;
-        
         const regionMatch = REGION_REGEX.exec(endpoint);
-        if (!regionMatch) return;
-        
+        if (!regionMatch) {
+            this.aqua.emit("debug", `[Player ${this.guildId}] Failed to extract region from endpoint: ${endpoint}`);
+            return;
+        }
         const newRegion = regionMatch[1];
-        
+
         if (this.endpoint === endpoint && this.token === token && this.region === newRegion) {
             return;
         }
@@ -38,7 +40,7 @@ class Connection {
         this.region = newRegion;
 
         this.aqua.emit("debug", 
-            `[Player ${this.guildId} - CONNECTION] Voice Server: ${oldRegion ? `Changed from ${oldRegion} to ${newRegion}` : newRegion}`
+            `[Player ${this.guildId}] Voice server updated: ${oldRegion ? `Changed from ${oldRegion} to ${newRegion}` : newRegion}`
         );
 
         if (this.player.paused) {
@@ -49,13 +51,12 @@ class Connection {
     }
 
     setStateUpdate(data) {
-        if (!data) {
-            this._destroyPlayer();
+        if (!data || data.user_id !== this.aqua.clientId) {
             return;
         }
 
-        const { channel_id, session_id, self_deaf, self_mute } = data;
-        
+        const { session_id, channel_id, self_deaf, self_mute } = data;
+
         if (!channel_id || !session_id) {
             this._destroyPlayer();
             return;
@@ -67,27 +68,26 @@ class Connection {
             this.player.voiceChannel = channel_id;
         }
 
-        this.selfDeaf = !!self_deaf;
-        this.selfMute = !!self_mute;
+        this.player.selfDeaf = !!self_deaf;
+        this.player.selfMute = !!self_mute;
 
         if (this.sessionId !== session_id) {
             this.sessionId = session_id;
+            this.aqua.emit("debug", `[Player ${this.guildId}] Received new session ID.`);
             this._updatePlayerVoiceData();
         }
     }
 
     _destroyPlayer() {
-        if (this.player) {
+        if (this.player && !this.player.destroyed) {
             this.player.destroy();
             this.aqua.emit("playerDestroy", this.player);
         }
     }
 
     _updatePlayerVoiceData() {
-        if (!this.player) return;
-
-        if (!this.sessionId || !this.endpoint || !this.token) {
-            this.aqua.emit("debug", `[Player ${this.guildId}] Incomplete voice data, waiting for complete data`);
+        if (!this.player || !this.sessionId || !this.endpoint || !this.token) {
+            this.aqua.emit("debug", `[Player ${this.guildId}] Incomplete voice data, waiting...`);
             return;
         }
 
@@ -100,10 +100,7 @@ class Connection {
         try {
             this.nodes.rest.updatePlayer({
                 guildId: this.guildId,
-                data: {
-                    voice: voiceData,
-                    volume: this.player.volume
-                }
+                data: { voice: voiceData, volume: this.player.volume },
             });
         } catch (error) {
             this.aqua.emit("apiError", "updatePlayer", {
@@ -113,7 +110,6 @@ class Connection {
             });
         }
     }
-
 }
 
 module.exports = Connection;
