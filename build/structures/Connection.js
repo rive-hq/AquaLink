@@ -1,6 +1,6 @@
 "use strict";
 
-const REGION_REGEX = /^([a-z]+)/;
+const REGION_REGEX = /^([a-z0-9-]+)/i;
 
 class Connection {
     constructor(player) {
@@ -24,11 +24,15 @@ class Connection {
 
         const { endpoint, token } = data;
         const regionMatch = REGION_REGEX.exec(endpoint);
+
+
         if (!regionMatch) {
             this.aqua.emit("debug", `[Player ${this.guildId}] Failed to extract region from endpoint: ${endpoint}`);
             return;
         }
         const newRegion = regionMatch[1];
+
+        console.log(`Extracted region: ${newRegion} from endpoint: ${endpoint}`);
 
         if (this.endpoint === endpoint && this.token === token && this.region === newRegion) {
             return;
@@ -39,7 +43,7 @@ class Connection {
         this.token = token;
         this.region = newRegion;
 
-        this.aqua.emit("debug", 
+        this.aqua.emit("debug",
             `[Player ${this.guildId}] Voice server updated: ${oldRegion ? `Changed from ${oldRegion} to ${newRegion}` : newRegion}`
         );
 
@@ -71,11 +75,7 @@ class Connection {
         this.player.selfDeaf = !!self_deaf;
         this.player.selfMute = !!self_mute;
 
-        if (this.sessionId !== session_id) {
-            this.sessionId = session_id;
-            this.aqua.emit("debug", `[Player ${this.guildId}] Received new session ID.`);
-            this._updatePlayerVoiceData();
-        }
+        this.sessionId = session_id || this.sessionId || null;
     }
 
     _destroyPlayer() {
@@ -92,18 +92,20 @@ class Connection {
         }
 
         const voiceData = {
-            sessionId: this.sessionId,
+            token: this.token,
             endpoint: this.endpoint,
-            token: this.token
+            sessionId: this.sessionId,
         };
+
+        console.log(`[Player ${this.guildId}] Updating voice data:`, voiceData);
 
         try {
             this.nodes.rest.updatePlayer({
                 guildId: this.guildId,
                 data: { voice: voiceData, volume: this.player.volume },
-            });
+            })
         } catch (error) {
-            this.aqua.emit("apiError", "updatePlayer", {
+            this.aqua.emit("debug", "updatePlayer", {
                 error,
                 guildId: this.guildId,
                 voiceData
