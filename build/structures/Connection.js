@@ -32,8 +32,6 @@ class Connection {
         }
         const newRegion = regionMatch[1];
 
-        console.log(`Extracted region: ${newRegion} from endpoint: ${endpoint}`);
-
         if (this.endpoint === endpoint && this.token === token && this.region === newRegion) {
             return;
         }
@@ -96,8 +94,6 @@ class Connection {
             endpoint: this.endpoint,
             sessionId: this.sessionId,
         };
-
-        console.log(`[Player ${this.guildId}] Updating voice data:`, voiceData);
 
         try {
             this.nodes.rest.updatePlayer({
