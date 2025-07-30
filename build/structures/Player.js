@@ -26,35 +26,40 @@ const EVENT_HANDLERS = Object.freeze({
 
 const VALID_MODES = new Set(Object.values(LOOP_MODES))
 const FAILURE_REASONS = new Set(['LOAD_FAILED', 'CLEANUP'])
-const RECONNECT_CODES = new Set([4015, 4009])
+const RECONNECT_CODES = new Set([4015, 4009, 4006])
 const FAIL_LOAD_TYPES = new Set(['error', 'empty', 'LOAD_FAILED', 'NO_MATCHES'])
-const BATCH_DELAY = 16
-const MAX_VOLUME = 200
-const MIN_VOLUME = 0
-const PREVIOUS_TRACKS_LIMIT = 50
+
+const VOLUME_REGEX = /^([0-9]|[1-9][0-9]|1[0-9][0-9]|200)$/
+const POSITION_REGEX = /^\d+$/
+
+const _clampVolume = volume => Math.max(0, Math.min(200, volume))
+const _isValidVolume = volume => VOLUME_REGEX.test(String(volume))
+const _isValidPosition = position => POSITION_REGEX.test(String(position))
 
 class OptimizedUpdateBatcher {
   constructor(player) {
     this.player = player
-    this.updates = Object.create(null)
-    this.timeoutId = null
+    this.updates = null
+    this.timeoutId = 0
     this.hasPending = false
   }
 
   batch(data, immediate = false) {
+    if (!this.updates) this.updates = Object.create(null)
+
     Object.assign(this.updates, data)
     this.hasPending = true
 
     if (this.timeoutId) {
       clearTimeout(this.timeoutId)
-      this.timeoutId = null
+      this.timeoutId = 0
     }
 
     if (immediate || data.track) {
       return this._flush()
     }
 
-    this.timeoutId = setTimeout(() => this._flush(), BATCH_DELAY)
+    this.timeoutId = setTimeout(() => this._flush(), 32)
     return Promise.resolve()
   }
 
@@ -62,9 +67,9 @@ class OptimizedUpdateBatcher {
     if (!this.hasPending) return Promise.resolve()
 
     const updates = this.updates
-    this.updates = Object.create(null)
+    this.updates = null
     this.hasPending = false
-    this.timeoutId = null
+    this.timeoutId = 0
 
     return this.player.updatePlayer(updates)
   }
@@ -72,10 +77,36 @@ class OptimizedUpdateBatcher {
   destroy() {
     if (this.timeoutId) {
       clearTimeout(this.timeoutId)
-      this.timeoutId = null
+      this.timeoutId = 0
     }
-    this.updates = Object.create(null)
+    this.updates = null
     this.hasPending = false
+  }
+}
+
+class CircularBuffer {
+  constructor(size = 50) {
+    this.buffer = new Array(size)
+    this.size = size
+    this.index = 0
+    this.count = 0
+  }
+
+  push(item) {
+    this.buffer[this.index] = item
+    this.index = (this.index + 1) % this.size
+    if (this.count < this.size) this.count++
+  }
+
+  getLast() {
+    return this.count > 0
+      ? this.buffer[(this.index - 1 + this.size) % this.size]
+      : null
+  }
+
+  clear() {
+    this.count = 0
+    this.index = 0
   }
 }
 
@@ -93,20 +124,23 @@ class Player extends EventEmitter {
     this.textChannel = options.textChannel
     this.voiceChannel = options.voiceChannel
 
-    this.connection = new Connection(this)
+    this.connection = new Connection(this, {
+      sessionId: options.sessionId,
+      token: options.token,
+      endpoint: options.endpoint
+    })
+
     this.filters = new Filters(this)
     this.queue = new Queue()
 
     const vol = options.defaultVolume ?? 100
-    this.volume = Math.max(MIN_VOLUME, Math.min(MAX_VOLUME, vol))
+    this.volume = _isValidVolume(vol) ? vol : _clampVolume(vol)
 
     this.loop = VALID_MODES.has(options.loop) ? options.loop : LOOP_MODES.NONE
-    this.shouldDeleteMessage = Boolean(this.aqua.options.shouldDeleteMessage)
-    this.leaveOnEnd = Boolean(this.aqua.options.leaveOnEnd)
+    this.shouldDeleteMessage = !!this.aqua.options.shouldDeleteMessage
+    this.leaveOnEnd = !!this.aqua.options.leaveOnEnd
 
-    this.previousTracks = new Array(PREVIOUS_TRACKS_LIMIT)
-    this.previousIndex = 0
-    this.previousCount = 0
+    this.previousTracks = new CircularBuffer(50)
 
     this.playing = false
     this.paused = false
@@ -131,11 +165,11 @@ class Player extends EventEmitter {
   }
 
   _handlePlayerUpdate(packet) {
-    const state = packet.state
-    this.position = state.position
-    this.connected = state.connected
-    this.ping = state.ping
-    this.timestamp = state.time
+    const { position, connected, ping, time } = packet.state
+    this.position = position
+    this.connected = connected
+    this.ping = ping
+    this.timestamp = time
     this.aqua.emit('playerUpdate', this, packet)
   }
 
@@ -155,9 +189,7 @@ class Player extends EventEmitter {
   }
 
   get previous() {
-    return this.previousCount > 0
-      ? this.previousTracks[(this.previousIndex - 1 + PREVIOUS_TRACKS_LIMIT) % PREVIOUS_TRACKS_LIMIT]
-      : null
+    return this.previousTracks.getLast()
   }
 
   get currenttrack() {
@@ -168,7 +200,7 @@ class Player extends EventEmitter {
     return this._updateBatcher.batch(data, immediate)
   }
 
-  async autoplay(player) {
+  async autoplay() {
     if (!this.isAutoplayEnabled || !this.previous) return this
 
     this.isAutoplay = true
@@ -214,13 +246,13 @@ class Player extends EventEmitter {
       await this.play()
 
       return this
-    } catch (error) {
+    } catch {
       return this.stop()
     }
   }
 
   setAutoplay(enabled) {
-    this.isAutoplayEnabled = Boolean(enabled)
+    this.isAutoplayEnabled = !!enabled
     return this
   }
 
@@ -279,7 +311,7 @@ class Player extends EventEmitter {
       }
     }
 
-    this.previousCount = 0
+    this.previousTracks.clear()
     this._dataStore.clear()
     this.removeAllListeners()
 
@@ -331,7 +363,7 @@ class Player extends EventEmitter {
   }
 
   seek(position) {
-    if (!this.playing) return this
+    if (!this.playing || !_isValidPosition(position)) return this
 
     const maxPos = this.current?.info?.length
     this.position = Math.max(0, maxPos ? Math.min(position, maxPos) : position)
@@ -349,7 +381,9 @@ class Player extends EventEmitter {
   }
 
   setVolume(volume) {
-    const vol = Math.max(MIN_VOLUME, Math.min(MAX_VOLUME, volume))
+    if (!_isValidVolume(volume)) return this
+
+    const vol = _clampVolume(volume)
     if (this.volume === vol) return this
 
     this.volume = vol
@@ -405,9 +439,7 @@ class Player extends EventEmitter {
 
     for (let i = len - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1))
-      const temp = queue[i]
-      queue[i] = queue[j]
-      queue[j] = temp
+      ;[queue[i], queue[j]] = [queue[j], queue[i]]
     }
 
     return this
@@ -434,9 +466,7 @@ class Player extends EventEmitter {
 
   async trackEnd(player, track, payload) {
     if (track) {
-      this.previousTracks[this.previousIndex] = track
-      this.previousIndex = (this.previousIndex + 1) % PREVIOUS_TRACKS_LIMIT
-      if (this.previousCount < PREVIOUS_TRACKS_LIMIT) this.previousCount++
+      this.previousTracks.push(track)
     }
 
     if (this.shouldDeleteMessage && this.nowPlayingMessage) {
@@ -444,10 +474,10 @@ class Player extends EventEmitter {
       this.nowPlayingMessage = null
     }
 
-    const reason = payload.reason
+    const { reason } = payload
     if (FAILURE_REASONS.has(reason)) {
       if (this.queue.length === 0) {
-        this.previousCount = 0
+        this.previousTracks.clear()
         this._dataStore.clear()
         this.aqua.emit('queueEnd', player)
       } else {
@@ -465,11 +495,11 @@ class Player extends EventEmitter {
 
     if (player.queue.isEmpty()) {
       if (this.isAutoplayEnabled) {
-        await player.autoplay(player)
+        await player.autoplay()
       } else {
         this.playing = false
         if (this.leaveOnEnd) {
-          this.previousCount = 0
+          this.previousTracks.clear()
           this._dataStore.clear()
           this.destroy()
         }
@@ -500,6 +530,18 @@ class Player extends EventEmitter {
         const textChannelId = this.textChannel?.id || this.textChannel
         const currentTrack = this.current
 
+        const savedConnectionState = {
+          sessionId: this.connection?.sessionId,
+          endpoint: this.connection?.endpoint,
+          token: this.connection?.token,
+          region: this.connection?.region,
+          volume: this.volume,
+          position: this.position,
+          paused: this.paused,
+          loop: this.loop,
+          isAutoplayEnabled: this.isAutoplayEnabled
+        }
+
         if (!voiceChannelId) {
           this.aqua.emit('socketClosed', player, payload)
           return;
@@ -516,17 +558,59 @@ class Player extends EventEmitter {
           textChannel: textChannelId,
           deaf: this.deaf,
           mute: this.mute,
-          defaultVolume: this.volume
+          defaultVolume: savedConnectionState.volume,
+          sessionId: savedConnectionState.sessionId,
+          token: savedConnectionState.token,
+          endpoint: savedConnectionState.endpoint
         })
 
-        if (track) {
-          newPlayer.queue.add(track)
-          await newPlayer.play()
+        if (newPlayer) {
+          newPlayer.loop = savedConnectionState.loop
+          newPlayer.isAutoplayEnabled = savedConnectionState.isAutoplayEnabled
+
+          if (savedConnectionState.sessionId && newPlayer.connection) {
+            Object.assign(newPlayer.connection, {
+              sessionId: savedConnectionState.sessionId,
+              endpoint: savedConnectionState.endpoint,
+              token: savedConnectionState.token,
+              region: savedConnectionState.region
+            })
+          }
+
+          if (currentTrack) {
+            newPlayer.queue.add(currentTrack)
+
+            if (this.queue?.length > 0) {
+              this.queue.forEach(item => newPlayer.queue.add(item))
+            }
+
+            await newPlayer.play()
+
+            if (savedConnectionState.position > 5000) {
+              setTimeout(() => {
+                newPlayer.seek(savedConnectionState.position)
+              }, 1000)
+            }
+
+            if (savedConnectionState.paused) {
+              setTimeout(() => {
+                newPlayer.pause(true)
+              }, 1500)
+            }
+          }
+
+          this.aqua.emit('playerReconnected', newPlayer, {
+            oldPlayer: player,
+            code,
+            restoredState: savedConnectionState
+          })
         }
+
         return;
       } catch (error) {
         console.error('Reconnection failed:', error)
         this.aqua.emit('socketClosed', player, payload)
+        this.aqua.emit('reconnectionFailed', player, { error, code, payload })
       }
       return;
     }
@@ -559,7 +643,7 @@ class Player extends EventEmitter {
   }
 
   clearData() {
-    this.previousCount = 0
+    this.previousTracks.clear()
     this._dataStore.clear()
     return this
   }
