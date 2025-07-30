@@ -25,7 +25,7 @@ const EVENT_HANDLERS = Object.freeze({
 // Use Sets for O(1) lookups
 const VALID_MODES = new Set(Object.values(LOOP_MODES));
 const FAILURE_REASONS = new Set(["LOAD_FAILED", "CLEANUP"]);
-const RECONNECT_CODES = new Set([4015, 4009, 4006, 1000]);
+const RECONNECT_CODES = new Set([4015, 4009]);
 const FAIL_LOAD_TYPES = new Set(["error", "empty", "LOAD_FAILED", "NO_MATCHES"]);
 
 class OptimizedUpdateBatcher {
