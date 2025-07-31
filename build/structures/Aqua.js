@@ -423,34 +423,33 @@ class Aqua extends EventEmitter {
   _cleanupPlayer(player) {
     if (player) {
       player.destroy()
+      this.player.voiceChannel = null
+      this.emit('playerDestroy', player)
     } else {
       this.destroyPlayer(player.guildId)
+      this.player.voiceChannel = null
+      this.emit('playerDestroy', player)
     }
   }
 
   updateVoiceState({ d, t }) {
-    if (!d.guild_id) return;
-    if (!['VOICE_STATE_UPDATE', 'VOICE_SERVER_UPDATE'].includes(t)) return;
+    if (!d.guild_id || !['VOICE_STATE_UPDATE', 'VOICE_SERVER_UPDATE'].includes(t)) return
 
-    const player = this.players.get(d.guild_id);
-    if (!player) return;
+    const player = this.players.get(d.guild_id)
+    if (!player) return
 
-    if (d.channel_id === null) {
-      this._boundCleanupPlayer(player);
-      return;
-    }
+    const isStateUpdate = t === 'VOICE_STATE_UPDATE'
 
-    if (t === 'VOICE_STATE_UPDATE' && d.user_id !== this.clientId) {
-      return;
-    }
-    if (d.session_id && player.connection.sessionId !== d.session_id) {
-      player.connection.sessionId = d.session_id;
-      this.emit('debug', `[Player ${player.guildId}] Session ID updated`);
-    }
-    if (t === 'VOICE_SERVER_UPDATE') {
-      player.connection.setServerUpdate(d);
+    if (isStateUpdate) {
+      if (d.user_id !== this.clientId) return
+
+      if (d.session_id && player.connection.sessionId !== d.session_id) {
+        player.connection.sessionId = d.session_id
+        this.emit('debug', `[Player ${player.guildId}] Session ID updated`)
+      }
+      player.connection.setStateUpdate(d)
     } else {
-      player.connection.setStateUpdate(d);
+      player.connection.setServerUpdate(d)
     }
   }
 
