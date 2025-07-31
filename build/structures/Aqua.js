@@ -9,7 +9,6 @@ const Track = require('./Track')
 const { version: pkgVersion } = require('../../package.json')
 
 const URL_REGEX = /^https?:\/\//
-const GUILD_ID_REGEX = /^\d+$/
 
 const DEFAULT_OPTIONS = Object.freeze({
   shouldDeleteMessage: false,
@@ -424,27 +423,37 @@ class Aqua extends EventEmitter {
   _cleanupPlayer(player) {
     if (player) {
       player.destroy()
+    } else {
+      this.destroyPlayer(player.guildId)
     }
   }
 
   updateVoiceState({ d, t }) {
-    if (!GUILD_ID_REGEX.test(d.guild_id)) return;
+    if (!d.guild_id) return;
+    if (!['VOICE_STATE_UPDATE', 'VOICE_SERVER_UPDATE'].includes(t)) return;
 
-    const player = this.players.get(d.guild_id)
+    const player = this.players.get(d.guild_id);
     if (!player) return;
 
-    if (t === 'VOICE_SERVER_UPDATE' || (t === 'VOICE_STATE_UPDATE' && d.user_id === this.clientId)) {
-      if (t === 'VOICE_SERVER_UPDATE') {
-        player.connection?.setServerUpdate?.(d)
-      } else {
-        player.connection?.setStateUpdate?.(d)
-      }
+    if (d.channel_id === null) {
+      this._boundCleanupPlayer(player);
+      return;
+    }
 
-      if (d.channel_id === null) {
-        this._boundCleanupPlayer(player)
-      }
+    if (t === 'VOICE_STATE_UPDATE' && d.user_id !== this.clientId) {
+      return;
+    }
+    if (d.session_id && player.connection.sessionId !== d.session_id) {
+      player.connection.sessionId = d.session_id;
+      this.emit('debug', `[Player ${player.guildId}] Session ID updated`);
+    }
+    if (t === 'VOICE_SERVER_UPDATE') {
+      player.connection.setServerUpdate(d);
+    } else {
+      player.connection.setStateUpdate(d);
     }
   }
+
 
   fetchRegion(region) {
     if (!region) return this.leastUsedNodes
