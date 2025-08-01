@@ -9,7 +9,6 @@ const agent = new https.Agent({
     freeSocketTimeout: 4000
 });
 
-const TOTP_SECRET = Buffer.from("5507145853487499592248630329347", 'utf8');
 
 const SOUNDCLOUD_REGEX = /<a\s+itemprop="url"\s+href="(\/[^"]+)"/g;
 
@@ -48,7 +47,7 @@ const fastFetch = (url, options = {}) => {
 const soundAutoPlay = async (baseUrl) => {
     try {
         const html = await fastFetch(`${baseUrl}/recommended`);
-        
+
         const links = [];
         let match;
         while ((match = SOUNDCLOUD_REGEX.exec(html)) && links.length < 50) {
@@ -64,51 +63,47 @@ const soundAutoPlay = async (baseUrl) => {
     }
 };
 
-const generateToken = () => {
-    const timeStep = (Date.now() / 30000) | 0;
-    const counter = Buffer.allocUnsafe(8);
-    counter.writeBigUInt64BE(BigInt(timeStep), 0);
+const spotifyAutoPlay = async (seed, player, requester, excludedIdentifiers = []) => {
+  try {
+    const { trackId, artistIds } = seed
+    if (!trackId) return null
 
-    const hash = crypto.createHmac('sha1', TOTP_SECRET).update(counter).digest();
-    const offset = hash[19] & 0x0f;
-    
-    const binCode = (
-        (hash[offset] & 0x7f) << 24 |
-        hash[offset + 1] << 16 |
-        hash[offset + 2] << 8 |
-        hash[offset + 3]
-    );
+    const prevIdentifier = player.current?.identifier
+    let seedQuery = `seed_tracks=${trackId}`
+    if (artistIds) seedQuery += `&seed_artists=${artistIds}`
+    console.log('Seed query:', seedQuery)
 
-    return [
-        (binCode % 1000000).toString().padStart(6, '0'),
-        timeStep * 30000
-    ];
-};
+    const response = await player.aqua.resolve({
+      query: seedQuery,
+      source: 'spsearch',
+      requester
+    })
+    const candidates = response?.tracks || []
 
-const spotifyAutoPlay = async (seedTrackId) => {
-    const [totp, ts] = generateToken();
-    
-    try {
-        const tokenUrl = `https://open.spotify.com/api/token?reason=init&productType=embed&totp=${totp}&totpVer=5&ts=${ts}`;
-        const tokenResponse = await fastFetch(tokenUrl);
-        const { accessToken } = JSON.parse(tokenResponse);
-        
-        if (!accessToken) throw new Error("No access token");
+    const seenIds = new Set(excludedIdentifiers)
+    if (prevIdentifier) seenIds.add(prevIdentifier)
 
-        const recUrl = `https://api.spotify.com/v1/recommendations?limit=10&seed_tracks=${seedTrackId}`;
-        const recResponse = await fastFetch(recUrl, {
-            headers: { Authorization: `Bearer ${accessToken}` }
-        });
-
-        const { tracks } = JSON.parse(recResponse);
-        if (!tracks?.length) throw new Error("No tracks");
-
-        return tracks[Math.random() * tracks.length | 0].id;
-    } catch (err) {
-        console.error("Spotify error:", err.message);
-        throw err;
+    const result = []
+    for (const track of candidates) {
+      const { identifier } = track
+      if (seenIds.has(identifier)) continue
+      seenIds.add(identifier)
+      track.pluginInfo = {
+        ...(track.pluginInfo || {}),
+        clientData: { fromAutoplay: true }
+      }
+      result.push(track)
+      if (result.length === 5) break
     }
-};
+
+    return result
+
+  } catch (err) {
+    console.error('Spotify autoplay error:', err)
+    return null
+  }
+}
+
 
 module.exports = {
     scAutoPlay: soundAutoPlay,
