@@ -99,8 +99,15 @@ class Aqua extends EventEmitter {
   }
 
   get leastUsedNodes() {
-    const connected = Array.from(this.nodeMap.values()).filter(n => n.connected)
-    return connected.sort((a, b) => (a.rest?.calls || 0) - (b.rest?.calls || 0))
+    const connectedNodes = []
+
+    for (const node of this.nodeMap.values()) {
+      if (node.connected) {
+        connectedNodes.push(node)
+      }
+    }
+
+    return connectedNodes.sort((a, b) => (a.rest?.calls || 0) - (b.rest?.calls || 0))
   }
 
   async init(clientId) {
@@ -475,7 +482,7 @@ class Aqua extends EventEmitter {
       player.removeAllListeners()
       this.players.delete(guildId)
       this.emit('playerDestroy', player)
-    } catch {}
+    } catch { }
   }
 
   async resolve({ query, source = this.defaultSearchPlatform, requester, nodes }) {
@@ -583,7 +590,7 @@ class Aqua extends EventEmitter {
     }
   }
 
- async loadPlayers(filePath = './AquaPlayers.jsonl') {
+  async loadPlayers(filePath = './AquaPlayers.jsonl') {
     try {
       await fs.access(filePath)
       await this._waitForFirstNode()
@@ -692,7 +699,7 @@ class Aqua extends EventEmitter {
     }
   }
 
-   _parseRequester(requesterString) {
+  _parseRequester(requesterString) {
     if (!requesterString) return null
 
     const [id, username] = requesterString.split(':')
