@@ -98,9 +98,15 @@ class Aqua extends EventEmitter {
   }
 
   get leastUsedNodes() {
-    return Array.from(this.nodeMap.values())
-      .filter(node => node.connected)
-      .sort((a, b) => (a.rest?.calls || 0) - (b.rest?.calls || 0))
+    const connectedNodes = []
+
+    for (const node of this.nodeMap.values()) {
+      if (node.connected) {
+        connectedNodes.push(node)
+      }
+    }
+
+    return connectedNodes.sort((a, b) => (a.rest?.calls || 0) - (b.rest?.calls || 0))
   }
 
   async init(clientId) {
@@ -396,7 +402,6 @@ class Aqua extends EventEmitter {
       const endpoint = `/v4/loadtracks?identifier=${encodeURIComponent(formattedQuery)}`
       const response = await requestNode.rest.makeRequest('GET', endpoint)
       if (['empty', 'NO_MATCHES'].includes(response.loadType)) return this._createEmptyResponse()
-        const end = performance.now()
       return this._constructResponse(response, requester, requestNode)
 
     } catch (error) {
