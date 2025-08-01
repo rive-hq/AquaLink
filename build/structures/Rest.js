@@ -1,34 +1,51 @@
 const { Agent: HttpsAgent, request: httpsRequest } = require('node:https')
 const { Agent: HttpAgent, request: httpRequest } = require('node:http')
+const { URL } = require('node:url')
 
 const JSON_TYPE_REGEX = /^application\/json/i
 const MAX_RESPONSE_SIZE = 10485760
 const TRACK_VALIDATION_REGEX = /^[A-Za-z0-9+/]+=*$/
+
+const ERRORS = {
+  NO_SESSION: 'Session ID required',
+  INVALID_TRACK: 'Invalid encoded track format',
+  INVALID_TRACKS: 'One or more tracks have invalid format',
+  RESPONSE_TOO_LARGE: 'Response too large',
+  JSON_PARSE: 'JSON parse error: ',
+  REQUEST_TIMEOUT: 'Request timeout: '
+}
 
 class Rest {
   constructor(aqua, { secure = false, host, port, sessionId = null, password, timeout = 15000 }) {
     this.aqua = aqua
     this.sessionId = sessionId
     this.version = 'v4'
-    this.baseUrl = `${secure ? 'https' : 'http'}://${host}:${port}`
-    this.headers = {
-      'Content-Type': 'application/json',
-      'Authorization': password
-    }
-    this.timeout = timeout
     this.secure = secure
+    this.timeout = timeout
+
+    this.baseUrl = new URL(`${secure ? 'https' : 'http'}://${host}:${port}`)
+
+    this.headers = Object.freeze({
+      'Content-Type': 'application/json',
+      'Authorization': password,
+      'Accept': 'application/json',
+    })
 
     const AgentClass = secure ? HttpsAgent : HttpAgent
     this.agent = new AgentClass({
       keepAlive: true,
-      maxSockets: 5,
-      maxFreeSockets: 2,
+      maxSockets: 10,
+      maxFreeSockets: 5,
       timeout: this.timeout,
-      freeSocketTimeout: 45000,
-      keepAliveMsecs: 1000
+      freeSocketTimeout: 30000,
+      keepAliveMsecs: 1000,
+      scheduling: 'fifo'
     })
 
     this.request = secure ? httpsRequest : httpRequest
+
+    this._validateSessionId = this._validateSessionId.bind(this)
+    this._isValidEncodedTrack = this._isValidEncodedTrack.bind(this)
   }
 
   setSessionId(sessionId) {
@@ -37,7 +54,7 @@ class Rest {
 
   _validateSessionId() {
     if (!this.sessionId) {
-      throw new Error('Session ID required')
+      throw new Error(ERRORS.NO_SESSION)
     }
   }
 
@@ -46,7 +63,8 @@ class Rest {
   }
 
   async makeRequest(method, endpoint, body = null) {
-    const url = `${this.baseUrl}${endpoint}`
+    const url = new URL(endpoint, this.baseUrl)
+
     const options = {
       method,
       headers: this.headers,
@@ -56,17 +74,20 @@ class Rest {
 
     return new Promise((resolve, reject) => {
       const req = this.request(url, options, res => {
-        if (res.statusCode === 204) return resolve(null)
+        if (res.statusCode === 204) {
+          res.resume()
+          return resolve(null)
+        }
 
-        // Optimized for Lavalink's typical JSON responses
         const chunks = []
         let totalLength = 0
+        const isJson = JSON_TYPE_REGEX.test(res.headers['content-type'] || '')
 
         res.on('data', chunk => {
           totalLength += chunk.length
           if (totalLength > MAX_RESPONSE_SIZE) {
             req.destroy()
-            return reject(new Error('Response too large'))
+            return reject(new Error(ERRORS.RESPONSE_TOO_LARGE))
           }
           chunks.push(chunk)
         })
@@ -74,28 +95,31 @@ class Rest {
         res.on('end', () => {
           if (totalLength === 0) return resolve(null)
 
-          const data = Buffer.concat(chunks, totalLength).toString()
+          const data = Buffer.concat(chunks, totalLength)
 
-          if (JSON_TYPE_REGEX.test(res.headers['content-type'] || '')) {
+          if (isJson) {
             try {
               resolve(JSON.parse(data))
             } catch (err) {
-              reject(new Error(`JSON parse error: ${err.message}`))
+              reject(new Error(`${ERRORS.JSON_PARSE}${err.message}`))
             }
           } else {
-            resolve(data)
+            resolve(data.toString())
           }
         })
+
+        res.on('error', reject)
       })
 
       req.on('error', reject)
       req.on('timeout', () => {
         req.destroy()
-        reject(new Error(`Request timeout: ${this.timeout}ms`))
+        reject(new Error(`${ERRORS.REQUEST_TIMEOUT}${this.timeout}ms`))
       })
 
       if (body) {
         const payload = typeof body === 'string' ? body : JSON.stringify(body)
+        req.setHeader('Content-Length', Buffer.byteLength(payload))
         req.write(payload)
       }
 
@@ -103,15 +127,16 @@ class Rest {
     })
   }
 
-  // Lavalink player operations
-  async updatePlayer({ guildId, data }) {
-    const { track } = data
-    if (track?.encoded && track?.identifier) {
-      throw new Error('Cannot provide both encoded and identifier')
-    }
+  async batchRequests(requests) {
+    return Promise.all(requests.map(({ method, endpoint, body }) =>
+      this.makeRequest(method, endpoint, body)
+    ))
+  }
 
+  async updatePlayer({ guildId, data }) {
     this._validateSessionId()
-    return this.makeRequest('PATCH', `/${this.version}/sessions/${this.sessionId}/players/${guildId}?noReplace=false`, data)
+    const endpoint = `/${this.version}/sessions/${this.sessionId}/players/${guildId}?noReplace=false`
+    return this.makeRequest('PATCH', endpoint, data)
   }
 
   async getPlayer(guildId) {
@@ -129,27 +154,27 @@ class Rest {
     return this.makeRequest('DELETE', `/${this.version}/sessions/${this.sessionId}/players/${guildId}`)
   }
 
-  // Track operations
   async loadTracks(identifier) {
-    return this.makeRequest('GET', `/${this.version}/loadtracks?identifier=${encodeURIComponent(identifier)}`)
+    const params = new URLSearchParams({ identifier })
+    return this.makeRequest('GET', `/${this.version}/loadtracks?${params}`)
   }
 
   async decodeTrack(encodedTrack) {
     if (!this._isValidEncodedTrack(encodedTrack)) {
-      throw new Error('Invalid encoded track format')
+      throw new Error(ERRORS.INVALID_TRACK)
     }
-    return this.makeRequest('GET', `/${this.version}/decodetrack?encodedTrack=${encodeURIComponent(encodedTrack)}`)
+    const params = new URLSearchParams({ encodedTrack })
+    return this.makeRequest('GET', `/${this.version}/decodetrack?${params}`)
   }
 
   async decodeTracks(encodedTracks) {
-    const validTracks = encodedTracks.filter(track => this._isValidEncodedTrack(track))
-    if (validTracks.length !== encodedTracks.length) {
-      throw new Error('One or more tracks have invalid format')
+    const invalidIndex = encodedTracks.findIndex(track => !this._isValidEncodedTrack(track))
+    if (invalidIndex !== -1) {
+      throw new Error(ERRORS.INVALID_TRACKS)
     }
-    return this.makeRequest('POST', `/${this.version}/decodetracks`, validTracks)
+    return this.makeRequest('POST', `/${this.version}/decodetracks`, encodedTracks)
   }
 
-  // Server info
   async getStats() {
     return this.makeRequest('GET', `/${this.version}/stats`)
   }
@@ -161,8 +186,6 @@ class Rest {
   async getVersion() {
     return this.makeRequest('GET', `/${this.version}/version`)
   }
-
-  // Route planner
   async getRoutePlannerStatus() {
     return this.makeRequest('GET', `/${this.version}/routeplanner/status`)
   }
@@ -175,7 +198,6 @@ class Rest {
     return this.makeRequest('POST', `/${this.version}/routeplanner/free/all`)
   }
 
-  // Lyrics functionality
   async getLyrics({ track, skipTrackSource = false }) {
     if (!this._isValidTrackForLyrics(track)) {
       this.aqua.emit('error', '[Aqua/Lyrics] Invalid track object')
@@ -224,7 +246,8 @@ class Rest {
   async _getPlayerLyrics(track, skipTrackSource) {
     this._validateSessionId()
     const baseUrl = `/${this.version}/sessions/${this.sessionId}/players/${track.guild_id}`
-    const query = skipTrackSource ? '?skipTrackSource=true' : ''
+    const params = skipTrackSource ? new URLSearchParams({ skipTrackSource: 'true' }) : ''
+    const query = params ? `?${params}` : ''
 
     try {
       return await this.makeRequest('GET', `${baseUrl}/lyrics${query}`)
@@ -234,12 +257,16 @@ class Rest {
   }
 
   async _getIdentifierLyrics(track) {
-    return this.makeRequest('GET', `/${this.version}/lyrics/${encodeURIComponent(track.identifier)}`)
+    const params = new URLSearchParams({ identifier: track.identifier })
+    return this.makeRequest('GET', `/${this.version}/lyrics?${params}`)
   }
 
   async _getSearchLyrics(track) {
-    const query = encodeURIComponent(track.info.title)
-    return this.makeRequest('GET', `/${this.version}/lyrics/search?query=${query}&source=genius`)
+    const params = new URLSearchParams({
+      query: track.info.title,
+      source: 'genius'
+    })
+    return this.makeRequest('GET', `/${this.version}/lyrics/search?${params}`)
   }
 
   _isLyricsError(response) {
@@ -249,7 +276,8 @@ class Rest {
   async subscribeLiveLyrics(guildId, skipTrackSource = false) {
     this._validateSessionId()
     try {
-      const query = skipTrackSource ? '?skipTrackSource=true' : ''
+      const params = skipTrackSource ? new URLSearchParams({ skipTrackSource: 'true' }) : ''
+      const query = params ? `?${params}` : ''
       const result = await this.makeRequest(
         'POST',
         `/${this.version}/sessions/${this.sessionId}/players/${guildId}/lyrics/subscribe${query}`
@@ -275,10 +303,10 @@ class Rest {
     }
   }
 
-  // Cleanup
   destroy() {
     if (this.agent) {
       this.agent.destroy()
+      this.agent = null
     }
   }
 }
