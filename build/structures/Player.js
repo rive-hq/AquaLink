@@ -29,12 +29,10 @@ const FAILURE_REASONS = new Set(['LOAD_FAILED', 'CLEANUP'])
 const RECONNECT_CODES = new Set([4015, 4009, 4006])
 const FAIL_LOAD_TYPES = new Set(['error', 'empty', 'LOAD_FAILED', 'NO_MATCHES'])
 
-const VOLUME_REGEX = /^([0-9]|[1-9][0-9]|1[0-9][0-9]|200)$/
-const POSITION_REGEX = /^\d+$/
+const _clampVolume = (volume) => Math.max(0, Math.min(200, volume))
+const _isValidVolume = (volume) => typeof volume === 'number' && !isNaN(volume) && volume >= 0 && volume <= 200
+const _isValidPosition = (position) => typeof position === 'number' && !isNaN(position) && position >= 0
 
-const _clampVolume = volume => Math.max(0, Math.min(200, volume))
-const _isValidVolume = volume => VOLUME_REGEX.test(String(volume))
-const _isValidPosition = position => POSITION_REGEX.test(String(position))
 
 class OptimizedUpdateBatcher {
   constructor(player) {
@@ -124,11 +122,7 @@ class Player extends EventEmitter {
     this.textChannel = options.textChannel
     this.voiceChannel = options.voiceChannel
 
-    this.connection = new Connection(this, {
-      sessionId: options.sessionId,
-      token: options.token,
-      endpoint: options.endpoint
-    })
+    this.connection = new Connection(this)
 
     this.filters = new Filters(this)
     this.queue = new Queue()
@@ -521,103 +515,85 @@ class Player extends EventEmitter {
     return this.stop()
   }
 
-  async socketClosed(player, track, payload) {
-    const { code, guildId } = payload || {}
-
-    if (RECONNECT_CODES.has(code)) {
-      try {
-        const voiceChannelId = this.voiceChannel?.id || this.voiceChannel
-        const textChannelId = this.textChannel?.id || this.textChannel
-        const currentTrack = this.current
-
-        const savedConnectionState = {
-          sessionId: this.connection?.sessionId,
-          endpoint: this.connection?.endpoint,
-          token: this.connection?.token,
-          region: this.connection?.region,
-          volume: this.volume,
-          position: this.position,
-          paused: this.paused,
-          loop: this.loop,
-          isAutoplayEnabled: this.isAutoplayEnabled
-        }
-
-        if (!voiceChannelId) {
-          this.aqua.emit('socketClosed', player, payload)
-          return;
-        }
-
-        if (!player.destroyed) {
-          await player.destroy()
-          this.aqua.emit('playerDestroy', player)
-        }
-
-        const newPlayer = await this.aqua.createConnection({
-          guildId,
-          voiceChannel: voiceChannelId,
-          textChannel: textChannelId,
-          deaf: this.deaf,
-          mute: this.mute,
-          defaultVolume: savedConnectionState.volume,
-          sessionId: savedConnectionState.sessionId,
-          token: savedConnectionState.token,
-          endpoint: savedConnectionState.endpoint
-        })
-
-        if (newPlayer) {
-          newPlayer.loop = savedConnectionState.loop
-          newPlayer.isAutoplayEnabled = savedConnectionState.isAutoplayEnabled
-
-          if (savedConnectionState.sessionId && newPlayer.connection) {
-            Object.assign(newPlayer.connection, {
-              sessionId: savedConnectionState.sessionId,
-              endpoint: savedConnectionState.endpoint,
-              token: savedConnectionState.token,
-              region: savedConnectionState.region
-            })
-          }
-
-          if (currentTrack) {
-            newPlayer.queue.add(currentTrack)
-
-            if (this.queue?.length > 0) {
-              this.queue.forEach(item => newPlayer.queue.add(item))
-            }
-
-            await newPlayer.play()
-
-            if (savedConnectionState.position > 5000) {
-              setTimeout(() => {
-                newPlayer.seek(savedConnectionState.position)
-              }, 1000)
-            }
-
-            if (savedConnectionState.paused) {
-              setTimeout(() => {
-                newPlayer.pause(true)
-              }, 1500)
-            }
-          }
-
-          this.aqua.emit('playerReconnected', newPlayer, {
-            oldPlayer: player,
-            code,
-            restoredState: savedConnectionState
-          })
-        }
-
-        return;
-      } catch (error) {
-        console.error('Reconnection failed:', error)
-        this.aqua.emit('socketClosed', player, payload)
-        this.aqua.emit('reconnectionFailed', player, { error, code, payload })
-      }
-      return;
+async socketClosed(player, track, payload) {
+    if (!RECONNECT_CODES.has(payload.code)) {
+      this.aqua.emit('socketClosed', player, payload)
+      return
     }
 
-    this.aqua.emit('socketClosed', player, payload)
-  }
+    try {
+      const voiceChannelId = this.voiceChannel?.id || this.voiceChannel
+      if (!voiceChannelId) {
+        this.aqua.emit('socketClosed', player, payload)
+        return
+      }
 
+      const savedState = {
+        sessionId: this.connection?.sessionId,
+        endpoint: this.connection?.endpoint,
+        token: this.connection?.token,
+        region: this.connection?.region,
+        volume: this.volume,
+        position: this.position,
+        paused: this.paused,
+        loop: this.loop,
+        isAutoplayEnabled: this.isAutoplayEnabled,
+        currentTrack: this.current,
+        queue: [...this.queue]
+      }
+
+      if (!player.destroyed) {
+        await player.destroy()
+        this.aqua.emit('playerDestroy', player)
+      }
+
+      const newPlayer = await this.aqua.createConnection({
+        guildId: payload.guildId,
+        voiceChannel: voiceChannelId,
+        textChannel: this.textChannel?.id || this.textChannel,
+        deaf: this.deaf,
+        mute: this.mute,
+        defaultVolume: savedState.volume,
+        sessionId: savedState.sessionId,
+        token: savedState.token,
+        endpoint: savedState.endpoint
+      })
+
+      if (!newPlayer) throw new Error('Failed to create a new player during reconnection.')
+
+      newPlayer.loop = savedState.loop
+      newPlayer.isAutoplayEnabled = savedState.isAutoplayEnabled
+
+      if (savedState.sessionId && newPlayer.connection) {
+        Object.assign(newPlayer.connection, {
+          sessionId: savedState.sessionId,
+          endpoint: savedState.endpoint,
+          token: savedState.token,
+          region: savedState.region
+        })
+      }
+
+      if (savedState.currentTrack) {
+        newPlayer.queue.add(savedState.currentTrack)
+        savedState.queue.forEach(item => newPlayer.queue.add(item))
+
+        await newPlayer.play()
+
+        if (savedState.position > 5000) {
+          setTimeout(() => newPlayer.seek(savedState.position), 1000)
+        }
+        if (savedState.paused) {
+          setTimeout(() => newPlayer.pause(true), 1500)
+        }
+      }
+
+      this.aqua.emit('playerReconnected', newPlayer, { oldPlayer: player, restoredState: savedState })
+    } catch (error) {
+      console.error('Reconnection failed:', error)
+      this.aqua.emit('reconnectionFailed', player, { error, code: payload.code, payload })
+      this.aqua.emit('socketClosed', player, payload)
+    }
+  }
   async lyricsLine(player, track, payload) {
     this.aqua.emit('lyricsLine', player, track, payload)
   }
