@@ -141,6 +141,7 @@ class Player extends EventEmitter {
     this.connected = false
     this.isAutoplayEnabled = false
     this.isAutoplay = false
+    this.autoplaySeed = null
 
     this.current = null
     this.position = 0
@@ -195,55 +196,76 @@ class Player extends EventEmitter {
   }
 
   async autoplay() {
-    if (!this.isAutoplayEnabled || !this.previous) return this
+    if (!this.isAutoplayEnabled || !this.previous) return this;
 
-    this.isAutoplay = true
-    const prevInfo = this.previous.info
-    const { sourceName, identifier, uri, requester } = prevInfo
+    this.isAutoplay = true;
+
+    const prevInfo = this.previous.info;
+    const { sourceName, identifier, uri, requester, author } = prevInfo;
 
     try {
-      let query = null
-      let source = null
+      let query = null;
+      let source = null;
+      let resolved = null;
 
       if (sourceName === 'youtube') {
-        query = `https://www.youtube.com/watch?v=${identifier}&list=RD${identifier}`
-        source = 'ytmsearch'
+        query = `https://www.youtube.com/watch?v=${identifier}&list=RD${identifier}`;
+        source = 'ytmsearch';
       } else if (sourceName === 'soundcloud') {
-        const scResults = await scAutoPlay(uri)
-        if (!scResults?.length) return this
-        query = scResults[0]
-        source = 'scsearch'
+        const scResults = await scAutoPlay(uri);
+        if (!scResults?.length) return this;
+        query = scResults[0];
+        source = 'scsearch';
       } else if (sourceName === 'spotify') {
-        const spResult = await spAutoPlay(identifier)
-        if (!spResult) return this
-        query = `https://open.spotify.com/track/${spResult}`
-        source = 'spotify'
+        this.previousIdentifiers = this.previousIdentifiers || [];
+        if (this.previous) {
+          this.previousIdentifiers.unshift(this.previous.identifier);
+          if (this.previousIdentifiers.length >= 20) {
+            this.previousIdentifiers.pop();
+          }
+        }
+
+        if (!this.autoplaySeed) {
+          this.autoplaySeed = {
+            trackId: identifier,
+            artistIds: Array.isArray(author) ? author.join(',') : author
+          };
+        }
+
+        resolved = await spAutoPlay(this.autoplaySeed, this, requester, this.previousIdentifiers);
+        if (!resolved?.length) return this;
       } else {
-        return this
+        return this;
       }
 
-      const response = await this.aqua.resolve({ query, source, requester })
-
-      if (!response?.tracks?.length || FAIL_LOAD_TYPES.has(response.loadType)) {
-        return this.stop()
+      let track = null;
+      if (resolved) {
+        track = resolved[Math.floor(Math.random() * resolved.length)];
+      } else {
+        const response = await this.aqua.resolve({ query, source, requester });
+        if (!response?.tracks?.length || FAIL_LOAD_TYPES.has(response.loadType)) {
+          return this.stop();
+        }
+        const tracks = response.tracks;
+        track = tracks[Math.floor(Math.random() * tracks.length)];
       }
-
-      const tracks = response.tracks
-      const track = tracks[Math.floor(Math.random() * tracks.length)]
 
       if (!track?.info?.title) {
-        throw new Error('Invalid track object')
+        throw new Error('Invalid track object');
       }
 
-      track.requester = this.previous.requester || { id: 'Unknown' }
-      this.queue.push(track)
-      await this.play()
+      track.requester = this.previous.requester || { id: 'Unknown' };
+      this.queue.push(track);
 
-      return this
-    } catch {
-      return this.stop()
+      await this.play();
+      return this;
+    } catch (err) {
+      console.error('Autoplay failed:', err);
+      return this.stop();
     }
   }
+
+
 
   setAutoplay(enabled) {
     this.isAutoplayEnabled = !!enabled
@@ -288,7 +310,7 @@ class Player extends EventEmitter {
     this.voiceChannel = null
 
     if (this.nowPlayingMessage) {
-      this.nowPlayingMessage.delete().catch(() => {})
+      this.nowPlayingMessage.delete().catch(() => { })
       this.nowPlayingMessage = null
     }
 
@@ -433,7 +455,7 @@ class Player extends EventEmitter {
 
     for (let i = len - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1))
-      ;[queue[i], queue[j]] = [queue[j], queue[i]]
+        ;[queue[i], queue[j]] = [queue[j], queue[i]]
     }
 
     return this
@@ -464,7 +486,7 @@ class Player extends EventEmitter {
     }
 
     if (this.shouldDeleteMessage && this.nowPlayingMessage) {
-      this.nowPlayingMessage.delete().catch(() => {})
+      this.nowPlayingMessage.delete().catch(() => { })
       this.nowPlayingMessage = null
     }
 
@@ -515,7 +537,7 @@ class Player extends EventEmitter {
     return this.stop()
   }
 
-async socketClosed(player, track, payload) {
+  async socketClosed(player, track, payload) {
     if (!RECONNECT_CODES.has(payload.code)) {
       this.aqua.emit('socketClosed', player, payload)
       return
