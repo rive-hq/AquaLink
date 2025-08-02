@@ -257,7 +257,7 @@ client.on(Events.MessageCreate, async (message) => {
 
 For detailed usage, API references, and examples, check out our official documentation:
 
-[![Docs](https://img.shields.io/badge/Documentation-0099FF?style=for-the-badge&logo=readthedocs&logoColor=white)](https://toddythenoobdud.github.io/aqualink.github.io)
+[![Docs](https://img.shields.io/badge/Documentation-0099FF?style=for-the-badge&logo=readthedocs&logoColor=white)](https://roddynnn.github.io/)
 
 📌 **Get Started Quickly**
 - Installation guide
@@ -265,7 +265,7 @@ For detailed usage, API references, and examples, check out our official documen
 - Advanced features
 - Troubleshooting
 
-🔗 Visit: **[Aqualink Docs](https://toddythenoobdud.github.io/aqualink.github.io)**
+🔗 Visit: **[Aqualink Docs](https://roddynnn.github.io/)**
 
 ## 👑 Premium Bots Using Aqualink
 
