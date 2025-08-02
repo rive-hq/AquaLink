@@ -328,19 +328,30 @@ class Aqua extends EventEmitter {
     this.emit('playerDestroy', player)
   }
 
+
+
   updateVoiceState({ d, t }) {
-    if (!d.guild_id || !['VOICE_STATE_UPDATE', 'VOICE_SERVER_UPDATE'].includes(t)) return
-    const player = this.players.get(d.guild_id)
-    if (!player) return
+    if (!d.guild_id || (t !== 'VOICE_STATE_UPDATE' && t !== 'VOICE_SERVER_UPDATE')) {
+      return;
+    }
+
+    const player = this.players.get(d.guild_id);
+    if (!player) return;
     if (t === 'VOICE_STATE_UPDATE') {
-      if (d.user_id !== this.clientId) return
+      if (d.user_id !== this.clientId) return;
+      if (!d.channel_id) return this._cleanupPlayer(player);
+
+      if (!player.connection?.sessionId && d.session_id) return player.connection.sessionId = d.session_id
+
       if (d.session_id && player.connection && player.connection.sessionId !== d.session_id) {
         player.connection.sessionId = d.session_id
-        this.emit('debug', `[Player ${player.guildId}] Session ID updated`)
+        this.emit('debug', `[Player ${player.guildId}] Session was outdated, updated to ${d.session_id}`)
       }
-      player.connection.setStateUpdate(d)
+
+      player.connection.setStateUpdate(d);
+
     } else {
-      player.connection.setServerUpdate(d)
+      player.connection.setServerUpdate(d);
     }
   }
 
@@ -390,6 +401,7 @@ class Aqua extends EventEmitter {
       await player.clearData()
       player.removeAllListeners()
       this.players.delete(guildId)
+      this.nodes.rest.destroyPlayer(guildId)
       this.emit('playerDestroy', player)
     } catch { }
   }
