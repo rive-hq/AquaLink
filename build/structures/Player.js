@@ -196,34 +196,42 @@ class Player extends EventEmitter {
     return this
   }
 
-  destroy() {
-    if (!this.connected) return this
-    this._updateBatcher.destroy()
-    this.send({ guild_id: this.guildId, channel_id: null })
-    this.connected = false
-    this.voiceChannel = null
+destroy() {
+  if (!this.connected) return this
 
-    if (this.nowPlayingMessage) {
-      this.nowPlayingMessage.delete().catch(() => { })
-      this.nowPlayingMessage = null
-    }
+  this.connected = false
 
-    this.isAutoplay = false
-    this.aqua.destroyPlayer(this.guildId)
+  this._updateBatcher?.destroy()
 
-    if (this.nodes?.connected) {
-      try { this.nodes.rest.destroyPlayer(this.guildId) }
-      catch (error) {
-        if (!error.message.includes('ECONNREFUSED')) console.error('Error destroying player:', error)
-      }
-    }
+  this.send({ guild_id: this.guildId, channel_id: null })
 
-    this.previousTracks.clear()
-    this._dataStore.clear()
-    this.removeAllListeners()
-    this.queue = this.previousTracks = this.connection = this.filters = null
-    return this
+  if (this.nowPlayingMessage) {
+    this.nowPlayingMessage.delete().catch(() => {})
+    this.nowPlayingMessage = null
   }
+
+  this.voiceChannel = null
+  this.isAutoplay = false
+
+  this.aqua.destroyPlayer(this.guildId)
+
+  if (this.nodes?.connected) {
+    this.nodes.rest.destroyPlayer(this.guildId).catch(error => {
+      if (!error.message.includes('ECONNREFUSED')) {
+        console.error(`[Player ${this.guildId}] Destroy error:`, error.message)
+      }
+    })
+  }
+
+  this.previousTracks?.clear()
+  this._dataStore?.clear()
+  this.removeAllListeners()
+
+  this.queue = this.previousTracks = this.connection = this.filters =
+  this._updateBatcher = this._dataStore = null
+
+  return this
+}
 
   pause(paused) {
     if (this.paused === paused) return this
@@ -424,6 +432,7 @@ class Player extends EventEmitter {
   }
 
   async socketClosed(player, track, payload) {
+    if (payload.code === 4014) return this.destroy()
     if (!RECONNECT_CODES.has(payload.code)) {
       this.aqua.emit('socketClosed', player, payload)
       return
