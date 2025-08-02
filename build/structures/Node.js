@@ -3,7 +3,6 @@
 const WebSocket = require('ws')
 const Rest = require('./Rest')
 
-const LYRICS_OP_REGEX = /^Lyrics/
 const JSON_START_REGEX = /^\s*[{[]/
 const WS_READY_STATES = Object.freeze({ OPEN: 1, CLOSED: 3 })
 
@@ -15,6 +14,16 @@ class Node {
   static JITTER_MAX = 2000
   static JITTER_FACTOR = 0.2
   static WS_CLOSE_NORMAL = 1000
+
+  stats = {
+    players: 0,
+    playingPlayers: 0,
+    uptime: 0,
+    memory: { free: 0, used: 0, allocated: 0, reservable: 0 },
+    cpu: { cores: 0, systemLoad: 0, lavalinkLoad: 0 },
+    frameStats: { sent: 0, nulled: 0, deficit: 0 },
+    ping: 0
+  };
 
   constructor(aqua, connOptions, options = {}) {
     this.aqua = aqua
@@ -61,47 +70,10 @@ class Node {
     this.reconnectTimeoutId = null
     this.isDestroyed = false
 
-    this._boundHandlers = this._createBoundHandlers()
     this._headers = this._buildHeaders()
-    this._initStats()
   }
 
-  _createBoundHandlers() {
-    return {
-      onOpen: () => this._handleOpen(),
-      onError: error => this._handleError(error),
-      onMessage: msg => this._handleMessage(msg),
-      onClose: (code, reason) => this._handleClose(code, reason)
-    }
-  }
-
-  _initStats() {
-    this.stats = {
-      players: 0,
-      playingPlayers: 0,
-      uptime: 0,
-      memory: { free: 0, used: 0, allocated: 0, reservable: 0, freePercentage: 0, usedPercentage: 0 },
-      cpu: { cores: 0, systemLoad: 0, lavalinkLoad: 0, lavalinkLoadPercentage: 0 },
-      frameStats: { sent: 0, nulled: 0, deficit: 0 },
-      ping: 0
-    }
-  }
-
-  _buildHeaders() {
-    const headers = {
-      'Authorization': this.password,
-      'User-Id': this.aqua.clientId,
-      'Client-Name': `Aqua/${this.aqua.version} (https://github.com/ToddyTheNoobDud/AquaLink)`
-    }
-
-    if (this.sessionId) {
-      headers['Session-Id'] = this.sessionId
-    }
-
-    return headers
-  }
-
-  async _handleOpen() {
+  _handleOpen = async () => {
     this.connected = true
     this.reconnectAttempted = 0
     this._emitDebug('WebSocket connection established')
@@ -121,11 +93,11 @@ class Node {
     }
   }
 
-  _handleError(error) {
+  _handleError = (error) => {
     this.aqua.emit('nodeError', this, error)
   }
 
-  _handleMessage(msg) {
+  _handleMessage = (msg) => {
     if (!JSON_START_REGEX.test(msg)) {
       this._emitDebug(`Invalid JSON format: ${msg.slice(0, 100)}...`)
       return;
@@ -154,26 +126,40 @@ class Node {
     }
   }
 
-  _handleCustomOp(op, guildId, payload) {
-    if (LYRICS_OP_REGEX.test(op)) {
-      const player = guildId ? this.aqua.players.get(guildId) : null
-      this.aqua.emit(op, player, payload.track || null, payload)
-      return;
-    }
-
-    if (guildId) {
-      const player = this.aqua.players.get(guildId)
-      if (player) player.emit(op, payload)
-    }
-  }
-
-  _handleClose(code, reason) {
+  _handleClose = (code, reason) => {
     this.connected = false
     const reasonStr = reason?.toString() || 'No reason provided'
 
     this.aqua.emit('nodeDisconnect', this, { code, reason: reasonStr })
     this.aqua.handleNodeFailover(this)
     this._scheduleReconnect(code)
+  }
+
+  _buildHeaders() {
+    const headers = {
+      'Authorization': this.password,
+      'User-Id': this.aqua.clientId,
+      'Client-Name': `Aqua/${this.aqua.version} (https://github.com/ToddyTheNoobDud/AquaLink)`
+    }
+
+    if (this.sessionId) {
+      headers['Session-Id'] = this.sessionId
+    }
+
+    return headers
+  }
+
+  _handleCustomOp(op, guildId, payload) {
+    if (op.startsWith('Lyrics')) {
+      const player = guildId ? this.aqua.players.get(guildId) : null
+      this.aqua.emit(op, player, payload.track || null, payload)
+      return
+    }
+
+    if (guildId) {
+      const player = this.aqua.players.get(guildId)
+      if (player) player.emit(op, payload)
+    }
   }
 
   _scheduleReconnect(code) {
@@ -236,11 +222,10 @@ class Node {
       perMessageDeflate: false
     })
 
-    const handlers = this._boundHandlers
-    this.ws.once('open', handlers.onOpen)
-    this.ws.once('error', handlers.onError)
-    this.ws.on('message', handlers.onMessage)
-    this.ws.once('close', handlers.onClose)
+    this.ws.once('open', this._handleOpen)
+    this.ws.once('error', this._handleError)
+    this.ws.on('message', this._handleMessage)
+    this.ws.once('close', this._handleClose)
   }
 
   _cleanup() {
@@ -315,24 +300,14 @@ class Node {
   _updateStats(payload) {
     if (!payload) return;
 
-    this.stats.players = payload.players
-    this.stats.playingPlayers = payload.playingPlayers
-    this.stats.uptime = payload.uptime
-    this.stats.ping = payload.ping
+    this.stats.players = payload.players;
+    this.stats.playingPlayers = payload.playingPlayers;
+    this.stats.uptime = payload.uptime;
+    this.stats.ping = payload.ping;
 
-    if (payload.memory) {
-      Object.assign(this.stats.memory, payload.memory)
-      this._calcMemoryPercentages()
-    }
-
-    if (payload.cpu) {
-      Object.assign(this.stats.cpu, payload.cpu)
-      this._calcCpuPercentages()
-    }
-
-    if (payload.frameStats) {
-      Object.assign(this.stats.frameStats, payload.frameStats)
-    }
+    if (payload.memory) this.stats.memory = {...payload.memory};
+    if (payload.cpu) this.stats.cpu = {...payload.cpu};
+    if (payload.frameStats) this.stats.frameStats = {...payload.frameStats};
   }
 
   _calcMemoryPercentages() {
@@ -357,9 +332,10 @@ class Node {
       return;
     }
 
-    this.sessionId = payload.sessionId
-    this.rest.setSessionId(payload.sessionId)
-    this._headers = this._buildHeaders()
+    this.sessionId = payload.sessionId;
+    this.rest.setSessionId(payload.sessionId);
+    this._headers['Session-Id'] = payload.sessionId;
+
     this.aqua.emit('nodeConnect', this)
   }
 
@@ -367,7 +343,7 @@ class Node {
     try {
       await this.rest.makeRequest('PATCH', `/v4/sessions/${this.sessionId}`, {
         resuming: true,
-        timeout: 60000
+        timeout: this.resumeTimeout
       })
       await this.aqua.loadPlayers()
       this._emitDebug('Session resumed successfully')
