@@ -119,7 +119,9 @@ const aqua = new Aqua(client, nodes, {
     defaultSearchPlatform: "ytsearch",
     restVersion: "v4",
     autoResume: true,
-    infiniteReconnects: true
+    infiniteReconnects: true,
+    autoplayPlatform: ['spsearch', 'ytsearch', 'scsearch'],
+    nodeResolver: 'LeastLoad'
 });
 
 client.aqua = aqua;
@@ -257,7 +259,7 @@ client.on(Events.MessageCreate, async (message) => {
 
 For detailed usage, API references, and examples, check out our official documentation:
 
-[![Docs](https://img.shields.io/badge/Documentation-0099FF?style=for-the-badge&logo=readthedocs&logoColor=white)](https://roddynnn.github.io/)
+  [![Docs](https://img.shields.io/badge/Documentation-0099FF?style=for-the-badge&logo=readthedocs&logoColor=white)](https://roddynnn.github.io/docs/)
 
 📌 **Get Started Quickly**
 - Installation guide
@@ -265,7 +267,7 @@ For detailed usage, API references, and examples, check out our official documen
 - Advanced features
 - Troubleshooting
 
-🔗 Visit: **[Aqualink Docs](https://roddynnn.github.io/)**
+🔗 Visit: **[Aqualink Docs](https://roddynnn.github.io/docs)**
 
 ## 👑 Premium Bots Using Aqualink
 
@@ -324,7 +326,7 @@ For detailed usage, API references, and examples, check out our official documen
         <a href="https://github.com/pomicee">
           <img src="https://avatars.githubusercontent.com/u/134554554?v=4?s=100" width="100px;" alt="pomicee"/>
           <br />
-          <sub><b>pomicee</b></sub>
+          <sub><b>asynico</b></sub>
         </a>
         <br />
         <a href="#code-pomicee" title="Code">💻</a>
