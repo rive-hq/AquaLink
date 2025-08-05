@@ -196,42 +196,42 @@ class Player extends EventEmitter {
     return this
   }
 
-destroy() {
-  if (!this.connected) return this
+  destroy() {
+    if (!this.connected) return this
 
-  this.connected = false
+    this.connected = false
 
-  this._updateBatcher?.destroy()
+    this._updateBatcher?.destroy()
 
-  this.send({ guild_id: this.guildId, channel_id: null })
+    this.send({ guild_id: this.guildId, channel_id: null })
 
-  if (this.nowPlayingMessage) {
-    this.nowPlayingMessage.delete().catch(() => {})
-    this.nowPlayingMessage = null
+    if (this.nowPlayingMessage) {
+      this.nowPlayingMessage.delete().catch(() => { })
+      this.nowPlayingMessage = null
+    }
+
+    this.voiceChannel = null
+    this.isAutoplay = false
+
+    this.aqua.destroyPlayer(this.guildId)
+
+    if (this.nodes?.connected) {
+      this.nodes.rest.destroyPlayer(this.guildId).catch(error => {
+        if (!error.message.includes('ECONNREFUSED')) {
+          console.error(`[Player ${this.guildId}] Destroy error:`, error.message)
+        }
+      })
+    }
+
+    this.previousTracks?.clear()
+    this._dataStore?.clear()
+    this.removeAllListeners()
+
+    this.queue = this.previousTracks = this.connection = this.filters =
+      this._updateBatcher = this._dataStore = null
+
+    return this
   }
-
-  this.voiceChannel = null
-  this.isAutoplay = false
-
-  this.aqua.destroyPlayer(this.guildId)
-
-  if (this.nodes?.connected) {
-    this.nodes.rest.destroyPlayer(this.guildId).catch(error => {
-      if (!error.message.includes('ECONNREFUSED')) {
-        console.error(`[Player ${this.guildId}] Destroy error:`, error.message)
-      }
-    })
-  }
-
-  this.previousTracks?.clear()
-  this._dataStore?.clear()
-  this.removeAllListeners()
-
-  this.queue = this.previousTracks = this.connection = this.filters =
-  this._updateBatcher = this._dataStore = null
-
-  return this
-}
 
   pause(paused) {
     if (this.paused === paused) return this
@@ -298,7 +298,7 @@ destroy() {
     const queue = this.queue
     for (let i = queue.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1))
-      ;[queue[i], queue[j]] = [queue[j], queue[i]]
+        ;[queue[i], queue[j]] = [queue[j], queue[i]]
     }
     return this
   }
@@ -313,15 +313,25 @@ destroy() {
 
   async getLyrics({ query, useCurrentTrack = true, skipTrackSource = false } = {}) {
     if (query) {
-      return this.nodes.rest.getLyrics({ track: { info: { title: query } }, skipTrackSource })
-    }
-    if (useCurrentTrack && this.playing && this.current?.info) {
       return this.nodes.rest.getLyrics({
-        track: { info: this.current.info, identifier: this.current.info.identifier, guild_id: this.guildId },
+        track: { info: { title: query } },
         skipTrackSource
-      })
+      });
     }
-    return null
+
+    if (useCurrentTrack && this.playing && this.current) {
+      return this.nodes.rest.getLyrics({
+        track: {
+          info: this.current.info,
+          encoded: this.current.track,
+          identifier: this.current.info.identifier,
+          guild_id: this.guildId
+        },
+        skipTrackSource
+      });
+    }
+
+    return null;
   }
 
   subscribeLiveLyrics() { return this.nodes.rest.subscribeLiveLyrics(this.guildId, false) }
