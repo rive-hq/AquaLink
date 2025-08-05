@@ -5,6 +5,29 @@ const { URL } = require('node:url')
 const JSON_TYPE_REGEX = /^application\/json/i
 const MAX_RESPONSE_SIZE = 10485760
 const TRACK_VALIDATION_REGEX = /^[A-Za-z0-9+/]+=*$/
+const METADATA_PHRASES = [
+  'Official Visualizer',
+  'Official',
+  'Official Video',
+  'Music Video',
+  'Live',
+  'Lyrics',
+  'Audio',
+  'HD',
+  'Remix',
+  'Cover',
+  'Acoustic',
+  'Instrumental',
+  'Karaoke',
+  'ft',
+  'feat'
+]
+const METADATA_REGEX = new RegExp(
+  `\\s*[[({](${METADATA_PHRASES.map(phrase =>
+    phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  ).join('|')})[^\\]}()]*[\\])}]`,
+  'gi'
+)
 
 const ERRORS = {
   NO_SESSION: 'Session ID required',
@@ -13,6 +36,13 @@ const ERRORS = {
   RESPONSE_TOO_LARGE: 'Response too large',
   JSON_PARSE: 'JSON parse error: ',
   REQUEST_TIMEOUT: 'Request timeout: '
+}
+
+function cleanTitle(title) {
+  return title
+    .replace(METADATA_REGEX, '')
+    .replace(/\s*\[[^\]]*\]\s*|\s*\([^\)]*\)\s*|\s*\{[^\}]*\}\s*/g, '')
+    .trim()
 }
 
 class Rest {
@@ -24,11 +54,10 @@ class Rest {
     this.timeout = timeout
 
     this.baseUrl = new URL(`${secure ? 'https' : 'http'}://${host}:${port}`)
-
     this.headers = Object.freeze({
       'Content-Type': 'application/json',
       'Authorization': password,
-      'Accept': 'application/json',
+      'Accept': 'application/json'
     })
 
     const AgentClass = secure ? HttpsAgent : HttpAgent
@@ -43,9 +72,6 @@ class Rest {
     })
 
     this.request = secure ? httpsRequest : httpRequest
-
-    this._validateSessionId = this._validateSessionId.bind(this)
-    this._isValidEncodedTrack = this._isValidEncodedTrack.bind(this)
   }
 
   setSessionId(sessionId) {
@@ -53,9 +79,7 @@ class Rest {
   }
 
   _validateSessionId() {
-    if (!this.sessionId) {
-      throw new Error(ERRORS.NO_SESSION)
-    }
+    if (!this.sessionId) throw new Error(ERRORS.NO_SESSION)
   }
 
   _isValidEncodedTrack(track) {
@@ -64,7 +88,6 @@ class Rest {
 
   async makeRequest(method, endpoint, body = null) {
     const url = new URL(endpoint, this.baseUrl)
-
     const options = {
       method,
       headers: this.headers,
@@ -95,16 +118,13 @@ class Rest {
         res.on('end', () => {
           if (totalLength === 0) return resolve(null)
 
-          const data = Buffer.concat(chunks, totalLength)
+          const data = Buffer.concat(chunks)
+          if (!isJson) return resolve(data.toString())
 
-          if (isJson) {
-            try {
-              resolve(JSON.parse(data))
-            } catch (err) {
-              reject(new Error(`${ERRORS.JSON_PARSE}${err.message}`))
-            }
-          } else {
-            resolve(data.toString())
+          try {
+            resolve(JSON.parse(data))
+          } catch (err) {
+            reject(new Error(`${ERRORS.JSON_PARSE}${err.message}`))
           }
         })
 
@@ -135,28 +155,43 @@ class Rest {
 
   async updatePlayer({ guildId, data }) {
     this._validateSessionId()
-    const endpoint = `/${this.version}/sessions/${this.sessionId}/players/${guildId}?noReplace=false`
-    return this.makeRequest('PATCH', endpoint, data)
+    return this.makeRequest(
+      'PATCH',
+      `/${this.version}/sessions/${this.sessionId}/players/${guildId}?noReplace=false`,
+      data
+    )
   }
 
   async getPlayer(guildId) {
     this._validateSessionId()
-    return this.makeRequest('GET', `/${this.version}/sessions/${this.sessionId}/players/${guildId}`)
+    return this.makeRequest(
+      'GET',
+      `/${this.version}/sessions/${this.sessionId}/players/${guildId}`
+    )
   }
 
   async getPlayers() {
     this._validateSessionId()
-    return this.makeRequest('GET', `/${this.version}/sessions/${this.sessionId}/players`)
+    return this.makeRequest(
+      'GET',
+      `/${this.version}/sessions/${this.sessionId}/players`
+    )
   }
 
   async destroyPlayer(guildId) {
     this._validateSessionId()
-    return this.makeRequest('DELETE', `/${this.version}/sessions/${this.sessionId}/players/${guildId}`)
+    return this.makeRequest(
+      'DELETE',
+      `/${this.version}/sessions/${this.sessionId}/players/${guildId}`
+    )
   }
 
   async loadTracks(identifier) {
     const params = new URLSearchParams({ identifier })
-    return this.makeRequest('GET', `/${this.version}/loadtracks?${params}`)
+    return this.makeRequest(
+      'GET',
+      `/${this.version}/loadtracks?${params}`
+    )
   }
 
   async decodeTrack(encodedTrack) {
@@ -168,10 +203,9 @@ class Rest {
   }
 
   async decodeTracks(encodedTracks) {
-    const invalidIndex = encodedTracks.findIndex(track => !this._isValidEncodedTrack(track))
-    if (invalidIndex !== -1) {
-      throw new Error(ERRORS.INVALID_TRACKS)
-    }
+    const invalidTrack = encodedTracks.find(track => !this._isValidEncodedTrack(track))
+    if (invalidTrack) throw new Error(ERRORS.INVALID_TRACKS)
+
     return this.makeRequest('POST', `/${this.version}/decodetracks`, encodedTracks)
   }
 
@@ -186,101 +220,120 @@ class Rest {
   async getVersion() {
     return this.makeRequest('GET', `/${this.version}/version`)
   }
+
   async getRoutePlannerStatus() {
     return this.makeRequest('GET', `/${this.version}/routeplanner/status`)
   }
 
   async freeRoutePlannerAddress(address) {
-    return this.makeRequest('POST', `/${this.version}/routeplanner/free/address`, { address })
+    return this.makeRequest(
+      'POST',
+      `/${this.version}/routeplanner/free/address`,
+      { address }
+    )
   }
 
   async freeAllRoutePlannerAddresses() {
-    return this.makeRequest('POST', `/${this.version}/routeplanner/free/all`)
+    return this.makeRequest(
+      'POST',
+      `/${this.version}/routeplanner/free/all`
+    )
   }
 
-  async getLyrics({ track, skipTrackSource = false }) {
+  async getLyrics({ track, skipTrackSource }) {
     if (!this._isValidTrackForLyrics(track)) {
       this.aqua.emit('error', '[Aqua/Lyrics] Invalid track object')
       return null
     }
 
-    const strategies = this._getLyricsStrategies(track, skipTrackSource)
-
-    for (const strategy of strategies) {
+    if (track.encoded && this._isValidEncodedTrack(track.encoded)) {
       try {
-        const result = await strategy()
-        if (result && !this._isLyricsError(result)) {
-          return result
-        }
+        const lyrics = await this._getEncodedTrackLyrics(track.encoded, skipTrackSource)
+        if (lyrics && !this._isEmptyLyrics(lyrics)) return lyrics
       } catch (error) {
-        this.aqua.emit('debug', `[Aqua/Lyrics] Strategy failed: ${error.message}`)
+        this.aqua.emit('debug', `[Aqua/Lyrics] Encoded track failed: ${error.message}`)
       }
     }
+
+    if (track.guild_id) {
+      try {
+        const lyrics = await this._getPlayerTrackLyrics(track.guild_id, skipTrackSource)
+        if (lyrics && !this._isEmptyLyrics(lyrics)) return lyrics
+      } catch (error) {
+        this.aqua.emit('debug', `[Aqua/Lyrics] Player track failed: ${error.message}`)
+      }
+    }
+
+    if (track.info?.title) {
+      try {
+        const query = [track.info.title, track.info.author].filter(Boolean).join(' ')
+        return await this._searchLyrics(query)
+      } catch (error) {
+        this.aqua.emit('debug', `[Aqua/Lyrics] Search failed: ${error.message}`)
+      }
+    }
+
+    if (track.info?.title && track.info?.author) {
+      try {
+        const query = [cleanTitle(track.info.title), track.info.author].filter(Boolean).join(' ')
+        return await this._searchLyrics(query)
+      } catch (error) {
+        this.aqua.emit('debug', `[Aqua/Lyrics] Search failed: ${error.message}`)
+      }
+    }
+
 
     this.aqua.emit('debug', '[Aqua/Lyrics] No lyrics found')
     return null
   }
 
-  _isValidTrackForLyrics(track) {
-    return track && (track.identifier || track.info?.title || track.guild_id)
-  }
-
-  _getLyricsStrategies(track, skipTrackSource) {
-    const strategies = []
-
-    if (track.guild_id) {
-      strategies.push(() => this._getPlayerLyrics(track, skipTrackSource))
-    }
-
-    if (track.identifier) {
-      strategies.push(() => this._getIdentifierLyrics(track))
-    }
-
-    if (track.info?.title) {
-      strategies.push(() => this._getSearchLyrics(track))
-    }
-
-    return strategies
-  }
-
-  async _getPlayerLyrics(track, skipTrackSource) {
+  async _getPlayerTrackLyrics(guildId, skipTrackSource) {
     this._validateSessionId()
-    const baseUrl = `/${this.version}/sessions/${this.sessionId}/players/${track.guild_id}`
-    const params = skipTrackSource ? new URLSearchParams({ skipTrackSource: 'true' }) : ''
-    const query = params ? `?${params}` : ''
-
-    try {
-      return await this.makeRequest('GET', `${baseUrl}/lyrics${query}`)
-    } catch {
-      return await this.makeRequest('GET', `${baseUrl}/track/lyrics${query}`)
-    }
+    const params = new URLSearchParams({
+      skipTrackSource: skipTrackSource ? 'true' : 'false'
+    })
+    return this.makeRequest(
+      'GET',
+      `/${this.version}/sessions/${this.sessionId}/players/${guildId}/track/lyrics?${params}`
+    )
   }
 
-  async _getIdentifierLyrics(track) {
-    const params = new URLSearchParams({ identifier: track.identifier })
+  async _getEncodedTrackLyrics(encodedTrack, skipTrackSource) {
+    const params = new URLSearchParams({
+      track: encodedTrack,
+      skipTrackSource: skipTrackSource ? 'true' : 'false'
+    })
     return this.makeRequest('GET', `/${this.version}/lyrics?${params}`)
   }
 
-  async _getSearchLyrics(track) {
-    const params = new URLSearchParams({
-      query: track.info.title,
-      source: 'genius'
-    })
+  async _searchLyrics(query) {
+    const params = new URLSearchParams({ query })
     return this.makeRequest('GET', `/${this.version}/lyrics/search?${params}`)
   }
 
-  _isLyricsError(response) {
-    return response?.status === 404 || response?.status === 500
+  _isValidTrackForLyrics(track) {
+    return track && (
+      track.guild_id ||
+      (track.encoded && this._isValidEncodedTrack(track.encoded)) ||
+      track.info?.title
+    )
+  }
+
+  _isEmptyLyrics(response) {
+    return !response ||
+      response.status === 204 ||
+      (Array.isArray(response) && response.length === 0)
   }
 
   async subscribeLiveLyrics(guildId, skipTrackSource = false) {
     this._validateSessionId()
     try {
-      const params = skipTrackSource ? new URLSearchParams({ skipTrackSource: 'true' }) : ''
-      const query = params ? `?${params}` : ''
+      const params = new URLSearchParams({
+        skipTrackSource: skipTrackSource ? 'true' : 'false'
+      })
       const result = await this.makeRequest(
         'POST',
-        `/${this.version}/sessions/${this.sessionId}/players/${guildId}/lyrics/subscribe${query}`
+        `/${this.version}/sessions/${this.sessionId}/players/${guildId}/lyrics/subscribe?${params}`
       )
       return result === null
     } catch (error) {
