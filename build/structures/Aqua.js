@@ -661,8 +661,8 @@ class Aqua extends EventEmitter {
         q: player.queue?.tracks?.slice(0, 5).map(tr => tr.uri) || EMPTY_ARRAY,
         r: requester ? `${requester.id}:${requester.username}` : null,
         vol: player.volume,
-        pa: !!player.paused,
-        pl: !!player.playing,
+        pa: player.paused,
+        pl: player.playing,
       };
       lines.push(JSON.stringify(compactData));
     }
@@ -714,7 +714,7 @@ class Aqua extends EventEmitter {
       if (player) {
         if (typeof p.vol === 'number') player.volume = p.vol;
         player.paused = !!p.pa;
-        if ((p.pl || (p.pa && p.u)) && player.queue.size > 0) {
+        if ((p.pl || (player.paused && p.u)) && player.queue.size > 0) {
           player.play();
           player.seek(p.p || 0);
         }
