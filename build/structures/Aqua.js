@@ -587,8 +587,8 @@ class Aqua extends EventEmitter {
           baseResponse.playlistInfo = {
             name: info.name || info.title,
             thumbnail: response.data.pluginInfo?.artworkUrl ||
-                      response.data.tracks?.[0]?.info?.artworkUrl ||
-                      null,
+              response.data.tracks?.[0]?.info?.artworkUrl ||
+              null,
             ...info
           };
         }
@@ -651,6 +651,7 @@ class Aqua extends EventEmitter {
 
     for (const player of this.players.values()) {
       const requester = player.requester || player.current?.requester;
+
       const compactData = {
         g: player.guildId,
         t: player.textChannel,
@@ -663,6 +664,7 @@ class Aqua extends EventEmitter {
         vol: player.volume,
         pa: player.paused,
         pl: player.playing,
+        nw: player.nowPlayingMessage?.id || null
       };
       lines.push(JSON.stringify(compactData));
     }
@@ -671,58 +673,77 @@ class Aqua extends EventEmitter {
     this.emit('debug', 'Aqua', `Saved ${lines.length} players to ${filePath}`);
   }
 
-  async _restorePlayer(p) {
-    try {
-      let player = this.players.get(p.g);
-      if (!player) {
-        const targetNode = this.leastUsedNodes[0];
-        if (!targetNode) return;
+async _restorePlayer(p) {
+  try {
+    let player = this.players.get(p.g);
+    if (!player) {
+      const targetNode = this.leastUsedNodes[0];
+      if (!targetNode) return;
 
-        player = await this.createConnection({
-          guildId: p.g,
-          textChannel: p.t,
-          voiceChannel: p.v,
-          defaultVolume: p.vol || 65,
-          deaf: true
-        });
-      }
-
-      if (p.u && player) {
-        const resolved = await this.resolve({
-          query: p.u,
-          requester: this._parseRequester(p.r)
-        });
-        if (resolved.tracks?.[0]) {
-          player.queue.add(resolved.tracks[0]);
-          player.position = p.p || 0;
-        }
-      }
-
-      if (p.q?.length && player) {
-        const queuePromises = p.q
-          .filter(uri => uri !== p.u)
-          .map(uri => this.resolve({ query: uri, requester: p.r }));
-
-        const queueResults = await Promise.allSettled(queuePromises);
-        queueResults.forEach(result => {
-          if (result.status === 'fulfilled' && result.value.tracks?.[0]) {
-            player.queue.add(result.value.tracks[0]);
-          }
-        });
-      }
-
-      if (player) {
-        if (typeof p.vol === 'number') player.volume = p.vol;
-        player.paused = !!p.pa;
-        if ((p.pl || (player.paused && p.u)) && player.queue.size > 0) {
-          player.play();
-          player.seek(p.p || 0);
-        }
-      }
-    } catch (error) {
-      this.emit('debug', 'Aqua', `Error restoring player for guild ${p.g}: ${error.message}`);
+      player = await this.createConnection({
+        guildId: p.g,
+        textChannel: p.t,
+        voiceChannel: p.v,
+        defaultVolume: p.vol || 65,
+        deaf: true
+      });
     }
+
+    if (p.u && player) {
+      const resolved = await this.resolve({
+        query: p.u,
+        requester: this._parseRequester(p.r)
+      });
+      if (resolved.tracks?.[0]) {
+        player.queue.add(resolved.tracks[0]);
+        player.position = p.p || 0;
+        player.paused = !!p.pa;
+      }
+    }
+
+    if (p.nw && player) {
+      let message = this.client.cache.messages.get(p.nw);
+      if (!message) {
+        const channel = this.client.cache.channels.get(p.t);
+        if (channel) {
+          try {
+           if (channel.client.messages) {
+              message = await channel.client.messages.fetch(p.nw, channel.id).catch(() => null);
+           } else {
+              message = await this.client.messages.fetch(channel.id, p.nw).catch(() => null);
+           }
+          } catch (error) {
+            this.emit('debug', 'Aqua', `Failed to fetch nowPlayingMessage ${p.nw} for guild ${p.g}: ${error.message}`);
+          }
+        }
+      }
+      player.nowPlayingMessage = message || null;
+    }
+
+    if (p.q?.length && player) {
+      const tracks = await Promise.all(
+        p.q.filter(uri => uri !== p.u).map(uri => this.resolve({ query: uri, requester: p.r }))
+      ).then(resolved => resolved.flatMap(r => r.tracks));
+
+      for (const track of tracks) {
+        player.queue.add(track);
+      }
+    }
+
+    if (player) {
+      if (typeof p.vol === 'number') player.volume = p.vol;
+      player.paused = !!p.pa;
+      if (p.u && player.queue.size > 0) {
+        player.play();
+        player.seek(p.p || 0);
+      }
+    }
+
+    this.emit("playerRestore", player);
+  } catch (error) {
+    this.emit('debug', 'Aqua', `Error restoring player for guild ${p.g}: ${error.message}`);
   }
+}
 
   _parseRequester(requesterString) {
     if (!requesterString) return null;
