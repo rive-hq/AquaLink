@@ -508,6 +508,18 @@ class Player extends EventEmitter {
   async socketClosed(player, track, payload) {
     if (payload.code === 4014) return this.destroy()
 
+ if (payload.code === 4015) {
+    try {
+      if (this.connection) {
+        this.connection._updatePlayerVoiceData(true);
+        this.aqua.emit('debug', `[Player ${this.guildId}] Attempting resume...`);
+        return;
+      }
+    } catch (error) {
+      console.error('Resume failed, falling back to reconnect', error);
+    }
+  }
+
     if (!RECONNECT_CODES.has(payload.code)) {
       this.aqua.emit('socketClosed', player, payload)
       return
@@ -547,9 +559,6 @@ class Player extends EventEmitter {
         deaf: this.deaf,
         mute: this.mute,
         defaultVolume: savedState.volume,
-        sessionId: savedState.sessionId,
-        token: savedState.token,
-        endpoint: savedState.endpoint
       })
 
       if (!newPlayer) throw new Error('Failed to create a new player during reconnection.')
