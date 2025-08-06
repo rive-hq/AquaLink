@@ -111,8 +111,14 @@ class Node {
       return
     }
 
+
     const { op, guildId } = payload
     if (!op) return
+
+    if (typeof op === 'number') {
+      this._handleNumericOp(op, guildId, payload);
+      return;
+    }
 
     if (op === 'stats') {
       this._updateStats(payload)
@@ -156,6 +162,30 @@ class Node {
     if (guildId) {
       const player = this.aqua.players.get(guildId)
       if (player) player.emit(op, payload)
+    }
+  }
+
+  _handleNumericOp(op, guildId, payload) {
+    const player = guildId ? this.aqua.players.get(guildId) : null;
+
+    switch (op) {
+      case 2:
+        if (player?.connection) {
+          player.connection.setServerUpdate(payload.d);
+        }
+        break;
+      case 5:
+        if (player?.connection) {
+          player.connection.updateSequence(payload.d.sequence);
+        }
+        break;
+
+      case 9:
+        this.aqua.emit('debug', `[Player ${guildId}] Voice resumed successfully`);
+        break;
+
+      default:
+        this.aqua.emit('debug', `Unknown numeric op ${op} for guild ${guildId}`);
     }
   }
 
