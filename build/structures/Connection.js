@@ -1,116 +1,130 @@
 'use strict'
 
-const ENDPOINT_REGEX = /^([a-z\-]+)(?:-\d+\.discord\.media(?::\d+)?|\d+)/i
+const ENDPOINT_REGEX = /^([a-z-]+)(?:-\d+\.discord\.media(?::\d+)?|\d+)/i
 
 class Connection {
   constructor(player) {
-    this.player = player
+    this._player = player
+    this._aqua = player.aqua
+    this._nodes = player.nodes
+    this._guildId = player.guildId
+
     this.voiceChannel = player.voiceChannel
-    this.guildId = player.guildId
-    this.aqua = player.aqua
-    this.nodes = player.nodes
     this.sessionId = null
     this.endpoint = null
     this.token = null
     this.region = null
-    this.sequence = 0;
+
+    this.sequence = 0
+    this._lastEndpoint = null
   }
 
-  _extractRegionFromEndpoint(endpoint) {
-    if (!endpoint) return null
-    const match = endpoint.match(ENDPOINT_REGEX)
-    return match ? match[1] : 'unknown'
+  _extractRegion(endpoint) {
+    const match = endpoint?.match(ENDPOINT_REGEX)
+    return match?.[1] || null
   }
 
   setServerUpdate(data) {
     if (!data?.endpoint || !data?.token) return
 
-    const fullEndpoint = data.endpoint.trim()
-    const newRegion = this._extractRegionFromEndpoint(fullEndpoint)
+    const newEndpoint = data.endpoint.trim()
+    const newRegion = this._extractRegion(newEndpoint)
+    const regionChanged = this.region !== newRegion
+    const endpointChanged = this._lastEndpoint !== newEndpoint
 
-    if (this.region !== newRegion) {
-      this.aqua.emit('debug', `[Player ${this.guildId}] Voice region: ${this.region || 'none'} → ${newRegion}`)
+    if (regionChanged || endpointChanged) {
+      if (regionChanged && this._aqua.listenerCount('debug') > 0) {
+        this._aqua.emit('debug', `[Player ${this._guildId}] Region: ${this.region || 'none'} → ${newRegion}`)
+      }
+
+      if (endpointChanged) {
+        this.sequence = 0
+        this._lastEndpoint = newEndpoint
+      }
+
+      this.endpoint = newEndpoint
+      this.region = newRegion
     }
 
-    this.endpoint = fullEndpoint
     this.token = data.token
-    this.region = newRegion
 
-    if (this.player.paused) this.player.paused = false
-    if (this.endpoint !== fullEndpoint) {
-      this.sequence = 0;
+    if (this._player.paused) {
+      this._player.paused = false
     }
-    this._updatePlayerVoiceData()
+
+    this._updateVoiceData()
   }
 
   setStateUpdate(data) {
-    if (!data || data.user_id !== this.aqua.clientId) return
+    if (!data || data.user_id !== this._aqua.clientId) return
 
     const { session_id, channel_id, self_deaf, self_mute } = data
 
     if (channel_id) {
       if (this.voiceChannel !== channel_id) {
-        this.aqua.emit('playerMove', this.voiceChannel, channel_id)
+        if (this._aqua.listenerCount('playerMove') > 0) {
+          this._aqua.emit('playerMove', this.voiceChannel, channel_id)
+        }
         this.voiceChannel = channel_id
-        this.player.voiceChannel = channel_id
+        this._player.voiceChannel = channel_id
       }
 
       if (this.sessionId !== session_id) {
         this.sessionId = session_id
       }
 
-      this.player.self_deaf = !!self_deaf
-      this.player.self_mute = !!self_mute
-      this.player.connected = true
+      this._player.self_deaf = !!self_deaf
+      this._player.self_mute = !!self_mute
+      this._player.connected = true
 
-      this._updatePlayerVoiceData()
+      this._updateVoiceData()
     } else {
       this._handleDisconnect()
     }
   }
 
   _handleDisconnect() {
-    if (!this.player.connected) return
+    if (!this._player.connected) return
 
-    this.aqua.emit('debug', `[Player ${this.guildId}] Voice disconnected`)
+    this._aqua.emit('debug', `[Player ${this._guildId}] Disconnected`)
+
     this.voiceChannel = null
-    this.player.voiceChannel = null
-    this.sequence = 0;
-    this.player.destroy()
+    this.sessionId = null
+    this.sequence = 0
+
+    this._player.destroy()
   }
 
-  updateSequence(sequence) {
-    if (sequence > this.sequence) {
-      this.sequence = sequence;
+  updateSequence(seq) {
+    this.sequence = seq > this.sequence ? seq : this.sequence
+  }
+
+  _updateVoiceData(isResume = false) {
+    if (!this.sessionId || !this.endpoint || !this.token) return
+
+    const payload = {
+      guildId: this._guildId,
+      data: {
+        voice: {
+          token: this.token,
+          endpoint: this.endpoint,
+          sessionId: this.sessionId
+        },
+        volume: this._player.volume
+      }
     }
-  }
-
-  _updatePlayerVoiceData(isResume = false) {
-    if (!this.sessionId || !this.endpoint || !this.token) return;
-
-    const voiceData = {
-      token: this.token,
-      endpoint: this.endpoint,
-      sessionId: this.sessionId
-    };
 
     if (isResume) {
-      voiceData.resume = true;
-      voiceData.sequence = this.sequence;
+      payload.data.voice.resume = true
+      payload.data.voice.sequence = this.sequence
     }
 
     setImmediate(() => {
       try {
-        this.nodes.rest.updatePlayer({
-          guildId: this.guildId,
-          data: {
-            voice: voiceData,
-            volume: this.player.volume
-          }
-        });
+        this._nodes.rest.updatePlayer(payload)
       } catch (error) {
         if (!error.message.includes('ECONNREFUSED')) {
-          this.aqua.emit('debug', `[Player ${this.guildId}] Update error: ${error.message}`)
+          this._aqua.emit('debug', `[Player ${this._guildId}] Update failed: ${error.message}`)
         }
       }
     })
