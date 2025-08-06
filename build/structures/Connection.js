@@ -13,6 +13,7 @@ class Connection {
     this.endpoint = null
     this.token = null
     this.region = null
+    this.sequence = 0;
   }
 
   _extractRegionFromEndpoint(endpoint) {
@@ -36,6 +37,9 @@ class Connection {
     this.region = newRegion
 
     if (this.player.paused) this.player.paused = false
+    if (this.endpoint !== fullEndpoint) {
+      this.sequence = 0;
+    }
     this._updatePlayerVoiceData()
   }
 
@@ -71,27 +75,39 @@ class Connection {
     this.aqua.emit('debug', `[Player ${this.guildId}] Voice disconnected`)
     this.voiceChannel = null
     this.player.voiceChannel = null
+    this.sequence = 0;
     this.player.destroy()
   }
 
-  _updatePlayerVoiceData() {
-    if (!this.sessionId || !this.endpoint || !this.token) return
+  updateSequence(sequence) {
+    if (sequence > this.sequence) {
+      this.sequence = sequence;
+    }
+  }
 
+  _updatePlayerVoiceData(isResume = false) {
+    if (!this.sessionId || !this.endpoint || !this.token) return;
+
+    const voiceData = {
+      token: this.token,
+      endpoint: this.endpoint,
+      sessionId: this.sessionId
+    };
+
+    if (isResume) {
+      voiceData.resume = true;
+      voiceData.sequence = this.sequence;
+    }
 
     setImmediate(() => {
-
       try {
         this.nodes.rest.updatePlayer({
           guildId: this.guildId,
           data: {
-            voice: {
-              token: this.token,
-              endpoint: this.endpoint,
-              sessionId: this.sessionId
-            },
+            voice: voiceData,
             volume: this.player.volume
           }
-        })
+        });
       } catch (error) {
         if (!error.message.includes('ECONNREFUSED')) {
           this.aqua.emit('debug', `[Player ${this.guildId}] Update error: ${error.message}`)
