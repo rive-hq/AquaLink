@@ -1,6 +1,7 @@
 'use strict'
 
-const { promises: fs } = require('node:fs')
+import fs from 'node:fs'
+import readline from 'node:readline'
 const { EventEmitter } = require('tseep')
 
 const Node = require('./Node')
@@ -616,48 +617,58 @@ class Aqua extends EventEmitter {
 
   async loadPlayers(filePath = './AquaPlayers.jsonl') {
     try {
-      await fs.access(filePath)
+      await fs.promises.access(filePath)
       await this._waitForFirstNode()
-      const rawData = await fs.readFile(filePath, 'utf8')
-      const lines = rawData.trim().split('\n').filter(Boolean)
 
-      for (let i = 0; i < lines.length; i += PLAYER_BATCH_SIZE) {
-        const batch = lines.slice(i, Math.min(i + PLAYER_BATCH_SIZE, lines.length))
-          .map(line => JSON.parse(line))
+      const rl = readline.createInterface({
+        input: fs.createReadStream(filePath, 'utf8'),
+        crlfDelay: Infinity
+      })
 
-        await Promise.all(batch.map(p => this._restorePlayer(p)))
+      let batch = []
+      for await (const line of rl) {
+        if (!line) continue
+        batch.push(JSON.parse(line))
+        if (batch.length >= PLAYER_BATCH_SIZE) {
+          await Promise.allSettled(batch.map(p => this._restorePlayer(p)))
+          batch = []
+        }
+      }
+      if (batch.length) {
+        await Promise.allSettled(batch.map(p => this._restorePlayer(p)))
       }
 
-      await fs.writeFile(filePath, '', 'utf8')
+      await fs.promises.writeFile(filePath, '', 'utf8')
     } catch { }
   }
 
   async savePlayer(filePath = './AquaPlayers.jsonl') {
-    const lines = []
+    const ws = fs.createWriteStream(filePath, 'utf8')
+    let count = 0
 
     for (const player of this.players.values()) {
       const requester = player.requester || player.current?.requester
-
-      const compactData = {
+      ws.write(JSON.stringify({
         g: player.guildId,
         t: player.textChannel,
         v: player.voiceChannel,
         u: player.current?.uri || null,
         p: player.position || 0,
         ts: player.timestamp || 0,
-        q: player.queue?.tracks?.slice(0, 5).map(tr => tr.uri) || EMPTY_ARRAY,
+        q: player.queue?.tracks?.slice(0, 5).map(tr => tr.uri) || [],
         r: requester ? `${requester.id}:${requester.username}` : null,
         vol: player.volume,
         pa: player.paused,
         pl: player.playing,
         nw: player.nowPlayingMessage?.id || null
-      }
-      lines.push(JSON.stringify(compactData))
+      }) + '\n')
+      count++
     }
 
-    await fs.writeFile(filePath, lines.join('\n'), 'utf8')
-    this.emit('debug', 'Aqua', `Saved ${lines.length} players to ${filePath}`)
+    await new Promise(resolve => ws.end(resolve))
+    this.emit('debug', 'Aqua', `Saved ${count} players to ${filePath}`)
   }
+
 
   async _restorePlayer(p) {
     try {
