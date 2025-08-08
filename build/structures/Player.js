@@ -1,6 +1,6 @@
 'use strict'
 
-const { EventEmitter } = require('tseep')
+const { EventEmitter } = require('node:events')
 const Connection = require('./Connection')
 const Queue = require('./Queue')
 const Filters = require('./Filters')
@@ -43,12 +43,7 @@ class MicrotaskUpdateBatcher {
 
   batch(data, immediate = false) {
     this.updates ??= Object.create(null)
-
-    const keys = Object.keys(data)
-    for (let i = 0; i < keys.length; i++) {
-      const key = keys[i]
-      this.updates[key] = data[key]
-    }
+    Object.assign(this.updates, data)
 
     if (immediate || data.track) {
       return this._flush()
@@ -66,11 +61,11 @@ class MicrotaskUpdateBatcher {
   }
 
   _flush() {
-    if (!this.updates) return
+    if (!this.updates) return Promise.resolve()
 
     const updates = this.updates
     this.updates = null
-    this.player.updatePlayer(updates).catch(err => {
+    return this.player.updatePlayer(updates).catch(err => {
       console.error('Update player error:', err)
     })
   }
@@ -100,6 +95,7 @@ class CircularBuffer {
   }
 
   clear() {
+    this.buffer.fill(undefined, 0, this.count)
     this.count = 0
     this.index = 0
   }
@@ -154,32 +150,43 @@ class Player extends EventEmitter {
   }
 
   _handlePlayerUpdate(packet) {
-    const state = packet.state
-    this.position = state.position
-    this.connected = state.connected
-    this.ping = state.ping
-    this.timestamp = state.time
+    const { position, connected, ping, time } = packet.state
+    this.position = position
+    this.connected = connected
+    this.ping = ping
+    this.timestamp = time
     this.aqua.emit('playerUpdate', this, packet)
   }
 
   async _handleEvent(payload) {
     const handlerName = EVENT_HANDLERS[payload.type]
 
-    if (!handlerName || typeof this[handlerName] !== 'function') {
+    if (!handlerName) {
       this.aqua.emit('nodeError', this, new Error(`Unknown event: ${payload.type}`))
-      return
+      return;
     }
 
+    const handler = this[handlerName]
+    if (typeof handler !== 'function') return;
+
     try {
-      await this[handlerName](this, this.current, payload)
+      await handler.call(this, this, this.current, payload)
     } catch (error) {
       this.aqua.emit('error', error)
     }
   }
 
-  get previous() { return this.previousTracks.getLast() }
-  get currenttrack() { return this.current }
-  getQueue() { return this.queue }
+  get previous() {
+    return this.previousTracks.getLast()
+  }
+
+  get currenttrack() {
+    return this.current
+  }
+
+  getQueue() {
+    return this.queue
+  }
 
   batchUpdatePlayer(data, immediate = false) {
     return this._updateBatcher.batch(data, immediate)
@@ -191,7 +198,7 @@ class Player extends EventEmitter {
   }
 
   async play() {
-    if (!this.connected || !this.queue.length) return
+    if (!this.connected || !this.queue.length) return;
 
     const item = this.queue.shift()
     this.current = item.track ? item : await item.resolve(this.aqua)
@@ -233,6 +240,7 @@ class Player extends EventEmitter {
     this.isAutoplay = false
 
     this.aqua.destroyPlayer(this.guildId)
+
     if (this.nodes?.connected) {
       this.nodes.rest.destroyPlayer(this.guildId).catch(error => {
         if (!error.message.includes('ECONNREFUSED')) {
@@ -243,16 +251,20 @@ class Player extends EventEmitter {
 
     this.previousTracks?.clear()
     this._dataStore?.clear()
-
     this.removeAllListeners()
 
-    this.queue = this.previousTracks = this.connection = this.filters =
-      this._updateBatcher = this._dataStore = null
+    this.queue = null
+    this.previousTracks = null
+    this.connection = null
+    this.filters = null
+    this._updateBatcher = null
+    this._dataStore = null
 
     return this
   }
 
   pause(paused) {
+    paused = !!paused
     if (this.paused === paused) return this
     this.paused = paused
     this.batchUpdatePlayer({ paused })
@@ -263,7 +275,7 @@ class Player extends EventEmitter {
     if (!this.playing || !isValidPosition(position)) return this
 
     const maxPos = this.current?.info?.length
-    this.position = maxPos ? Math.min(Math.max(0, position), maxPos) : Math.max(0, position)
+    this.position = maxPos ? Math.min(position, maxPos) : position
     this.batchUpdatePlayer({ position: this.position })
     return this
   }
@@ -328,12 +340,16 @@ class Player extends EventEmitter {
 
     for (let i = len - 1; i > 0; i--) {
       const j = (Math.random() * (i + 1)) | 0
-      ;[queue[i], queue[j]] = [queue[j], queue[i]]
+      const temp = queue[i]
+      queue[i] = queue[j]
+      queue[j] = temp
     }
     return this
   }
 
-  replay() { return this.seek(0) }
+  replay() {
+    return this.seek(0)
+  }
 
   skip() {
     this.stop()
@@ -376,18 +392,12 @@ class Player extends EventEmitter {
     if (!this.isAutoplayEnabled || !this.previous) return this
 
     this.isAutoplay = true
-    const prevInfo = this.previous.info
-    const sourceName = prevInfo.sourceName
-    const identifier = prevInfo.identifier
-    const uri = prevInfo.uri
-    const requester = prevInfo.requester
-    const author = prevInfo.author
+    const { sourceName, identifier, uri, requester, author } = this.previous.info
 
     try {
       let query = null
       let source = null
       let resolved = null
-      let track = null
 
       if (sourceName === 'youtube') {
         query = `https://www.youtube.com/watch?v=${identifier}&list=RD${identifier}`
@@ -423,6 +433,7 @@ class Player extends EventEmitter {
         return this
       }
 
+      let track = null
       if (resolved) {
         track = resolved[getRandomIndex(resolved)]
       } else {
@@ -469,7 +480,7 @@ class Player extends EventEmitter {
         this.aqua.emit('trackEnd', player, track, reason)
         await player.play()
       }
-      return
+      return;
     }
 
     if (this.loop === LOOP_MODES.TRACK) {
@@ -508,28 +519,28 @@ class Player extends EventEmitter {
   async socketClosed(player, track, payload) {
     if (payload.code === 4014) return this.destroy()
 
- if (payload.code === 4015) {
-    try {
-      if (this.connection) {
-        this.connection._updatePlayerVoiceData(true);
-        this.aqua.emit('debug', `[Player ${this.guildId}] Attempting resume...`);
-        return;
+    if (payload.code === 4015) {
+      try {
+        if (this.connection) {
+          this.connection._updatePlayerVoiceData(true)
+          this.aqua.emit('debug', `[Player ${this.guildId}] Attempting resume...`)
+          return;
+        }
+      } catch (error) {
+        console.error('Resume failed, falling back to reconnect', error)
       }
-    } catch (error) {
-      console.error('Resume failed, falling back to reconnect', error);
     }
-  }
 
     if (!RECONNECT_CODES.has(payload.code)) {
       this.aqua.emit('socketClosed', player, payload)
-      return
+      return;
     }
 
     try {
       const voiceChannelId = this.voiceChannel?.id || this.voiceChannel
       if (!voiceChannelId) {
         this.aqua.emit('socketClosed', player, payload)
-        return
+        return;
       }
 
       const connection = this.connection
@@ -558,7 +569,7 @@ class Player extends EventEmitter {
         textChannel: this.textChannel?.id || this.textChannel,
         deaf: this.deaf,
         mute: this.mute,
-        defaultVolume: savedState.volume,
+        defaultVolume: savedState.volume
       })
 
       if (!newPlayer) throw new Error('Failed to create a new player during reconnection.')
@@ -577,7 +588,8 @@ class Player extends EventEmitter {
       if (savedState.currentTrack) {
         newPlayer.queue.add(savedState.currentTrack)
         const queue = savedState.queue
-        for (let i = 0; i < queue.length; i++) {
+        const len = queue.length
+        for (let i = 0; i < len; i++) {
           newPlayer.queue.add(queue[i])
         }
 
@@ -619,9 +631,17 @@ class Player extends EventEmitter {
     this.aqua.emit('lyricsNotFound', player, track, payload)
   }
 
-  send(data) { this.aqua.send({ op: 4, d: data }) }
-  set(key, value) { this._dataStore.set(key, value) }
-  get(key) { return this._dataStore.get(key) }
+  send(data) {
+    this.aqua.send({ op: 4, d: data })
+  }
+
+  set(key, value) {
+    this._dataStore.set(key, value)
+  }
+
+  get(key) {
+    return this._dataStore.get(key)
+  }
 
   clearData() {
     this.previousTracks?.clear()
