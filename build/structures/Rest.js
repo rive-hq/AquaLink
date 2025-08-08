@@ -1,83 +1,44 @@
-const { Agent: HttpsAgent, request: httpsRequest } = require('node:https');
-const { Agent: HttpAgent, request: httpRequest } = require('node:http');
-const { URL } = require('node:url');
+'use strict'
 
-const JSON_TYPE_REGEX = /^application\/json/i;
-const MAX_RESPONSE_SIZE = 10485760;
-const BASE64_REGEX = /^[A-Za-z0-9+/]+={0,2}$/;
-const METADATA_PHRASES = [
-  'Official Visualizer',
-  'Official',
-  'Official Video',
-  'Music Video',
-  'Live',
-  'Lyrics',
-  'Audio',
-  'HD',
-  'Remix',
-  'Cover',
-  'Acoustic',
-  'Instrumental',
-  'Karaoke',
-  'ft',
-  'feat'
-];
+const { Agent: HttpsAgent, request: httpsRequest } = require('node:https')
+const { Agent: HttpAgent, request: httpRequest } = require('node:http')
 
-const METADATA_REGEX = new RegExp(
-  `\\s*[[({](${METADATA_PHRASES.map(phrase =>
-    phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  ).join('|')})[^\\]}()]*[\\])}]`,
-  'gi'
-);
-const BRACKETS_REGEX = /\s*(\[[^\]]*\]|\([^\)]*\)|\{[^\}]*\})\s*/g;
-
-const ERRORS = {
+const JSON_TYPE_REGEX = /^application\/json/i
+const BASE64_REGEX = /^[A-Za-z0-9+/]*={0,2}$/
+const MAX_RESPONSE_SIZE = 10485760
+const ERRORS = Object.freeze({
   NO_SESSION: 'Session ID required',
   INVALID_TRACK: 'Invalid encoded track format',
   INVALID_TRACKS: 'One or more tracks have invalid format',
   RESPONSE_TOO_LARGE: 'Response too large',
   JSON_PARSE: 'JSON parse error: ',
   REQUEST_TIMEOUT: 'Request timeout: '
-};
-
-const cleanTitle = title => title
-  .replace(METADATA_REGEX, '')
-  .replace(BRACKETS_REGEX, '')
-  .trim();
-
+})
 
 const isValidBase64 = str => {
-  if (typeof str !== 'string' || str.length === 0) return false;
-  const len = str.length;
-
-  if (len % 4 !== 0) return false;
-
-  if (!BASE64_REGEX.test(str)) return false;
-
-  let pad = 0;
-  for (let i = len - 1; i >= 0; i--) {
-    if (str[i] !== '=') break;
-    pad++;
-  }
-  return pad <= 2;
-};
+  if (typeof str !== 'string' || !str) return false
+  const len = str.length
+  return len % 4 === 0 && BASE64_REGEX.test(str)
+}
 
 class Rest {
-  constructor(aqua, { secure = false, host, port, sessionId = null, password, timeout = 15000 }) {
-    this.aqua = aqua;
-    this.sessionId = sessionId;
-    this.version = 'v4';
-    this.secure = secure;
-    this.timeout = timeout;
+  constructor(aqua, node) {
+    this.aqua = aqua
+    this.node = node
+    this.sessionId = node.sessionId
+    this.version = 'v4'
+    this.timeout = node.timeout || 15000
 
-    this.baseUrl = new URL(`${secure ? 'https' : 'http'}://${host}:${port}`);
+    const protocol = node.secure ? 'https:' : 'http:'
+    this.baseUrl = `${protocol}//${node.host}:${node.port}`
+
     this.headers = Object.freeze({
       'Content-Type': 'application/json',
-      'Authorization': password,
+      'Authorization': node.password,
       'Accept': 'application/json'
-    });
+    })
 
-    const AgentClass = secure ? HttpsAgent : HttpAgent;
+    const AgentClass = node.secure ? HttpsAgent : HttpAgent
     this.agent = new AgentClass({
       keepAlive: true,
       maxSockets: 10,
@@ -86,312 +47,250 @@ class Rest {
       freeSocketTimeout: 30000,
       keepAliveMsecs: 1000,
       scheduling: 'fifo'
-    });
+    })
 
-    this.request = secure ? httpsRequest : httpRequest;
+    this.request = node.secure ? httpsRequest : httpRequest
   }
 
   setSessionId(sessionId) {
-    this.sessionId = sessionId;
+    this.sessionId = sessionId
   }
 
   _validateSessionId() {
-    if (!this.sessionId) throw new Error(ERRORS.NO_SESSION);
-  }
-
-  _isValidEncodedTrack(track) {
-    return isValidBase64(track);
+    if (!this.sessionId) throw new Error(ERRORS.NO_SESSION)
   }
 
   async makeRequest(method, endpoint, body = null) {
-    const url = new URL(endpoint, this.baseUrl);
+    const url = `${this.baseUrl}${endpoint}`
     const options = {
       method,
       headers: this.headers,
       timeout: this.timeout,
       agent: this.agent
-    };
+    }
 
     return new Promise((resolve, reject) => {
       const req = this.request(url, options, res => {
         if (res.statusCode === 204) {
-          res.resume();
-          return resolve(null);
+          res.resume()
+          return resolve(null)
         }
 
-        const chunks = [];
-        let totalLength = 0;
-        const isJson = JSON_TYPE_REGEX.test(res.headers['content-type'] || '');
+        const chunks = []
+        let totalLength = 0
+        const contentType = res.headers['content-type']
+        const isJson = contentType && JSON_TYPE_REGEX.test(contentType)
 
-        res.on('data', chunk => {
-          totalLength += chunk.length;
+        const onData = chunk => {
+          totalLength += chunk.length
           if (totalLength > MAX_RESPONSE_SIZE) {
-            req.destroy();
-            return reject(new Error(ERRORS.RESPONSE_TOO_LARGE));
+            req.destroy()
+            reject(new Error(ERRORS.RESPONSE_TOO_LARGE))
+            return
           }
-          chunks.push(chunk);
-        });
+          chunks.push(chunk)
+        }
 
-        res.on('end', () => {
-          if (totalLength === 0) return resolve(null);
+        const onEnd = () => {
+          if (totalLength === 0) {
+            resolve(null)
+            return
+          }
 
-          const data = Buffer.concat(chunks);
-          if (!isJson) return resolve(data.toString());
+          const data = chunks.length === 1 ? chunks[0] : Buffer.concat(chunks)
+
+          if (!isJson) {
+            resolve(data.toString())
+            return
+          }
 
           try {
-            resolve(JSON.parse(data));
+            resolve(JSON.parse(data))
           } catch (err) {
-            reject(new Error(`${ERRORS.JSON_PARSE}${err.message}`));
+            reject(new Error(`${ERRORS.JSON_PARSE}${err.message}`))
           }
-        });
+        }
 
-        res.on('error', reject);
-      });
+        res.on('data', onData)
+        res.once('end', onEnd)
+        res.once('error', reject)
+      })
 
-      req.on('error', reject);
-      req.on('timeout', () => {
-        req.destroy();
-        reject(new Error(`${ERRORS.REQUEST_TIMEOUT}${this.timeout}ms`));
-      });
-
-      if (body) {
-        const payload = typeof body === 'string' ? body : JSON.stringify(body);
-        req.setHeader('Content-Length', Buffer.byteLength(payload));
-        req.write(payload);
+      const onError = err => {
+        req.destroy()
+        reject(err)
       }
 
-      req.end();
-    });
-  }
+      const onTimeout = () => {
+        req.destroy()
+        reject(new Error(`${ERRORS.REQUEST_TIMEOUT}${this.timeout}ms`))
+      }
 
-  async batchRequests(requests) {
-    return Promise.all(requests.map(({ method, endpoint, body }) =>
-      this.makeRequest(method, endpoint, body)
-    ));
+      req.once('error', onError)
+      req.once('timeout', onTimeout)
+
+      if (body) {
+        const payload = typeof body === 'string' ? body : JSON.stringify(body)
+        req.setHeader('Content-Length', Buffer.byteLength(payload))
+        req.write(payload)
+      }
+
+      req.end()
+    })
   }
 
   async updatePlayer({ guildId, data }) {
-    this._validateSessionId();
+    this._validateSessionId()
     return this.makeRequest(
       'PATCH',
       `/${this.version}/sessions/${this.sessionId}/players/${guildId}?noReplace=false`,
       data
-    );
+    )
   }
 
   async getPlayer(guildId) {
-    this._validateSessionId();
-    return this.makeRequest(
-      'GET',
-      `/${this.version}/sessions/${this.sessionId}/players/${guildId}`
-    );
+    this._validateSessionId()
+    return this.makeRequest('GET', `/${this.version}/sessions/${this.sessionId}/players/${guildId}`)
   }
 
   async getPlayers() {
-    this._validateSessionId();
-    return this.makeRequest(
-      'GET',
-      `/${this.version}/sessions/${this.sessionId}/players`
-    );
+    this._validateSessionId()
+    return this.makeRequest('GET', `/${this.version}/sessions/${this.sessionId}/players`)
   }
 
   async destroyPlayer(guildId) {
-    this._validateSessionId();
-    return this.makeRequest(
-      'DELETE',
-      `/${this.version}/sessions/${this.sessionId}/players/${guildId}`
-    );
+    this._validateSessionId()
+    return this.makeRequest('DELETE', `/${this.version}/sessions/${this.sessionId}/players/${guildId}`)
   }
 
   async loadTracks(identifier) {
-    const params = new URLSearchParams({ identifier });
-    return this.makeRequest(
-      'GET',
-      `/${this.version}/loadtracks?${params}`
-    );
+    return this.makeRequest('GET', `/${this.version}/loadtracks?identifier=${encodeURIComponent(identifier)}`)
   }
 
   async decodeTrack(encodedTrack) {
-    if (!this._isValidEncodedTrack(encodedTrack)) {
-      throw new Error(ERRORS.INVALID_TRACK);
+    if (!isValidBase64(encodedTrack)) {
+      throw new Error(ERRORS.INVALID_TRACK)
     }
-    const params = new URLSearchParams({ encodedTrack });
-    return this.makeRequest('GET', `/${this.version}/decodetrack?${params}`);
+    return this.makeRequest('GET', `/${this.version}/decodetrack?encodedTrack=${encodedTrack}`)
   }
 
   async decodeTracks(encodedTracks) {
-    const invalid = encodedTracks.find(t => !this._isValidEncodedTrack(t));
-    if (invalid) throw new Error(ERRORS.INVALID_TRACKS);
-
-    return this.makeRequest('POST', `/${this.version}/decodetracks`, encodedTracks);
+    for (let i = 0; i < encodedTracks.length; i++) {
+      if (!isValidBase64(encodedTracks[i])) {
+        throw new Error(ERRORS.INVALID_TRACKS)
+      }
+    }
+    return this.makeRequest('POST', `/${this.version}/decodetracks`, encodedTracks)
   }
 
   async getStats() {
-    return this.makeRequest('GET', `/${this.version}/stats`);
+    return this.makeRequest('GET', `/${this.version}/stats`)
   }
 
   async getInfo() {
-    return this.makeRequest('GET', `/${this.version}/info`);
+    return this.makeRequest('GET', `/${this.version}/info`)
   }
 
   async getVersion() {
-    return this.makeRequest('GET', `/${this.version}/version`);
+    return this.makeRequest('GET', `/${this.version}/version`)
   }
 
   async getRoutePlannerStatus() {
-    return this.makeRequest('GET', `/${this.version}/routeplanner/status`);
+    return this.makeRequest('GET', `/${this.version}/routeplanner/status`)
   }
 
   async freeRoutePlannerAddress(address) {
-    return this.makeRequest(
-      'POST',
-      `/${this.version}/routeplanner/free/address`,
-      { address }
-    );
+    return this.makeRequest('POST', `/${this.version}/routeplanner/free/address`, { address })
   }
 
   async freeAllRoutePlannerAddresses() {
-    return this.makeRequest(
-      'POST',
-      `/${this.version}/routeplanner/free/all`
-    );
+    return this.makeRequest('POST', `/${this.version}/routeplanner/free/all`)
   }
 
   async getLyrics({ track, skipTrackSource = false }) {
-    if (!this._isValidTrackForLyrics(track)) {
-      this.aqua.emit('error', '[Aqua/Lyrics] Invalid track object');
-      return null;
+    if (!track || (!track.guild_id && !track.encoded && !track.info?.title)) {
+      this.aqua.emit('error', '[Aqua/Lyrics] Invalid track object')
+      return null
     }
 
-    // Priority 1: Current player track
+    const skipParam = skipTrackSource ? 'true' : 'false'
+
     if (track.guild_id) {
       try {
-        const lyrics = await this._getPlayerTrackLyrics(track.guild_id, skipTrackSource);
-        if (this._isValidLyrics(lyrics)) return lyrics;
-      } catch (error) {
-        this.aqua.emit('debug', `[Aqua/Lyrics] Player track failed: ${error.message}`);
-      }
+        this._validateSessionId()
+        const lyrics = await this.makeRequest(
+          'GET',
+          `/${this.version}/sessions/${this.sessionId}/players/${track.guild_id}/track/lyrics?skipTrackSource=${skipParam}`
+        )
+        if (this._isValidLyrics(lyrics)) return lyrics
+      } catch {}
     }
 
-    // Priority 2: Encoded track
-    if (track.encoded && this._isValidEncodedTrack(track.encoded)) {
+    if (track.encoded && isValidBase64(track.encoded)) {
       try {
-        const lyrics = await this._getEncodedTrackLyrics(track.encoded, skipTrackSource);
-        if (this._isValidLyrics(lyrics)) return lyrics;
-      } catch (error) {
-        this.aqua.emit('debug', `[Aqua/Lyrics] Encoded track failed: ${error.message}`);
-      }
+        const lyrics = await this.makeRequest(
+          'GET',
+          `/${this.version}/lyrics?track=${track.encoded}&skipTrackSource=${skipParam}`
+        )
+        if (this._isValidLyrics(lyrics)) return lyrics
+      } catch {}
     }
 
-    // Priority 3: Title/author search
     if (track.info?.title) {
+      const query = track.info.author
+        ? `${track.info.title} ${track.info.author}`
+        : track.info.title
+
       try {
-        const query = this._buildSearchQuery(track.info);
-        const lyrics = await this._searchLyrics(query);
-        if (this._isValidLyrics(lyrics)) return lyrics;
-      } catch (error) {
-        this.aqua.emit('debug', `[Aqua/Lyrics] Search failed: ${error.message}`);
-      }
+        const lyrics = await this.makeRequest(
+          'GET',
+          `/${this.version}/lyrics/search?query=${encodeURIComponent(query)}`
+        )
+        if (this._isValidLyrics(lyrics)) return lyrics
+      } catch {}
     }
 
-    // Priority 4: Cleaned title search
-    if (track.info?.title && track.info?.author) {
-      try {
-        const cleanedTitle = cleanTitle(track.info.title);
-        const query = `${cleanedTitle} ${track.info.author}`;
-        const lyrics = await this._searchLyrics(query);
-        if (this._isValidLyrics(lyrics)) return lyrics;
-      } catch (error) {
-        this.aqua.emit('debug', `[Aqua/Lyrics] Clean search failed: ${error.message}`);
-      }
-    }
-
-    this.aqua.emit('debug', '[Aqua/Lyrics] No lyrics found');
-    return null;
-  }
-
-  async _getPlayerTrackLyrics(guildId, skipTrackSource) {
-    this._validateSessionId();
-    const params = new URLSearchParams({
-      skipTrackSource: skipTrackSource ? 'true' : 'false'
-    });
-    return this.makeRequest(
-      'GET',
-      `/${this.version}/sessions/${this.sessionId}/players/${guildId}/track/lyrics?${params}`
-    );
-  }
-
-  async _getEncodedTrackLyrics(encodedTrack, skipTrackSource) {
-    const params = new URLSearchParams({
-      track: encodedTrack,
-      skipTrackSource: skipTrackSource ? 'true' : 'false'
-    });
-    return this.makeRequest('GET', `/${this.version}/lyrics?${params}`);
-  }
-
-  async _searchLyrics(query) {
-    const params = new URLSearchParams({ query });
-    return this.makeRequest('GET', `/${this.version}/lyrics/search?${params}`);
-  }
-
-  _isValidTrackForLyrics(track) {
-    return track && (
-      track.guild_id ||
-      (track.encoded && this._isValidEncodedTrack(track.encoded)) ||
-      track.info?.title
-    );
+    return null
   }
 
   _isValidLyrics(response) {
     return response &&
       response.status !== 204 &&
-      !(Array.isArray(response) && response.length === 0);
+      !(Array.isArray(response) && response.length === 0)
   }
 
-  _buildSearchQuery(info) {
-    return [info.title, info.author]
-      .filter(Boolean)
-      .join(' ');
-  }
-
-  // Live lyrics management
   async subscribeLiveLyrics(guildId, skipTrackSource = false) {
-    this._validateSessionId();
+    this._validateSessionId()
     try {
-      const params = new URLSearchParams({
-        skipTrackSource: skipTrackSource ? 'true' : 'false'
-      });
       const result = await this.makeRequest(
         'POST',
-        `/${this.version}/sessions/${this.sessionId}/players/${guildId}/lyrics/subscribe?${params}`
-      );
-      return result === null;
-    } catch (error) {
-      this.aqua.emit('debug', `[Aqua/Lyrics] Subscribe failed: ${error.message}`);
-      return false;
+        `/${this.version}/sessions/${this.sessionId}/players/${guildId}/lyrics/subscribe?skipTrackSource=${skipTrackSource ? 'true' : 'false'}`
+      )
+      return result === null
+    } catch {
+      return false
     }
   }
 
   async unsubscribeLiveLyrics(guildId) {
-    this._validateSessionId();
+    this._validateSessionId()
     try {
       const result = await this.makeRequest(
         'DELETE',
         `/${this.version}/sessions/${this.sessionId}/players/${guildId}/lyrics/subscribe`
-      );
-      return result === null;
-    } catch (error) {
-      this.aqua.emit('debug', `[Aqua/Lyrics] Unsubscribe failed: ${error.message}`);
-      return false;
+      )
+      return result === null
+    } catch {
+      return false
     }
   }
 
   destroy() {
     if (this.agent) {
-      this.agent.destroy();
-      this.agent = null;
+      this.agent.destroy()
+      this.agent = null
     }
   }
 }
 
-module.exports = Rest;
+module.exports = Rest
