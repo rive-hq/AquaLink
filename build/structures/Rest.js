@@ -1,11 +1,13 @@
 'use strict'
 
+const { Buffer } = require('node:buffer')
 const { Agent: HttpsAgent, request: httpsRequest } = require('node:https')
 const { Agent: HttpAgent, request: httpRequest } = require('node:http')
 
 const JSON_TYPE_REGEX = /^application\/json/i
 const BASE64_REGEX = /^[A-Za-z0-9+/]*={0,2}$/
 const MAX_RESPONSE_SIZE = 10485760
+const API_VERSION = 'v4'
 const ERRORS = Object.freeze({
   NO_SESSION: 'Session ID required',
   INVALID_TRACK: 'Invalid encoded track format',
@@ -21,12 +23,13 @@ const isValidBase64 = str => {
   return len % 4 === 0 && BASE64_REGEX.test(str)
 }
 
+const _bool = b => b ? 'true' : 'false'
+
 class Rest {
   constructor(aqua, node) {
     this.aqua = aqua
     this.node = node
     this.sessionId = node.sessionId
-    this.version = 'v4'
     this.timeout = node.timeout || 15000
 
     const protocol = node.secure ? 'https:' : 'http:'
@@ -46,7 +49,7 @@ class Rest {
       timeout: this.timeout,
       freeSocketTimeout: 30000,
       keepAliveMsecs: 1000,
-      scheduling: 'fifo'
+      scheduling: 'lifo'
     })
 
     this.request = node.secure ? httpsRequest : httpRequest
@@ -77,22 +80,22 @@ class Rest {
         }
 
         const chunks = []
-        let totalLength = 0
+        const state = { total: 0 }
         const contentType = res.headers['content-type']
         const isJson = contentType && JSON_TYPE_REGEX.test(contentType)
 
         const onData = chunk => {
-          totalLength += chunk.length
-          if (totalLength > MAX_RESPONSE_SIZE) {
+          state.total += chunk.length
+          if (state.total > MAX_RESPONSE_SIZE) {
             req.destroy()
             reject(new Error(ERRORS.RESPONSE_TOO_LARGE))
-            return
+            return;
           }
           chunks.push(chunk)
         }
 
         const onEnd = () => {
-          if (totalLength === 0) {
+          if (state.total === 0) {
             resolve(null)
             return
           }
@@ -100,12 +103,12 @@ class Rest {
           const data = chunks.length === 1 ? chunks[0] : Buffer.concat(chunks)
 
           if (!isJson) {
-            resolve(data.toString())
+            resolve(data.toString('utf8'))
             return
           }
 
           try {
-            resolve(JSON.parse(data))
+            resolve(JSON.parse(data.toString('utf8')))
           } catch (err) {
             reject(new Error(`${ERRORS.JSON_PARSE}${err.message}`))
           }
@@ -143,68 +146,66 @@ class Rest {
     this._validateSessionId()
     return this.makeRequest(
       'PATCH',
-      `/${this.version}/sessions/${this.sessionId}/players/${guildId}?noReplace=false`,
+      `/${API_VERSION}/sessions/${this.sessionId}/players/${guildId}?noReplace=false`,
       data
     )
   }
 
   async getPlayer(guildId) {
     this._validateSessionId()
-    return this.makeRequest('GET', `/${this.version}/sessions/${this.sessionId}/players/${guildId}`)
+    return this.makeRequest('GET', `/${API_VERSION}/sessions/${this.sessionId}/players/${guildId}`)
   }
 
   async getPlayers() {
     this._validateSessionId()
-    return this.makeRequest('GET', `/${this.version}/sessions/${this.sessionId}/players`)
+    return this.makeRequest('GET', `/${API_VERSION}/sessions/${this.sessionId}/players`)
   }
 
   async destroyPlayer(guildId) {
     this._validateSessionId()
-    return this.makeRequest('DELETE', `/${this.version}/sessions/${this.sessionId}/players/${guildId}`)
+    return this.makeRequest('DELETE', `/${API_VERSION}/sessions/${this.sessionId}/players/${guildId}`)
   }
 
   async loadTracks(identifier) {
-    return this.makeRequest('GET', `/${this.version}/loadtracks?identifier=${encodeURIComponent(identifier)}`)
+    return this.makeRequest('GET', `/${API_VERSION}/loadtracks?identifier=${encodeURIComponent(identifier)}`)
   }
 
   async decodeTrack(encodedTrack) {
     if (!isValidBase64(encodedTrack)) {
       throw new Error(ERRORS.INVALID_TRACK)
     }
-    return this.makeRequest('GET', `/${this.version}/decodetrack?encodedTrack=${encodedTrack}`)
+    return this.makeRequest('GET', `/${API_VERSION}/decodetrack?encodedTrack=${encodeURIComponent(encodedTrack)}`)
   }
 
   async decodeTracks(encodedTracks) {
-    for (let i = 0; i < encodedTracks.length; i++) {
-      if (!isValidBase64(encodedTracks[i])) {
-        throw new Error(ERRORS.INVALID_TRACKS)
-      }
+    if (!Array.isArray(encodedTracks) || encodedTracks.length === 0 || !encodedTracks.every(isValidBase64)) {
+      throw new Error(ERRORS.INVALID_TRACKS)
     }
-    return this.makeRequest('POST', `/${this.version}/decodetracks`, encodedTracks)
+    return this.makeRequest('POST', `/${API_VERSION}/decodetracks`, encodedTracks)
   }
 
   async getStats() {
-    return this.makeRequest('GET', `/${this.version}/stats`)
+    return this.makeRequest('GET', `/${API_VERSION}/stats`)
   }
 
   async getInfo() {
-    return this.makeRequest('GET', `/${this.version}/info`)
+    return this.makeRequest('GET', `/${API_VERSION}/info`)
   }
 
   async getVersion() {
-    return this.makeRequest('GET', `/${this.version}/version`)
+    return this.makeRequest('GET', `/${API_VERSION}/version`)
   }
 
   async getRoutePlannerStatus() {
-    return this.makeRequest('GET', `/${this.version}/routeplanner/status`)
+    return this.makeRequest('GET', `/${API_VERSION}/routeplanner/status`)
   }
 
   async freeRoutePlannerAddress(address) {
-    return this.makeRequest('POST', `/${this.version}/routeplanner/free/address`, { address })
+    return this.makeRequest('POST', `/${API_VERSION}/routeplanner/free/address`, { address })
   }
 
   async freeAllRoutePlannerAddresses() {
-    return this.makeRequest('POST', `/${this.version}/routeplanner/free/all`)
+    return this.makeRequest('POST', `/${API_VERSION}/routeplanner/free/all`)
   }
 
   async getLyrics({ track, skipTrackSource = false }) {
@@ -213,14 +214,14 @@ class Rest {
       return null
     }
 
-    const skipParam = skipTrackSource ? 'true' : 'false'
+    const skipParam = _bool(skipTrackSource)
 
     if (track.guild_id) {
       try {
         this._validateSessionId()
         const lyrics = await this.makeRequest(
           'GET',
-          `/${this.version}/sessions/${this.sessionId}/players/${track.guild_id}/track/lyrics?skipTrackSource=${skipParam}`
+          `/${API_VERSION}/sessions/${this.sessionId}/players/${track.guild_id}/track/lyrics?skipTrackSource=${skipParam}`
         )
         if (this._isValidLyrics(lyrics)) return lyrics
       } catch {}
@@ -230,7 +231,7 @@ class Rest {
       try {
         const lyrics = await this.makeRequest(
           'GET',
-          `/${this.version}/lyrics?track=${track.encoded}&skipTrackSource=${skipParam}`
+          `/${API_VERSION}/lyrics?track=${encodeURIComponent(track.encoded)}&skipTrackSource=${skipParam}`
         )
         if (this._isValidLyrics(lyrics)) return lyrics
       } catch {}
@@ -244,7 +245,7 @@ class Rest {
       try {
         const lyrics = await this.makeRequest(
           'GET',
-          `/${this.version}/lyrics/search?query=${encodeURIComponent(query)}`
+          `/${API_VERSION}/lyrics/search?query=${encodeURIComponent(query)}`
         )
         if (this._isValidLyrics(lyrics)) return lyrics
       } catch {}
@@ -264,7 +265,7 @@ class Rest {
     try {
       const result = await this.makeRequest(
         'POST',
-        `/${this.version}/sessions/${this.sessionId}/players/${guildId}/lyrics/subscribe?skipTrackSource=${skipTrackSource ? 'true' : 'false'}`
+        `/${API_VERSION}/sessions/${this.sessionId}/players/${guildId}/lyrics/subscribe?skipTrackSource=${_bool(skipTrackSource)}`
       )
       return result === null
     } catch {
@@ -277,7 +278,7 @@ class Rest {
     try {
       const result = await this.makeRequest(
         'DELETE',
-        `/${this.version}/sessions/${this.sessionId}/players/${guildId}/lyrics/subscribe`
+        `/${API_VERSION}/sessions/${this.sessionId}/players/${guildId}/lyrics/subscribe`
       )
       return result === null
     } catch {
