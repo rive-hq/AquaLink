@@ -1,6 +1,7 @@
 'use strict'
 
 const { EventEmitter } = require('node:events')
+
 const Connection = require('./Connection')
 const Queue = require('./Queue')
 const Filters = require('./Filters')
@@ -29,10 +30,14 @@ const FAILURE_REASONS = new Set(['LOAD_FAILED', 'CLEANUP'])
 const RECONNECT_CODES = new Set([4015, 4009, 4006])
 const FAIL_LOAD_TYPES = new Set(['error', 'empty', 'LOAD_FAILED', 'NO_MATCHES'])
 
-const clamp = v => Math.max(0, Math.min(200, +v || 0))
-const isValidVolume = v => typeof v === 'number' && v >= 0 && v <= 200
-const isValidPosition = p => typeof p === 'number' && !isNaN(p) && p >= 0
-const getRandomIndex = arr => (Math.random() * arr.length) | 0
+const fnClamp = v => Math.max(0, Math.min(200, +v || 0))
+const fnIsValidVolume = v => typeof v === 'number' && v >= 0 && v <= 200
+const fnIsValidPosition = p => typeof p === 'number' && !Number.isNaN(p) && p >= 0
+const fnRandomIndex = arr => (Math.random() * arr.length) | 0
+const fnToId = v => v && (v.id || v)
+const fnSafeDeleteMessage = msg => {
+  if (msg) msg.delete().catch(() => {})
+}
 
 class MicrotaskUpdateBatcher {
   constructor(player) {
@@ -109,14 +114,18 @@ class Player extends EventEmitter {
   playing = false
   paused = false
   connected = false
+  destroyed = false
   isAutoplayEnabled = false
   isAutoplay = false
   autoplaySeed = null
+  previousIdentifiers = []
   current = null
   position = 0
   timestamp = 0
   ping = 0
   nowPlayingMessage = null
+  deaf = true
+  mute = false
 
   constructor(aqua, nodes, options = {}) {
     super()
@@ -132,7 +141,7 @@ class Player extends EventEmitter {
     this.queue = new Queue()
 
     const vol = options.defaultVolume ?? 100
-    this.volume = isValidVolume(vol) ? vol : clamp(vol)
+    this.volume = fnIsValidVolume(vol) ? vol : fnClamp(vol)
 
     this.loop = VALID_MODES.has(options.loop) ? options.loop : LOOP_MODES.NONE
     this.shouldDeleteMessage = !!aqua.options?.shouldDeleteMessage
@@ -160,7 +169,6 @@ class Player extends EventEmitter {
 
   async _handleEvent(payload) {
     const handlerName = EVENT_HANDLERS[payload.type]
-
     if (!handlerName) {
       this.aqua.emit('nodeError', this, new Error(`Unknown event: ${payload.type}`))
       return;
@@ -208,11 +216,16 @@ class Player extends EventEmitter {
     return this.batchUpdatePlayer({ track: { encoded: this.current.track } }, true)
   }
 
-  connect(options = this) {
-    const { guildId, voiceChannel, deaf = true, mute = false } = options
+  connect(options = null) {
+    const guildId = options?.guildId ?? this.guildId
+    const voiceChannel = options?.voiceChannel ?? this.voiceChannel
+    const deaf = options?.deaf ?? true
+    const mute = options?.mute ?? false
+
     this.deaf = deaf
     this.mute = mute
     this.connected = true
+    this.destroyed = false
 
     this.send({
       guild_id: guildId,
@@ -224,17 +237,16 @@ class Player extends EventEmitter {
   }
 
   destroy() {
-    if (!this.connected) return this
+    if (!this.connected && this.destroyed) return this
 
     this.connected = false
+    this.destroyed = true
     this._updateBatcher?.destroy()
 
     this.send({ guild_id: this.guildId, channel_id: null })
 
-    if (this.nowPlayingMessage) {
-      this.nowPlayingMessage.delete().catch(() => {})
-      this.nowPlayingMessage = null
-    }
+    fnSafeDeleteMessage(this.nowPlayingMessage)
+    this.nowPlayingMessage = null
 
     this.voiceChannel = null
     this.isAutoplay = false
@@ -264,16 +276,15 @@ class Player extends EventEmitter {
   }
 
   pause(paused) {
-    paused = !!paused
-    if (this.paused === paused) return this
-    this.paused = paused
-    this.batchUpdatePlayer({ paused })
+    const state = !!paused
+    if (this.paused === state) return this
+    this.paused = state
+    this.batchUpdatePlayer({ paused: state })
     return this
   }
 
   seek(position) {
-    if (!this.playing || !isValidPosition(position)) return this
-
+    if (!this.playing || !fnIsValidPosition(position)) return this
     const maxPos = this.current?.info?.length
     this.position = maxPos ? Math.min(position, maxPos) : position
     this.batchUpdatePlayer({ position: this.position })
@@ -289,8 +300,8 @@ class Player extends EventEmitter {
   }
 
   setVolume(volume) {
-    if (!isValidVolume(volume)) return this
-    const vol = clamp(volume)
+    if (!fnIsValidVolume(volume)) return this
+    const vol = fnClamp(volume)
     if (this.volume === vol) return this
     this.volume = vol
     this.batchUpdatePlayer({ volume: vol })
@@ -312,9 +323,10 @@ class Player extends EventEmitter {
 
   setVoiceChannel(channel) {
     if (!channel) throw new TypeError('Channel required')
-    if (this.connected && channel === this.voiceChannel) {
-      throw new ReferenceError(`Already connected to ${channel}`)
-    }
+
+    const targetId = fnToId(channel)
+    const currentId = fnToId(this.voiceChannel)
+    if (this.connected && targetId === currentId) return this
 
     this.voiceChannel = channel
     this.connect({
@@ -337,12 +349,11 @@ class Player extends EventEmitter {
   shuffle() {
     const queue = this.queue
     const len = queue.length
-
     for (let i = len - 1; i > 0; i--) {
       const j = (Math.random() * (i + 1)) | 0
-      const temp = queue[i]
+      const tmp = queue[i]
       queue[i] = queue[j]
-      queue[j] = temp
+      queue[j] = tmp
     }
     return this
   }
@@ -353,7 +364,7 @@ class Player extends EventEmitter {
 
   skip() {
     this.stop()
-    return this.playing ? this.play() : undefined
+    return this.play()
   }
 
   async getLyrics({ query, useCurrentTrack = true, skipTrackSource = false } = {}) {
@@ -408,8 +419,6 @@ class Player extends EventEmitter {
         query = scResults[0]
         source = 'scsearch'
       } else if (sourceName === 'spotify') {
-        this.previousIdentifiers ??= []
-
         if (this.previous) {
           this.previousIdentifiers.unshift(this.previous.identifier)
           if (this.previousIdentifiers.length >= 20) this.previousIdentifiers.pop()
@@ -435,13 +444,13 @@ class Player extends EventEmitter {
 
       let track = null
       if (resolved) {
-        track = resolved[getRandomIndex(resolved)]
+        track = resolved[fnRandomIndex(resolved)]
       } else {
         const response = await this.aqua.resolve({ query, source, requester })
         if (!response?.tracks?.length || FAIL_LOAD_TYPES.has(response.loadType)) {
           return this.stop()
         }
-        track = response.tracks[getRandomIndex(response.tracks)]
+        track = response.tracks[fnRandomIndex(response.tracks)]
       }
 
       if (!track?.info?.title) throw new Error('Invalid track object')
@@ -459,60 +468,58 @@ class Player extends EventEmitter {
   async trackStart(player, track) {
     this.playing = true
     this.paused = false
-    this.aqua.emit('trackStart', player, track)
+    this.aqua.emit('trackStart', this, track)
   }
 
   async trackEnd(player, track, payload) {
     if (track) this.previousTracks.push(track)
 
-    if (this.shouldDeleteMessage && this.nowPlayingMessage) {
-      this.nowPlayingMessage.delete().catch(() => {})
-      this.nowPlayingMessage = null
-    }
+    fnSafeDeleteMessage(this.nowPlayingMessage)
+    this.nowPlayingMessage = null
 
     const reason = payload.reason
 
     if (FAILURE_REASONS.has(reason)) {
       if (!this.queue.length) {
         this.clearData()
-        this.aqua.emit('queueEnd', player)
+        this.aqua.emit('queueEnd', this)
       } else {
-        this.aqua.emit('trackEnd', player, track, reason)
-        await player.play()
+        this.aqua.emit('trackEnd', this, track, reason)
+        await this.play()
       }
       return;
     }
 
     if (this.loop === LOOP_MODES.TRACK) {
-      player.queue.unshift(track)
+      this.queue.unshift(track)
     } else if (this.loop === LOOP_MODES.QUEUE) {
-      player.queue.push(track)
+      this.queue.push(track)
     }
 
-    if (player.queue.isEmpty()) {
+    if (this.queue.isEmpty()) {
       if (this.isAutoplayEnabled) {
-        await player.autoplay()
+        await this.autoplay()
       } else {
         this.playing = false
         if (this.leaveOnEnd) {
           this.clearData()
           this.destroy()
         }
-        this.aqua.emit('queueEnd', player)
+        this.aqua.emit('queueEnd', this)
       }
     } else {
-      this.aqua.emit('trackEnd', player, track, reason)
-      await player.play()
+      this.aqua.emit('trackEnd', this, track, reason)
+      await this.play()
     }
   }
 
   async trackError(player, track, payload) {
-    this.aqua.emit('trackError', player, track, payload)
+    this.aqua.emit('trackError', this, track, payload)
     return this.stop()
   }
 
   async trackStuck(player, track, payload) {
-    this.aqua.emit('trackStuck', player, track, payload)
+    this.aqua.emit('trackStuck', this, track, payload)
     return this.stop()
   }
 
@@ -532,14 +539,14 @@ class Player extends EventEmitter {
     }
 
     if (!RECONNECT_CODES.has(payload.code)) {
-      this.aqua.emit('socketClosed', player, payload)
+      this.aqua.emit('socketClosed', this, payload)
       return;
     }
 
     try {
-      const voiceChannelId = this.voiceChannel?.id || this.voiceChannel
+      const voiceChannelId = fnToId(this.voiceChannel)
       if (!voiceChannelId) {
-        this.aqua.emit('socketClosed', player, payload)
+        this.aqua.emit('socketClosed', this, payload)
         return;
       }
 
@@ -555,18 +562,18 @@ class Player extends EventEmitter {
         loop: this.loop,
         isAutoplayEnabled: this.isAutoplayEnabled,
         currentTrack: this.current,
-        queue: [...this.queue]
+        queue: this.queue ? [...this.queue] : []
       }
 
-      if (!player.destroyed) {
-        await player.destroy()
-        this.aqua.emit('playerDestroy', player)
+      if (!this.destroyed) {
+        this.destroy()
+        this.aqua.emit('playerDestroy', this)
       }
 
       const newPlayer = await this.aqua.createConnection({
         guildId: payload.guildId,
         voiceChannel: voiceChannelId,
-        textChannel: this.textChannel?.id || this.textChannel,
+        textChannel: fnToId(this.textChannel),
         deaf: this.deaf,
         mute: this.mute,
         defaultVolume: savedState.volume
@@ -587,10 +594,10 @@ class Player extends EventEmitter {
 
       if (savedState.currentTrack) {
         newPlayer.queue.add(savedState.currentTrack)
-        const queue = savedState.queue
-        const len = queue.length
+        const q = savedState.queue
+        const len = q.length
         for (let i = 0; i < len; i++) {
-          newPlayer.queue.add(queue[i])
+          newPlayer.queue.add(q[i])
         }
 
         await newPlayer.play()
@@ -605,30 +612,30 @@ class Player extends EventEmitter {
       }
 
       this.aqua.emit('playerReconnected', newPlayer, {
-        oldPlayer: player,
+        oldPlayer: this,
         restoredState: savedState
       })
     } catch (error) {
       console.error('Reconnection failed:', error)
-      this.aqua.emit('reconnectionFailed', player, {
+      this.aqua.emit('reconnectionFailed', this, {
         error,
         code: payload.code,
         payload
       })
-      this.aqua.emit('socketClosed', player, payload)
+      this.aqua.emit('socketClosed', this, payload)
     }
   }
 
   async lyricsLine(player, track, payload) {
-    this.aqua.emit('lyricsLine', player, track, payload)
+    this.aqua.emit('lyricsLine', this, track, payload)
   }
 
   async lyricsFound(player, track, payload) {
-    this.aqua.emit('lyricsFound', player, track, payload)
+    this.aqua.emit('lyricsFound', this, track, payload)
   }
 
   async lyricsNotFound(player, track, payload) {
-    this.aqua.emit('lyricsNotFound', player, track, payload)
+    this.aqua.emit('lyricsNotFound', this, track, payload)
   }
 
   send(data) {
@@ -646,6 +653,7 @@ class Player extends EventEmitter {
   clearData() {
     this.previousTracks?.clear()
     this._dataStore?.clear()
+    this.previousIdentifiers = []
     return this
   }
 
