@@ -1,17 +1,31 @@
 'use strict'
 
-class Filters {
-  static defaults = {
-    karaoke: { level: 1, monoLevel: 1, filterBand: 220, filterWidth: 100 },
-    timescale: { speed: 1, pitch: 1, rate: 1 },
-    tremolo: { frequency: 2, depth: 0.5 },
-    vibrato: { frequency: 2, depth: 0.5 },
-    rotation: { rotationHz: 0 },
-    distortion: { sinOffset: 0, sinScale: 1, cosOffset: 0, cosScale: 1, tanOffset: 0, tanScale: 1, offset: 0, scale: 1 },
-    channelMix: { leftToLeft: 1, leftToRight: 0, rightToLeft: 0, rightToRight: 1 },
-    lowPass: { smoothing: 20 }
-  }
+const FILTER_DEFAULTS = Object.freeze({
+  karaoke: Object.freeze({ level: 1, monoLevel: 1, filterBand: 220, filterWidth: 100 }),
+  timescale: Object.freeze({ speed: 1, pitch: 1, rate: 1 }),
+  tremolo: Object.freeze({ frequency: 2, depth: 0.5 }),
+  vibrato: Object.freeze({ frequency: 2, depth: 0.5 }),
+  rotation: Object.freeze({ rotationHz: 0 }),
+  distortion: Object.freeze({ sinOffset: 0, sinScale: 1, cosOffset: 0, cosScale: 1, tanOffset: 0, tanScale: 1, offset: 0, scale: 1 }),
+  channelMix: Object.freeze({ leftToLeft: 1, leftToRight: 0, rightToLeft: 0, rightToRight: 1 }),
+  lowPass: Object.freeze({ smoothing: 20 })
+})
 
+const fnShallowEqualWithDefaults = (current, defaults, override) => {
+  if (!current) return false
+  const keys = Object.keys(defaults)
+  return keys.every(k => current[k] === (k in override ? override[k] : defaults[k]))
+}
+
+const fnEqualizerEqual = (a, b) => {
+  const aa = a || []
+  const bb = b || []
+  if (aa === bb) return true
+  if (aa.length !== bb.length) return false
+  return aa.every((x, i) => x.band === bb[i].band && x.gain === bb[i].gain)
+}
+
+class Filters {
   constructor(player, options = {}) {
     this.player = player
     this._pendingUpdate = false
@@ -39,28 +53,32 @@ class Filters {
   }
 
   _setFilter(filterName, enabled, options = {}) {
-    const filter = enabled ? { ...Filters.defaults[filterName], ...options } : null
-    if (this.filters[filterName] === filter) return this
-
-    this.filters[filterName] = filter
+    const current = this.filters[filterName]
+    if (!enabled) {
+      if (current === null) return this
+      this.filters[filterName] = null
+      return this._scheduleUpdate()
+    }
+    const defaults = FILTER_DEFAULTS[filterName]
+    if (current && fnShallowEqualWithDefaults(current, defaults, options)) return this
+    this.filters[filterName] = { ...defaults, ...options }
     return this._scheduleUpdate()
   }
 
   _scheduleUpdate() {
     if (this._pendingUpdate) return this
     this._pendingUpdate = true
-
     queueMicrotask(() => {
       this._pendingUpdate = false
-      this.updateFilters()
+      this.updateFilters().catch(() => {})
     })
-
     return this
   }
 
   setEqualizer(bands) {
-    if (this.filters.equalizer === bands) return this
-    this.filters.equalizer = bands || []
+    const next = bands || []
+    if (fnEqualizerEqual(this.filters.equalizer, next)) return this
+    this.filters.equalizer = next
     return this._scheduleUpdate()
   }
 
@@ -102,22 +120,18 @@ class Filters {
       this.presets.bassboost = null
       return this.setEqualizer([])
     }
-
     const value = options.value ?? 5
     if (value < 0 || value > 5) throw new Error('Bassboost value must be between 0 and 5')
     if (this.presets.bassboost === value) return this
-
     this.presets.bassboost = value
     const gain = (value - 1) * (1.25 / 9) - 0.25
-    const eq = Array(13).fill().map((_, band) => ({ band, gain }))
-
+    const eq = Array.from({ length: 13 }, (_, band) => ({ band, gain }))
     return this.setEqualizer(eq)
   }
 
   setSlowmode(enabled, options = {}) {
     const rate = enabled ? options.rate ?? 0.8 : 1
     if (this.presets.slowmode === enabled && this.filters.timescale?.rate === rate) return this
-
     this.presets.slowmode = enabled
     return this.setTimescale(enabled, { rate })
   }
@@ -125,7 +139,6 @@ class Filters {
   setNightcore(enabled, options = {}) {
     const rate = enabled ? options.rate ?? 1.5 : 1
     if (this.presets.nightcore === enabled && this.filters.timescale?.rate === rate) return this
-
     this.presets.nightcore = enabled
     return this.setTimescale(enabled, { rate })
   }
@@ -133,7 +146,6 @@ class Filters {
   setVaporwave(enabled, options = {}) {
     const pitch = enabled ? options.pitch ?? 0.5 : 1
     if (this.presets.vaporwave === enabled && this.filters.timescale?.pitch === pitch) return this
-
     this.presets.vaporwave = enabled
     return this.setTimescale(enabled, { pitch })
   }
@@ -141,31 +153,24 @@ class Filters {
   set8D(enabled, options = {}) {
     const rotationHz = enabled ? options.rotationHz ?? 0.2 : 0
     if (this.presets._8d === enabled && this.filters.rotation?.rotationHz === rotationHz) return this
-
     this.presets._8d = enabled
     return this.setRotation(enabled, { rotationHz })
   }
 
   async clearFilters() {
-    let needsUpdate = false
-
-    // Reset filters
-    Object.keys(this.filters).forEach(key => {
+    const filters = this.filters
+    const changed = Object.keys(filters).reduce((acc, key) => {
       const newValue = key === 'volume' ? 1 : key === 'equalizer' ? [] : null
-      if (this.filters[key] !== newValue) {
-        this.filters[key] = newValue
-        needsUpdate = true
+      if (filters[key] !== newValue) {
+        filters[key] = newValue
+        return true
       }
-    })
-
-    // Reset presets
-    Object.keys(this.presets).forEach(key => {
-      if (this.presets[key] !== null) {
-        this.presets[key] = null
-      }
-    })
-
-    if (!needsUpdate) return this
+      return acc
+    }, false)
+    for (const key in this.presets) {
+      if (this.presets[key] !== null) this.presets[key] = null
+    }
+    if (!changed) return this
     return this.updateFilters()
   }
 
@@ -174,7 +179,6 @@ class Filters {
       guildId: this.player.guildId,
       data: { filters: this.filters }
     })
-
     return this
   }
 }
