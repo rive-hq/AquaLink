@@ -3,11 +3,12 @@
 const { Buffer } = require('node:buffer')
 const { Agent: HttpsAgent, request: httpsRequest } = require('node:https')
 const { Agent: HttpAgent, request: httpRequest } = require('node:http')
+const { createBrotliDecompress, createGunzip, createInflate } = require('node:zlib')
 
-const JSON_TYPE_REGEX = /^application\/json/i
-const BASE64_REGEX = /^[A-Za-z0-9+/]*={0,2}$/
-const MAX_RESPONSE_SIZE = 10485760
+const JSON_TYPE_REGEX = /^application\/json\b/i
+const MAX_RESPONSE_SIZE = 10 * 1024 * 1024
 const API_VERSION = 'v4'
+
 const ERRORS = Object.freeze({
   NO_SESSION: 'Session ID required',
   INVALID_TRACK: 'Invalid encoded track format',
@@ -17,13 +18,18 @@ const ERRORS = Object.freeze({
   REQUEST_TIMEOUT: 'Request timeout: '
 })
 
-const isValidBase64 = str => {
-  if (typeof str !== 'string' || !str) return false
-  const len = str.length
-  return len % 4 === 0 && BASE64_REGEX.test(str)
+const BASE64_STD = /^[A-Za-z0-9+/]*={0,2}$/
+const BASE64_URL = /^[A-Za-z0-9_-]*={0,2}$/
+const isValidBase64 = (str) => {
+  if (typeof str !== 'string') return false
+  const s = str.trim()
+  if (s.length === 0) return false
+  const re = (s.includes('-') || s.includes('_')) ? BASE64_URL : BASE64_STD
+  return re.test(s)
 }
 
-const _bool = b => b ? 'true' : 'false'
+const _bool = (b) => (b ? 'true' : 'false')
+const ipv6Host = (host) => (host.includes(':') && !host.startsWith('[') ? `[${host}]` : host)
 
 class Rest {
   constructor(aqua, node) {
@@ -33,22 +39,26 @@ class Rest {
     this.timeout = node.timeout || 15000
 
     const protocol = node.secure ? 'https:' : 'http:'
-    this.baseUrl = `${protocol}//${node.host}:${node.port}`
+    const host = ipv6Host(node.host)
+    this.baseUrl = `${protocol}//${host}:${node.port}`
 
-    this.headers = Object.freeze({
-      'Content-Type': 'application/json',
-      'Authorization': node.password,
-      'Accept': 'application/json'
+    this.defaultHeaders = Object.freeze({
+      Authorization: String(node.password ?? ''),
+      Accept: 'application/json, */*;q=0.5',
+      'Accept-Encoding': 'gzip, deflate, br',
+      'User-Agent': `Aqua-Lavalink/${API_VERSION} (Node.js ${process.version})`
     })
 
     const AgentClass = node.secure ? HttpsAgent : HttpAgent
+
+    // configuration SOON !!! (I think)
     this.agent = new AgentClass({
       keepAlive: true,
-      maxSockets: 10,
-      maxFreeSockets: 5,
+      maxSockets: node.maxSockets ?? 32,
+      maxFreeSockets: node.maxFreeSockets ?? 16,
       timeout: this.timeout,
-      freeSocketTimeout: 30000,
-      keepAliveMsecs: 1000,
+      freeSocketTimeout: node.freeSocketTimeout ?? 30000,
+      keepAliveMsecs: node.keepAliveMsecs ?? 1000,
       scheduling: 'lifo'
     })
 
@@ -63,63 +73,110 @@ class Rest {
     if (!this.sessionId) throw new Error(ERRORS.NO_SESSION)
   }
 
-  async makeRequest(method, endpoint, body = null) {
+  async makeRequest(method, endpoint, body = undefined) {
     const url = `${this.baseUrl}${endpoint}`
+    const headers = { ...this.defaultHeaders }
+    let payload
+
+    if (body != null) {
+      payload = typeof body === 'string' ? body : JSON.stringify(body)
+      headers['Content-Type'] = 'application/json'
+      headers['Content-Length'] = Buffer.byteLength(payload)
+    }
+
     const options = {
       method,
-      headers: this.headers,
+      headers,
       timeout: this.timeout,
       agent: this.agent
     }
 
     return new Promise((resolve, reject) => {
-      const req = this.request(url, options, res => {
-        if (res.statusCode === 204) {
+      const req = this.request(url, options, (res) => {
+        if (res.statusCode === 204 || res.headers['content-length'] === '0') {
           res.resume()
-          return resolve(null)
+          resolve(null)
+          return
+        }
+
+        const contentType = res.headers['content-type'] || ''
+        const isJson = JSON_TYPE_REGEX.test(contentType)
+        const encoding = (res.headers['content-encoding'] || '').toLowerCase()
+
+        let src = res
+        let decompressor
+        const onStreamError = (err) => {
+          req.destroy()
+          reject(err)
+        }
+
+        try {
+          if (encoding === 'br') decompressor = createBrotliDecompress()
+          else if (encoding === 'gzip') decompressor = createGunzip()
+          else if (encoding === 'deflate') decompressor = createInflate()
+        } catch (e) {
+          decompressor = null
+        }
+
+        if (decompressor) {
+          res.pipe(decompressor)
+          src = decompressor
+          decompressor.once('error', onStreamError)
+        } else {
+          res.once('error', onStreamError)
         }
 
         const chunks = []
-        const state = { total: 0 }
-        const contentType = res.headers['content-type']
-        const isJson = contentType && JSON_TYPE_REGEX.test(contentType)
+        let total = 0
 
-        const onData = chunk => {
-          state.total += chunk.length
-          if (state.total > MAX_RESPONSE_SIZE) {
+        const onData = (chunk) => {
+          total += chunk.length
+          if (total > MAX_RESPONSE_SIZE) {
             req.destroy()
             reject(new Error(ERRORS.RESPONSE_TOO_LARGE))
-            return;
+            return
           }
           chunks.push(chunk)
         }
 
         const onEnd = () => {
-          if (state.total === 0) {
+          if (total === 0) {
             resolve(null)
             return
           }
 
-          const data = chunks.length === 1 ? chunks[0] : Buffer.concat(chunks)
+          const dataBuf = chunks.length === 1 ? chunks[0] : Buffer.concat(chunks, total)
+          const text = dataBuf.toString('utf8')
 
-          if (!isJson) {
-            resolve(data.toString('utf8'))
+          let parsed = text
+          if (isJson) {
+            try {
+              parsed = JSON.parse(text)
+            } catch (err) {
+              reject(new Error(`${ERRORS.JSON_PARSE}${err.message}`))
+              return
+            }
+          }
+
+          const status = res.statusCode || 0
+          if (status >= 400) {
+            const err = new Error(`HTTP ${status} ${method} ${endpoint}`)
+            err.statusCode = status
+            err.statusMessage = res.statusMessage
+            err.headers = res.headers
+            err.body = parsed
+            reject(err)
             return
           }
 
-          try {
-            resolve(JSON.parse(data.toString('utf8')))
-          } catch (err) {
-            reject(new Error(`${ERRORS.JSON_PARSE}${err.message}`))
-          }
+          resolve(parsed)
         }
 
-        res.on('data', onData)
-        res.once('end', onEnd)
-        res.once('error', reject)
+        src.on('data', onData)
+        src.once('end', onEnd)
       })
 
-      const onError = err => {
+      const onError = (err) => {
         req.destroy()
         reject(err)
       }
@@ -131,13 +188,9 @@ class Rest {
 
       req.once('error', onError)
       req.once('timeout', onTimeout)
+      req.once('socket', (socket) => socket.setNoDelay(true))
 
-      if (body) {
-        const payload = typeof body === 'string' ? body : JSON.stringify(body)
-        req.setHeader('Content-Length', Buffer.byteLength(payload))
-        req.write(payload)
-      }
-
+      if (payload) req.write(payload)
       req.end()
     })
   }
@@ -153,7 +206,10 @@ class Rest {
 
   async getPlayer(guildId) {
     this._validateSessionId()
-    return this.makeRequest('GET', `/${API_VERSION}/sessions/${this.sessionId}/players/${guildId}`)
+    return this.makeRequest(
+      'GET',
+      `/${API_VERSION}/sessions/${this.sessionId}/players/${guildId}`
+    )
   }
 
   async getPlayers() {
@@ -210,7 +266,7 @@ class Rest {
 
   async getLyrics({ track, skipTrackSource = false }) {
     if (!track || (!track.guild_id && !track.encoded && !track.info?.title)) {
-      this.aqua.emit('error', '[Aqua/Lyrics] Invalid track object')
+      this.aqua?.emit?.('error', '[Aqua/Lyrics] Invalid track object')
       return null
     }
 
@@ -255,9 +311,11 @@ class Rest {
   }
 
   _isValidLyrics(response) {
-    return response &&
-      response.status !== 204 &&
-      !(Array.isArray(response) && response.length === 0)
+    if (!response) return false
+    if (Array.isArray(response)) return response.length > 0
+    if (typeof response === 'object') return Object.keys(response).length > 0
+    if (typeof response === 'string') return response.trim().length > 0
+    return false
   }
 
   async subscribeLiveLyrics(guildId, skipTrackSource = false) {
