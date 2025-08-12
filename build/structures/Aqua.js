@@ -177,6 +177,8 @@ class Aqua extends EventEmitter {
       this.nodes.map(n => this._createNode(n))
     )
 
+    if (!this.clientId) return this;
+
     const successCount = results.filter(r => r.status === 'fulfilled').length
     if (!successCount) throw new Error('No nodes connected')
 
