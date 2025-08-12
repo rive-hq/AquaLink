@@ -404,7 +404,7 @@ class Player extends EventEmitter {
 
   skip() {
     this.stop()
-    return this.play()
+    return this
   }
 
   async getLyrics({ query, useCurrentTrack = true, skipTrackSource = false } = {}) {
@@ -440,7 +440,9 @@ class Player extends EventEmitter {
   }
 
   async autoplay() {
-    if (!this.isAutoplayEnabled || !this.previous) return this
+    if (!this.isAutoplayEnabled || !this.previous || !this.queue.isEmpty()) {
+      return this
+    }
 
     this.isAutoplay = true
     const prevInfo = this.previous.info
@@ -453,7 +455,6 @@ class Player extends EventEmitter {
 
       switch (sourceName) {
         case 'youtube':
-
           query = `https://www.youtube.com/watch?v=${identifier}&list=RD${identifier}`
           source = 'ytmsearch'
           break
@@ -466,7 +467,6 @@ class Player extends EventEmitter {
           break
 
         case 'spotify':
-
           if (this.previous) {
             this.previousIdentifiers.add(this.previous.identifier)
 
@@ -542,7 +542,10 @@ class Player extends EventEmitter {
     this.nowPlayingMessage = null
 
     const reason = payload.reason
-    const isFailure = reason === 'LOAD_FAILED' || reason === 'CLEANUP'
+    const isFailure = reason === 'loadFailed' || reason === 'cleanup'
+    const isReplaced = reason === 'replaced'
+
+    console.log('Track end reason:', isReplaced)
 
     if (isFailure) {
       if (this.queue.isEmpty()) {
@@ -555,26 +558,27 @@ class Player extends EventEmitter {
       return
     }
 
-    if (this.loop === LOOP_MODES.TRACK) {
+    if (this.loop === LOOP_MODES.TRACK && !isReplaced) {
       this.queue.unshift(track)
     } else if (this.loop === LOOP_MODES.QUEUE) {
       this.queue.push(track)
     }
 
-    if (this.queue.isEmpty()) {
-      if (this.isAutoplayEnabled) {
-        await this.autoplay()
-      } else {
-        this.playing = false
-        if (this.leaveOnEnd) {
-          this.clearData()
-          this.destroy()
-        }
-        this.aqua.emit('queueEnd', this)
-      }
-    } else {
+    if (!this.queue.isEmpty()) {
       this.aqua.emit('trackEnd', this, track, reason)
       await this.play()
+      return
+    }
+
+    if (this.isAutoplayEnabled && !isReplaced) {
+      await this.autoplay()
+    } else {
+      this.playing = false
+      if (this.leaveOnEnd) {
+        this.clearData()
+        this.destroy()
+      }
+      this.aqua.emit('queueEnd', this)
     }
   }
 
