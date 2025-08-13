@@ -6,22 +6,89 @@ declare module "aqualink" {
         constructor(client: any, nodes: NodeOptions[], options?: AquaOptions);
 
         // Core Properties
+        /**
+         * The client instance associated with Aqua.
+         */
         client: any;
+
+        /**
+         * Configured node options for connecting to the nodes.
+         */
         nodes: NodeOptions[];
+
+        /**
+         * Mapping of node identifiers to Node instances.
+         */
         nodeMap: Map<string, Node>;
+
+        /**
+         * Mapping of guild identifiers to Player instances.
+         */
         players: Map<string, Player>;
+
+        /**
+         * The client identifier, set upon initialization.
+         */
         clientId: string | null;
+
+        /**
+         * Indicates whether Aqua has been initiated.
+         */
         initiated: boolean;
+
+        /**
+         * Determines if messages should be deleted after being sent.
+         */
         shouldDeleteMessage: boolean;
+
+        /**
+         * The default platform for search operations.
+         */
         defaultSearchPlatform: SearchSource;
+
+        /**
+         * Specifies whether to leave the voice channel when playback ends.
+         */
         leaveOnEnd: boolean;
+
+        /**
+         * The version of the REST API being used.
+         */
         restVersion: RestVersion;
+
+        /**
+         * List of active plugins.
+         */
         plugins: Plugin[];
+
+        /**
+         * The current version of the Aqua instance.
+         */
         version: string;
+
+        /**
+         * Function to send payloads to the server.
+         */
         send: (payload: any) => void;
+
+        /**
+         * Enables automatic resumption of playback after reconnecting.
+         */
         autoResume: boolean;
+
+        /**
+         * Allows for infinite connection retries.
+         */
         infiniteReconnects: boolean;
+
+        /**
+         * Configurations and options for Aqua.
+         */
         options: AquaOptions;
+
+        /**
+         * Configurations specific to failover handling.
+         */
         failoverOptions: FailoverOptions;
 
         // Private properties (for autocomplete awareness)
@@ -210,6 +277,16 @@ declare module "aqualink" {
         requester: any;
         node: Node;
         identifier: string;
+        isSeekable: boolean;
+        position: number;
+        author: string;
+        isStream: boolean;
+        title: string;
+        uri: string;
+        sourceName: string;
+        artworkUrl: string;
+
+
 
         get length(): number;
         get thumbnail(): string;
@@ -396,7 +473,7 @@ declare module "aqualink" {
     export interface NodeOptions {
         host: string;
         name?: string;
-        port?: number;
+        port?: number | string;
         password?: string;
         secure?: boolean;
         sessionId?: string;
