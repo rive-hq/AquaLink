@@ -696,7 +696,7 @@ class Player extends EventEmitter {
 
     const code = payload?.code
 
-    if (code === 4014) {
+    if (code === 4014 || code === 4022) {
       this.aqua.emit('socketClosed', this, payload)
       this.destroy()
       return
