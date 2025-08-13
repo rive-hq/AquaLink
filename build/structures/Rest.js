@@ -3,7 +3,7 @@
 const { Buffer } = require('node:buffer')
 const { Agent: HttpsAgent, request: httpsRequest } = require('node:https')
 const { Agent: HttpAgent, request: httpRequest } = require('node:http')
-const { createBrotliDecompress, createGunzip, createInflate } = require('node:zlib')
+const { createBrotliDecompress, createUnzip } = require('node:zlib')
 
 const JSON_TYPE_REGEX = /^application\/json\b/i
 const MAX_RESPONSE_SIZE = 10 * 1024 * 1024
@@ -50,13 +50,10 @@ class Rest {
     })
 
     const AgentClass = node.secure ? HttpsAgent : HttpAgent
-
-    // configuration SOON !!! (I think)
     this.agent = new AgentClass({
       keepAlive: true,
       maxSockets: node.maxSockets ?? 32,
       maxFreeSockets: node.maxFreeSockets ?? 16,
-      timeout: this.timeout,
       freeSocketTimeout: node.freeSocketTimeout ?? 30000,
       keepAliveMsecs: node.keepAliveMsecs ?? 1000,
       scheduling: 'lifo'
@@ -73,26 +70,36 @@ class Rest {
     if (!this.sessionId) throw new Error(ERRORS.NO_SESSION)
   }
 
+  _sessionBase() {
+    this._validateSessionId()
+    return `/${API_VERSION}/sessions/${this.sessionId}`
+  }
+
   async makeRequest(method, endpoint, body = undefined) {
     const url = `${this.baseUrl}${endpoint}`
-    const headers = { ...this.defaultHeaders }
     let payload
+    let headers = this.defaultHeaders
 
     if (body != null) {
       payload = typeof body === 'string' ? body : JSON.stringify(body)
-      headers['Content-Type'] = 'application/json'
-      headers['Content-Length'] = Buffer.byteLength(payload)
-    }
-
-    const options = {
-      method,
-      headers,
-      timeout: this.timeout,
-      agent: this.agent
+      headers = {
+        ...this.defaultHeaders,
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload)
+      }
     }
 
     return new Promise((resolve, reject) => {
-      const req = this.request(url, options, (res) => {
+      const onTimeout = () => {
+        req.destroy()
+        reject(new Error(`${ERRORS.REQUEST_TIMEOUT}${this.timeout}ms`))
+      }
+      const onReqError = (err) => {
+        req.destroy()
+        reject(err)
+      }
+
+      const req = this.request(url, { method, headers, agent: this.agent }, (res) => {
         if (res.statusCode === 204 || res.headers['content-length'] === '0') {
           res.resume()
           resolve(null)
@@ -101,59 +108,69 @@ class Rest {
 
         const contentType = res.headers['content-type'] || ''
         const isJson = JSON_TYPE_REGEX.test(contentType)
-        const encoding = (res.headers['content-encoding'] || '').toLowerCase()
+        const encoding = (res.headers['content-encoding'] || '').toLowerCase().split(',')[0]?.trim()
 
         let src = res
-        let decompressor
-        const onStreamError = (err) => {
-          req.destroy()
-          reject(err)
+        let decompressor = null
+
+        const abort = (err) => {
+          try { req.destroy() } catch {}
+          try { res.destroy() } catch {}
+          if (decompressor) {
+            try { decompressor.destroy() } catch {}
+          }
+          reject(err instanceof Error ? err : new Error(String(err)))
         }
 
         try {
-          if (encoding === 'br') decompressor = createBrotliDecompress()
-          else if (encoding === 'gzip') decompressor = createGunzip()
-          else if (encoding === 'deflate') decompressor = createInflate()
-        } catch (e) {
+          if (encoding === 'br') {
+            decompressor = createBrotliDecompress()
+          } else if (encoding === 'gzip' || encoding === 'deflate') {
+            decompressor = createUnzip()
+          }
+        } catch {
           decompressor = null
         }
 
+        res.once('aborted', () => abort(new Error('Response aborted')))
         if (decompressor) {
+          decompressor.once('error', abort)
           res.pipe(decompressor)
           src = decompressor
-          decompressor.once('error', onStreamError)
         } else {
-          res.once('error', onStreamError)
+          res.once('error', abort)
         }
 
-        const chunks = []
+        const decoder = new TextDecoder('utf-8')
+        const parts = []
         let total = 0
 
         const onData = (chunk) => {
           total += chunk.length
           if (total > MAX_RESPONSE_SIZE) {
-            req.destroy()
-            reject(new Error(ERRORS.RESPONSE_TOO_LARGE))
+            abort(new Error(ERRORS.RESPONSE_TOO_LARGE))
             return
           }
-          chunks.push(chunk)
+          parts.push(decoder.decode(chunk, { stream: true }))
         }
 
         const onEnd = () => {
+          const tail = decoder.decode()
+          if (tail) parts.push(tail)
+
           if (total === 0) {
             resolve(null)
             return
           }
 
-          const dataBuf = chunks.length === 1 ? chunks[0] : Buffer.concat(chunks, total)
-          const text = dataBuf.toString('utf8')
+          const text = parts.length === 1 ? parts[0] : parts.join('')
 
           let parsed = text
           if (isJson) {
             try {
               parsed = JSON.parse(text)
             } catch (err) {
-              reject(new Error(`${ERRORS.JSON_PARSE}${err.message}`))
+              abort(new Error(`${ERRORS.JSON_PARSE}${err.message}`))
               return
             }
           }
@@ -176,50 +193,37 @@ class Rest {
         src.once('end', onEnd)
       })
 
-      const onError = (err) => {
-        req.destroy()
-        reject(err)
-      }
-
-      const onTimeout = () => {
-        req.destroy()
-        reject(new Error(`${ERRORS.REQUEST_TIMEOUT}${this.timeout}ms`))
-      }
-
-      req.once('error', onError)
-      req.once('timeout', onTimeout)
+      req.once('error', onReqError)
       req.once('socket', (socket) => socket.setNoDelay(true))
+      req.setTimeout(this.timeout, onTimeout)
 
-      if (payload) req.write(payload)
-      req.end()
+      if (payload != null) req.end(payload)
+      else req.end()
     })
   }
 
-  async updatePlayer({ guildId, data }) {
-    this._validateSessionId()
+  async updatePlayer({ guildId, data, noReplace = false }) {
+    const base = this._sessionBase()
     return this.makeRequest(
       'PATCH',
-      `/${API_VERSION}/sessions/${this.sessionId}/players/${guildId}?noReplace=false`,
+      `${base}/players/${guildId}?noReplace=${_bool(noReplace)}`,
       data
     )
   }
 
   async getPlayer(guildId) {
-    this._validateSessionId()
-    return this.makeRequest(
-      'GET',
-      `/${API_VERSION}/sessions/${this.sessionId}/players/${guildId}`
-    )
+    const base = this._sessionBase()
+    return this.makeRequest('GET', `${base}/players/${guildId}`)
   }
 
   async getPlayers() {
-    this._validateSessionId()
-    return this.makeRequest('GET', `/${API_VERSION}/sessions/${this.sessionId}/players`)
+    const base = this._sessionBase()
+    return this.makeRequest('GET', `${base}/players`)
   }
 
   async destroyPlayer(guildId) {
-    this._validateSessionId()
-    return this.makeRequest('DELETE', `/${API_VERSION}/sessions/${this.sessionId}/players/${guildId}`)
+    const base = this._sessionBase()
+    return this.makeRequest('DELETE', `${base}/players/${guildId}`)
   }
 
   async loadTracks(identifier) {
@@ -265,25 +269,29 @@ class Rest {
   }
 
   async getLyrics({ track, skipTrackSource = false }) {
-    if (!track || (!track.guild_id && !track.encoded && !track.info?.title)) {
+    const gid = track?.guild_id ?? track?.guildId
+    const hasEncoded = typeof track?.encoded === 'string' && isValidBase64(track.encoded)
+    const hasTitle = track?.info?.title
+
+    if (!track || (!gid && !hasEncoded && !hasTitle)) {
       this.aqua?.emit?.('error', '[Aqua/Lyrics] Invalid track object')
       return null
     }
 
     const skipParam = _bool(skipTrackSource)
 
-    if (track.guild_id) {
+    if (gid) {
       try {
-        this._validateSessionId()
+        const base = this._sessionBase()
         const lyrics = await this.makeRequest(
           'GET',
-          `/${API_VERSION}/sessions/${this.sessionId}/players/${track.guild_id}/track/lyrics?skipTrackSource=${skipParam}`
+          `${base}/players/${gid}/track/lyrics?skipTrackSource=${skipParam}`
         )
         if (this._isValidLyrics(lyrics)) return lyrics
       } catch {}
     }
 
-    if (track.encoded && isValidBase64(track.encoded)) {
+    if (hasEncoded) {
       try {
         const lyrics = await this.makeRequest(
           'GET',
@@ -293,11 +301,8 @@ class Rest {
       } catch {}
     }
 
-    if (track.info?.title) {
-      const query = track.info.author
-        ? `${track.info.title} ${track.info.author}`
-        : track.info.title
-
+    if (hasTitle) {
+      const query = track.info.author ? `${track.info.title} ${track.info.author}` : track.info.title
       try {
         const lyrics = await this.makeRequest(
           'GET',
@@ -319,11 +324,11 @@ class Rest {
   }
 
   async subscribeLiveLyrics(guildId, skipTrackSource = false) {
-    this._validateSessionId()
     try {
+      const base = this._sessionBase()
       const result = await this.makeRequest(
         'POST',
-        `/${API_VERSION}/sessions/${this.sessionId}/players/${guildId}/lyrics/subscribe?skipTrackSource=${_bool(skipTrackSource)}`
+        `${base}/players/${guildId}/lyrics/subscribe?skipTrackSource=${_bool(skipTrackSource)}`
       )
       return result === null
     } catch {
@@ -332,11 +337,11 @@ class Rest {
   }
 
   async unsubscribeLiveLyrics(guildId) {
-    this._validateSessionId()
     try {
+      const base = this._sessionBase()
       const result = await this.makeRequest(
         'DELETE',
-        `/${API_VERSION}/sessions/${this.sessionId}/players/${guildId}/lyrics/subscribe`
+        `${base}/players/${guildId}/lyrics/subscribe`
       )
       return result === null
     } catch {
