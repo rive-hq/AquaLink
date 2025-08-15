@@ -7,6 +7,8 @@ declare module "aqualink" {
 
        // Additional properties found in implementation
         plugins: Plugin[];
+        players: Map<string, Player>;
+        nodeMap: Map<string, Node>;
         _nodeStates: Map<string, { connected: boolean; failoverInProgress: boolean }>;
         _failoverQueue: Map<string, number>;
         _lastFailoverAttempt: Map<string, number>;
@@ -17,32 +19,21 @@ declare module "aqualink" {
         _nodeLoadCache: Map<string, number>;
         _nodeLoadCacheTime: Map<string, number>;
 
-        // Missing methods
-        _createDefaultSend(): (payload: any) => void;
-        _getCachedNodeLoad(node: Node): number;
-        _calculateNodeLoad(node: Node): number;
-        _getRequestNode(nodes?: string | Node | Node[]): Node;
-        _chooseLeastBusyNode(nodes: Node[]): Node | null;
-        _constructResponse(response: any, requester: any, requestNode: Node): ResolveResponse;
-        _createNode(options: NodeOptions): Promise<Node>;
-        _destroyNode(identifier: string): void;
-        _handlePlayerDestroy(player: Player): void;
-        _storeBrokenPlayers(node: Node): void;
-        _rebuildBrokenPlayers(node: Node): Promise<void>;
-        _rebuildPlayer(brokenState: any, targetNode: Node): Promise<Player>;
-        _migratePlayersOptimized(players: Player[], availableNodes: Node[]): Promise<any[]>;
-        _migratePlayer(player: Player, pickNode: () => Node): Promise<Player>;
-        _capturePlayerState(player: Player): any;
-        _createPlayerOnNode(targetNode: Node, playerState: any): Promise<Player>;
-        _restorePlayerState(newPlayer: Player, playerState: any): Promise<void>;
-        _getAvailableNodes(excludeNode?: Node): Node[];
-        _performCleanup(): void;
-        _waitForFirstNode(timeout?: number): Promise<void>;
-        _restorePlayer(playerData: any): Promise<void>;
-        _parseRequester(requesterString: string): any;
+
+        init(clientId: string): Promise<Aqua>;
+        createNode(options: NodeOptions): Promise<Node>;
+        destroyNode(identifier: string): void;
+        updateVoiceState(data: VoiceStateUpdate): void;
+        fetchRegion(region: string): Node[];
+        createConnection(options: ConnectionOptions): Player;
+        createPlayer(node: Node, options: PlayerOptions): Player;
+        destroyPlayer(guildId: string): Promise<void>;
+        resolve(options: ResolveOptions): Promise<ResolveResponse>;
+        get(guildId: string): Player;
+        search(query: string, requester: any, source?: SearchSource): Promise<Track[] | null>;
+
 
         // Missing public methods
-        destroyNode?(name: string): void;
         bypassChecks?: { nodeFetchInfo?: boolean };
     }
 
@@ -73,6 +64,7 @@ declare module "aqualink" {
         isDestroyed: boolean;
         stats: NodeStats;
         players: Set<Player>;
+        options: NodeOptions;
 
         // Methods
         connect(): Promise<void>;
@@ -99,7 +91,7 @@ declare module "aqualink" {
         connection: Connection;
         filters: Filters;
         volume: number;
-        loop: LoopMode;
+        loop: LoopModeName | LoopMode;
         queue: Queue;
         shouldDeleteMessage: boolean;
         leaveOnEnd: boolean;
@@ -213,6 +205,11 @@ declare module "aqualink" {
     export class Queue extends Array<Track> {
         constructor(...elements: Track[]);
 
+        // Properties
+        size: number;
+        first: Track | null;
+        last: Track | null;
+
         // Methods
         add(...tracks: Track[]): void;
         push(track: Track): number;
@@ -250,13 +247,13 @@ declare module "aqualink" {
         // Filter Methods
         setEqualizer(bands: EqualizerBand[]): Filters;
         setKaraoke(enabled: boolean, options?: KaraokeSettings): Filters;
-        setTimescale(enabled: boolean, options?: TimescaleSettings): Filters;
-        setTremolo(enabled: boolean, options?: TremoloSettings): Filters;
-        setVibrato(enabled: boolean, options?: VibratoSettings): Filters;
-        setRotation(enabled: boolean, options?: RotationSettings): Filters;
-        setDistortion(enabled: boolean, options?: DistortionSettings): Filters;
-        setChannelMix(enabled: boolean, options?: ChannelMixSettings): Filters;
-        setLowPass(enabled: boolean, options?: LowPassSettings): Filters;
+        setTimescale(options?: TimescaleSettings): Filters;
+        setTremolo(options?: TremoloSettings): Filters;
+        setVibrato(options?: VibratoSettings): Filters;
+        setRotation( options?: RotationSettings): Filters;
+        setDistortion( options?: DistortionSettings): Filters;
+        setChannelMix(options?: ChannelMixSettings): Filters;
+        setLowPass( options?: LowPassSettings): Filters;
         setBassboost(enabled: boolean, options?: { value?: number }): Filters;
         setSlowmode(enabled: boolean, options?: { rate?: number }): Filters;
         setNightcore(enabled: boolean, options?: { rate?: number }): Filters;
@@ -355,7 +352,7 @@ declare module "aqualink" {
 
     export interface ResolveOptions {
         query: string;
-        source?: SearchSource;
+        source?: SearchSource | string;
         requester: any;
         nodes?: string | Node | Node[];
     }
@@ -498,6 +495,7 @@ declare module "aqualink" {
     }
 
     export interface DistortionSettings {
+        distortion?: number;
         sinOffset?: number;
         sinScale?: number;
         cosOffset?: number;
