@@ -325,7 +325,7 @@ class Player extends EventEmitter {
     return this
   }
 
-  destroy({ preserveClient = false, skipRemote = false } = {}) {
+  destroy({ preserveClient = true, skipRemote = false } = {}) {
     if (this.destroyed) return this
 
     this.destroyed = true
