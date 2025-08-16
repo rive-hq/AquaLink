@@ -31,9 +31,8 @@ const RECONNECTION_MAX_RETRIES = 3
 const RECONNECTION_BACKOFF_MS = 1500
 
 const fnClamp = (v) => {
-  const num = Number(v)
-  if (!Number.isFinite(num)) return 100
-  return num < 0 ? 0 : num > 200 ? 200 : num
+  const num = +v
+  return isNaN(num) ? 100 : Math.max(0, Math.min(200, num))
 }
 
 const fnIsValidVolume = (v) => typeof v === 'number' && v >= 0 && v <= 200 && Number.isFinite(v)
@@ -122,6 +121,10 @@ class CircularBuffer {
 
   push(item) {
     if (!item) return
+
+    if (this.count === this.size) {
+      this.buffer[this.index] = null
+    }
     this.buffer[this.index] = item
     this.index = (this.index + 1) % this.size
     if (this.count < this.size) this.count++
@@ -132,6 +135,7 @@ class CircularBuffer {
   }
 
   clear() {
+    this.buffer.fill(null)
     this.count = 0
     this.index = 0
   }
@@ -329,6 +333,9 @@ class Player extends EventEmitter {
     this.playing = false
     this.paused = false
 
+    // emit destroy for the aqua
+    this.emit('destroy')
+
     if (this.nowPlayingMessage) {
       fnSafeDeleteMessage(this.nowPlayingMessage)
       this.nowPlayingMessage = null
@@ -405,7 +412,7 @@ class Player extends EventEmitter {
     if (this.destroyed || !this.playing) return this
     this.playing = false
     this.position = 0
-    this.batchUpdatePlayer({ track: { encoded: null } }, true)
+    this.batchUpdatePlayer({ guildId: this.guildId, track: { encoded: null} }, true)
     return this
   }
 
@@ -705,7 +712,7 @@ class Player extends EventEmitter {
     if (code === 4015) {
       try {
         if (this.connection) {
-          this.connection._updatePlayerVoiceData(true)
+          this.connection.resendVoiceUpdate(true)
           this.aqua.emit('debug', `[Player ${this.guildId}] Attempting resume...`)
           return
         }
@@ -720,7 +727,6 @@ class Player extends EventEmitter {
     }
 
     const aquaRef = this.aqua
-    const nodesRef = this.nodes
     const voiceChannelId = fnToId(this.voiceChannel)
     const textChannelId = fnToId(this.textChannel)
     const oldPlayer = this
