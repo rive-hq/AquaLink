@@ -80,7 +80,7 @@ class Node {
     const headers = Object.create(null)
     headers.Authorization = this.password
     headers['User-Id'] = this.aqua.clientId
-    headers['Client-Name'] = `Aqua/${this.aqua.version} https://github.com/ToddyTheNoobDud/AquaLink`
+    headers['Client-Name'] = `Aqua/${this.aqua.version} (https://github.com/ToddyTheNoobDud/AquaLink)`
     if (this.sessionId) headers['Session-Id'] = this.sessionId
     return headers
   }
@@ -140,24 +140,44 @@ class Node {
     const op = payload?.op
     if (!op) return
 
-    switch (op) {
-      case 'stats':
-        this._updateStats(payload)
-        break
-      case 'ready':
-        this._handleReady(payload)
-        break
-      case 2:
-      case 5:
-      case 9:
-        this._handleNumericOp(op, payload.guildId, payload)
-        break
-      default:
-        if (typeof op === 'string') {
-          this._handleStringOp(op, payload)
-        }
+ switch (op) {
+        case 'stats':
+          this._updateStats(payload)
+          break
+        case 'ready':
+          this._handleReady(payload)
+          break
+        case 'playerUpdate':
+          this._handlePlayerUpdate(payload)
+          break
+        case 'event':
+          this._handlePlayerEvent(payload)
+          break
+        default:
+          this._handleUnknownOp(op, payload)
+      }
+  }
+
+  _handlePlayerUpdate(payload) {
+    const guildId = payload.guildId
+    if (!guildId) return
+
+    const player = this.aqua.players.get(guildId)
+    if (player) {
+      player.emit('playerUpdate', payload)
     }
   }
+
+    _handlePlayerEvent(payload) {
+    const guildId = payload.guildId
+    if (!guildId) return
+
+    const player = this.aqua.players.get(guildId)
+    if (player) {
+      player.emit('event', payload)
+    }
+  }
+
 
   _handleStringOp(op, payload) {
     if (op.charCodeAt(0) === 76 && op.startsWith('Lyrics')) {
@@ -190,6 +210,14 @@ class Node {
       case 9:
         this._emitDebug(`[Player ${guildId}] Voice resumed successfully`)
         break
+    }
+  }
+
+    _handleUnknownOp(op, payload) {
+    if (typeof op === 'number' && [2, 5, 9].includes(op)) {
+      this._handleNumericOp(op, payload.guildId, payload)
+    } else if (typeof op === 'string') {
+      this._handleStringOp(op, payload)
     }
   }
 
@@ -457,4 +485,3 @@ class Node {
 }
 
 module.exports = Node
-
