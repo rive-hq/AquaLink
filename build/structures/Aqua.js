@@ -50,9 +50,9 @@ const CACHE_VALID_TIME = 12000 // 12s
 const NODE_TIMEOUT = 30000
 
 const URL_PATTERN = /^https?:\/\//i
-const isProbablyUrl = s => typeof s === 'string' && URL_PATTERN.test(s)
+const isProbablyUrl = (s) => typeof s === 'string' && s.length > 8 && URL_PATTERN.test(s)
 
-const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms))
 
 class Aqua extends EventEmitter {
   constructor(client, nodes, options = {}) {
@@ -89,6 +89,15 @@ class Aqua extends EventEmitter {
     this._leastUsedNodesCacheTime = 0
     this._nodeLoadCache = new Map()
     this._nodeLoadCacheTime = new Map()
+
+    this.on('nodeReady', (node, { resumed }) => {
+      for (const player of this.players.values()) {
+        if (player.nodes === node && player.connection) {
+          player.connection.resendVoiceUpdate({ resume: !!resumed })
+        }
+      }
+    })
+
 
     this._bindEventHandlers()
     this._startCleanupTimer()
@@ -251,7 +260,7 @@ class Aqua extends EventEmitter {
   _destroyNode(identifier) {
     const node = this.nodeMap.get(identifier)
     if (node) {
-      try { node.destroy?.() } catch {}
+      try { node.destroy?.() } catch { }
       this._cleanupNode(identifier)
       this.emit('nodeDestroy', node)
     }
@@ -577,7 +586,7 @@ class Aqua extends EventEmitter {
     const existing = this.players.get(options.guildId)
     if (existing) {
       if (options.voiceChannel && existing.voiceChannel !== options.voiceChannel) {
-        try { existing.connect(options) } catch {}
+        try { existing.connect(options) } catch { }
       }
       return existing
     }
@@ -594,7 +603,7 @@ class Aqua extends EventEmitter {
   createPlayer(node, options) {
     const existing = this.players.get(options.guildId)
     if (existing) {
-      try { existing.destroy?.() } catch {}
+      try { existing.destroy?.() } catch { }
     }
 
     const player = new Player(this, node, options)
@@ -791,7 +800,7 @@ class Aqua extends EventEmitter {
     } catch (error) {
       this.emit('debug', 'Aqua', `Load players error: ${error?.message || String(error)}`)
     } finally {
-      await fs.promises.unlink(lockFile).catch(() => {})
+      await fs.promises.unlink(lockFile).catch(() => { })
     }
   }
 
@@ -834,7 +843,7 @@ class Aqua extends EventEmitter {
     } catch (error) {
       this.emit('error', null, new Error(`Save players failed: ${error?.message || String(error)}`))
     } finally {
-      await fs.promises.unlink(lockFile).catch(() => {})
+      await fs.promises.unlink(lockFile).catch(() => { })
     }
   }
 
@@ -885,7 +894,7 @@ class Aqua extends EventEmitter {
         if (channel?.messages) {
           try {
             player.nowPlayingMessage = await channel.messages.fetch(p.nw).catch(() => null)
-          } catch {}
+          } catch { }
         }
       }
     } catch (error) {
@@ -974,10 +983,10 @@ class Aqua extends EventEmitter {
 
     for (const player of this.players.values()) {
       player.removeAllListeners?.()
-      tasks.push(Promise.resolve(player.destroy?.()).catch(() => {}))
+      tasks.push(Promise.resolve(player.destroy?.()).catch(() => { }))
     }
     for (const node of this.nodeMap.values()) {
-      tasks.push(Promise.resolve(node.destroy?.()).catch(() => {}))
+      tasks.push(Promise.resolve(node.destroy?.()).catch(() => { }))
     }
 
     this.players.clear()
