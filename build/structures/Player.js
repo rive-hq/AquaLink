@@ -266,20 +266,13 @@ class Player extends EventEmitter {
   }
 
   async play() {
-    if (this.destroyed) throw new Error('Player is destroyed')
-    if (!this.connected || !this.queue || this.queue.isEmpty()) return this
+    if (this.destroyed || !this.connected || !this.queue?.size) return this
 
     const item = this.queue.shift()
     if (!item) return this
 
     try {
-      if (item.track) {
-        this.current = item
-      } else if (typeof item.resolve === 'function') {
-        this.current = await item.resolve(this.aqua)
-      } else {
-        throw new Error('Invalid queue item')
-      }
+      this.current = item.track ? item : await item.resolve(this.aqua)
 
       if (!this.current?.track) {
         throw new Error('Failed to resolve track')
@@ -293,10 +286,7 @@ class Player extends EventEmitter {
       return this
     } catch (error) {
       this.aqua.emit('error', error)
-      if (this.queue && !this.queue.isEmpty()) {
-        return this.play()
-      }
-      return this
+      return this.queue?.size ? this.play() : this
     }
   }
 
