@@ -5,7 +5,8 @@ const { Agent: HttpsAgent, request: httpsRequest } = require('node:https')
 const { Agent: HttpAgent, request: httpRequest } = require('node:http')
 const { createBrotliDecompress, createUnzip } = require('node:zlib')
 
-const JSON_TYPE_REGEX = /^application\/json\b/i
+const JSON_TYPE_REGEX = /^(?:application\/json|application\/(?:[a-z0-9.+-]*\+json))\b/i
+
 const MAX_RESPONSE_SIZE = 10 * 1024 * 1024
 const API_VERSION = 'v4'
 
@@ -15,17 +16,26 @@ const ERRORS = Object.freeze({
   INVALID_TRACKS: 'One or more tracks have invalid format',
   RESPONSE_TOO_LARGE: 'Response too large',
   JSON_PARSE: 'JSON parse error: ',
-  REQUEST_TIMEOUT: 'Request timeout: '
+  REQUEST_TIMEOUT: 'Request timeout: ',
+  RESPONSE_ABORTED: 'Response aborted'
 })
 
 const BASE64_STD = /^[A-Za-z0-9+/]*={0,2}$/
 const BASE64_URL = /^[A-Za-z0-9_-]*={0,2}$/
+
 const isValidBase64 = (str) => {
   if (typeof str !== 'string') return false
   const s = str.trim()
   if (s.length === 0) return false
-  const re = (s.includes('-') || s.includes('_')) ? BASE64_URL : BASE64_STD
-  return re.test(s)
+
+  const isUrl = s.includes('-') || s.includes('_')
+  if (isUrl) {
+    if (s.length % 4 === 1) return false
+    return BASE64_URL.test(s)
+  } else {
+    if (s.length % 4 !== 0) return false
+    return BASE64_STD.test(s)
+  }
 }
 
 const _bool = (b) => (b ? 'true' : 'false')
@@ -60,10 +70,13 @@ class Rest {
     })
 
     this.request = node.secure ? httpsRequest : httpRequest
+
+    this._sessionBaseCached = this.sessionId ? `/${API_VERSION}/sessions/${this.sessionId}` : null
   }
 
   setSessionId(sessionId) {
     this.sessionId = sessionId
+    this._sessionBaseCached = sessionId ? `/${API_VERSION}/sessions/${sessionId}` : null
   }
 
   _validateSessionId() {
@@ -72,7 +85,7 @@ class Rest {
 
   _sessionBase() {
     this._validateSessionId()
-    return `/${API_VERSION}/sessions/${this.sessionId}`
+    return this._sessionBaseCached
   }
 
   async makeRequest(method, endpoint, body = undefined) {
@@ -91,11 +104,12 @@ class Rest {
 
     return new Promise((resolve, reject) => {
       const onTimeout = () => {
-        req.destroy()
+        try { req.destroy() } catch {}
         reject(new Error(`${ERRORS.REQUEST_TIMEOUT}${this.timeout}ms`))
       }
+
       const onReqError = (err) => {
-        req.destroy()
+        try { req.destroy() } catch {}
         reject(err)
       }
 
@@ -108,7 +122,10 @@ class Rest {
 
         const contentType = res.headers['content-type'] || ''
         const isJson = JSON_TYPE_REGEX.test(contentType)
-        const encoding = (res.headers['content-encoding'] || '').toLowerCase().split(',')[0]?.trim()
+        const encoding = String(res.headers['content-encoding'] || '')
+          .split(',')[0]
+          .trim()
+          .toLowerCase()
 
         let src = res
         let decompressor = null
@@ -122,6 +139,15 @@ class Rest {
           reject(err instanceof Error ? err : new Error(String(err)))
         }
 
+        const cl = res.headers['content-length']
+        if (cl != null) {
+          const size = Number(cl)
+          if (Number.isFinite(size) && size > MAX_RESPONSE_SIZE) {
+            abort(new Error(ERRORS.RESPONSE_TOO_LARGE))
+            return
+          }
+        }
+
         try {
           if (encoding === 'br') {
             decompressor = createBrotliDecompress()
@@ -132,17 +158,16 @@ class Rest {
           decompressor = null
         }
 
-        res.once('aborted', () => abort(new Error('Response aborted')))
+        res.once('aborted', () => abort(new Error(ERRORS.RESPONSE_ABORTED)))
+        res.once('error', abort)
+
         if (decompressor) {
           decompressor.once('error', abort)
           res.pipe(decompressor)
           src = decompressor
-        } else {
-          res.once('error', abort)
         }
 
-        const decoder = new TextDecoder('utf-8')
-        const parts = []
+        const chunks = []
         let total = 0
 
         const onData = (chunk) => {
@@ -151,24 +176,24 @@ class Rest {
             abort(new Error(ERRORS.RESPONSE_TOO_LARGE))
             return
           }
-          parts.push(decoder.decode(chunk, { stream: true }))
+          chunks.push(chunk)
         }
 
         const onEnd = () => {
-          const tail = decoder.decode()
-          if (tail) parts.push(tail)
-
           if (total === 0) {
             resolve(null)
             return
           }
 
-          const text = parts.length === 1 ? parts[0] : parts.join('')
+          const buffer = chunks.length === 1 ? chunks[0] : Buffer.concat(chunks, total)
+          let result = buffer
 
-          let parsed = text
+          const asString = buffer.toString('utf8')
+          let parsed = asString
+
           if (isJson) {
             try {
-              parsed = JSON.parse(text)
+              parsed = JSON.parse(asString)
             } catch (err) {
               abort(new Error(`${ERRORS.JSON_PARSE}${err.message}`))
               return
@@ -182,11 +207,12 @@ class Rest {
             err.statusMessage = res.statusMessage
             err.headers = res.headers
             err.body = parsed
+            err.url = url
             reject(err)
             return
           }
 
-          resolve(parsed)
+          resolve(isJson ? parsed : asString)
         }
 
         src.on('data', onData)
