@@ -5,21 +5,25 @@ const Rest = require('./Rest')
 
 const WS_STATES = Object.freeze({ CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3 })
 const FATAL_CLOSE_CODES = new Set([4003, 4004, 4010, 4011, 4012, 4015])
+
 const OPEN_BRACE = 123
+const LYRICS_PREFIX = 'Lyrics'
+const LYRICS_PREFIX_LEN = LYRICS_PREFIX.length
 
 class Node {
   static BACKOFF_MULTIPLIER = 1.5
-  static MAX_BACKOFF = 60000
-  static DEFAULT_RECONNECT_TIMEOUT = 2000
+  static MAX_BACKOFF = 60_000
+  static DEFAULT_RECONNECT_TIMEOUT = 2_000
   static DEFAULT_RESUME_TIMEOUT = 60
-  static JITTER_MAX = 2000
+  static JITTER_MAX = 2_000
   static JITTER_FACTOR = 0.2
   static WS_CLOSE_NORMAL = 1000
-  static DEFAULT_MAX_PAYLOAD = 1048576
-  static DEFAULT_HANDSHAKE_TIMEOUT = 15000
+  static DEFAULT_MAX_PAYLOAD = 1_048_576
+  static DEFAULT_HANDSHAKE_TIMEOUT = 15_000
 
   constructor(aqua, connOptions, options = {}) {
     this.aqua = aqua
+
     this.host = connOptions.host || 'localhost'
     this.name = connOptions.name || this.host
     this.port = connOptions.port || 2333
@@ -31,6 +35,7 @@ class Node {
     this.wsUrl = `ws${this.secure ? 's' : ''}://${this.host}:${this.port}/v4/websocket`
 
     this.rest = new Rest(aqua, this)
+
     this.resumeTimeout = options.resumeTimeout ?? Node.DEFAULT_RESUME_TIMEOUT
     this.autoResume = options.autoResume ?? false
     this.reconnectTimeout = options.reconnectTimeout ?? Node.DEFAULT_RECONNECT_TIMEOUT
@@ -48,9 +53,17 @@ class Node {
     this.isDestroyed = false
     this._isConnecting = false
 
-    this.stats = Object.create(null)
-    this._resetStats()
+    this.stats = {
+      players: 0,
+      playingPlayers: 0,
+      uptime: 0,
+      ping: 0,
+      memory: { free: 0, used: 0, allocated: 0, reservable: 0 },
+      cpu: { cores: 0, systemLoad: 0, lavalinkLoad: 0 },
+      frameStats: { sent: 0, nulled: 0, deficit: 0 }
+    }
 
+    this._clientName = `Aqua/${this.aqua.version} https://github.com/ToddyTheNoobDud/AquaLink`
     this._headers = this._buildHeaders()
 
     this._boundHandlers = Object.freeze({
@@ -71,16 +84,22 @@ class Node {
     s.playingPlayers = 0
     s.uptime = 0
     s.ping = 0
-    s.memory = { free: 0, used: 0, allocated: 0, reservable: 0 }
-    s.cpu = { cores: 0, systemLoad: 0, lavalinkLoad: 0 }
-    s.frameStats = { sent: 0, nulled: 0, deficit: 0 }
+
+    const m = s.memory
+    m.free = m.used = m.allocated = m.reservable = 0
+
+    const c = s.cpu
+    c.cores = c.systemLoad = c.lavalinkLoad = 0
+
+    const f = s.frameStats
+    f.sent = f.nulled = f.deficit = 0
   }
 
   _buildHeaders() {
     const headers = Object.create(null)
     headers.Authorization = this.password
     headers['User-Id'] = this.aqua.clientId
-    headers['Client-Name'] = `Aqua/${this.aqua.version} https://github.com/ToddyTheNoobDud/AquaLink`
+    headers['Client-Name'] = this._clientName
     if (this.sessionId) headers['Session-Id'] = this.sessionId
     return headers
   }
@@ -91,7 +110,7 @@ class Node {
     this.reconnectAttempted = 0
     this._emitDebug('WebSocket connection established')
 
-    if (!this.aqua?.bypassChecks?.nodeFetchInfo) {
+    if (!this.aqua?.bypassChecks?.nodeFetchInfo && !this.info) {
       this.rest.makeRequest('GET', '/v4/info')
         .then(info => { this.info = info })
         .catch(err => {
@@ -109,128 +128,99 @@ class Node {
     this.aqua.emit('nodeError', this, err)
   }
 
-  _handleMessage(data, isBinary) {
-    if (isBinary) return
+  _dataToStringOrNull(data, isBinary) {
+    if (isBinary) return null
 
-    let str
     if (typeof data === 'string') {
-      str = data
-    } else if (Buffer.isBuffer(data)) {
-      if (data.length === 0 || data[0] !== OPEN_BRACE) return
+      if (data.length === 0 || data.charCodeAt(0) !== OPEN_BRACE) return null
+      return data
+    }
+
+    if (Buffer.isBuffer(data)) {
+      if (data.length === 0 || data[0] !== OPEN_BRACE) return null
       try {
-        str = data.toString('utf8')
+        return data.toString('utf8')
       } catch {
-        this._emitDebug('Failed to decode message buffer')
-        return
+        return null
       }
-    } else {
-      return
     }
 
-    if (!str || str.charCodeAt(0) !== OPEN_BRACE) return
+    return null
+  }
 
-    let payload
+  _tryParseJson(str) {
     try {
-      payload = JSON.parse(str)
-    } catch {
-      this._emitDebug(() => `JSON parse failed: ${str.slice(0, 100)}...`)
+      return { ok: true, value: JSON.parse(str) }
+    } catch (err) {
+      return { ok: false, err }
+    }
+  }
+
+  _handleMessage(data, isBinary) {
+    const str = this._dataToStringOrNull(data, isBinary)
+    if (!str) {
+      this._emitDebug('Ignored non-JSON or invalid message frame')
       return
     }
 
+    const parsed = this._tryParseJson(str)
+    if (!parsed.ok) {
+      this._emitDebug(() => `JSON parse failed: ${parsed.err && parsed.err.message ? parsed.err.message : 'Unknown error'}`)
+      return
+    }
+
+    const payload = parsed.value
     const op = payload?.op
     if (!op) return
 
- switch (op) {
-        case 'stats':
-          this._updateStats(payload)
-          break
-        case 'ready':
-          this._handleReady(payload)
-          break
-        case 'playerUpdate':
-          this._handlePlayerUpdate(payload)
-          break
-        case 'event':
-          this._handlePlayerEvent(payload)
-          break
-        default:
-          this._handleUnknownOp(op, payload)
-      }
+    switch (op) {
+      case 'stats':
+        this._updateStats(payload)
+        break
+      case 'ready':
+        this._handleReady(payload)
+        break
+      case 'playerUpdate':
+        this._handlePlayerUpdate(payload)
+        break
+      case 'event':
+        this._handlePlayerEvent(payload)
+        break
+      default:
+        this._handleCustomStringOp(op, payload)
+    }
   }
 
   _handlePlayerUpdate(payload) {
-    const guildId = payload.guildId
+    const guildId = payload?.guildId
     if (!guildId) return
-
     const player = this.aqua.players.get(guildId)
-    if (player) {
-      player.emit('playerUpdate', payload)
-    }
+    player?.emit('playerUpdate', payload)
   }
 
-    _handlePlayerEvent(payload) {
-    const guildId = payload.guildId
+  _handlePlayerEvent(payload) {
+    const guildId = payload?.guildId
     if (!guildId) return
-
     const player = this.aqua.players.get(guildId)
-    if (player) {
-      player.emit('event', payload)
-    }
+    player?.emit('event', payload)
   }
 
-
-  _handleStringOp(op, payload) {
-    if (op.charCodeAt(0) === 76 && op.startsWith('Lyrics')) {
+  _handleCustomStringOp(op, payload) {
+    if (op.length >= LYRICS_PREFIX_LEN && op.startsWith(LYRICS_PREFIX)) {
       const player = payload.guildId ? this.aqua.players.get(payload.guildId) : null
       this.aqua.emit(op, player, payload.track || null, payload)
       return
     }
 
-    if (payload.guildId) {
-      const player = this.aqua.players.get(payload.guildId)
-      if (player) player.emit(op, payload)
-    }
-  }
-
-  _handleNumericOp(op, guildId, payload) {
-    if (!guildId) return
-
-    const player = this.aqua.players.get(guildId)
-    if (!player?.connection) return
-
-    switch (op) {
-      case 2:
-        player.connection.setServerUpdate(payload.d)
-        break
-      case 5:
-        if (payload.d?.sequence !== undefined) {
-          player.connection.updateSequence(payload.d.sequence)
-        }
-        break
-      case 9:
-        this._emitDebug(`[Player ${guildId}] Voice resumed successfully`)
-        break
-    }
-  }
-
-    _handleUnknownOp(op, payload) {
-    if (typeof op === 'number' && [2, 5, 9].includes(op)) {
-      this._handleNumericOp(op, payload.guildId, payload)
-    } else if (typeof op === 'string') {
-      this._handleStringOp(op, payload)
-    }
+    this.aqua.emit('nodeCustomOp', this, op, payload)
+    this._emitDebug(() => `Unknown string op from Lavalink: ${op}`)
   }
 
   _handleClose(code, reason) {
     this.connected = false
     this._isConnecting = false
 
-    let reasonStr = 'No reason provided'
-    if (reason) {
-      reasonStr = typeof reason === 'string' ? reason :
-                  reason.toString ? reason.toString() : String(reason)
-    }
-
+    const reasonStr = reason ? (typeof reason === 'string' ? reason : String(reason)) : 'No reason provided'
     this.aqua.emit('nodeDisconnect', this, { code, reason: reasonStr })
 
     if (this.isDestroyed) return
@@ -244,6 +234,7 @@ class Node {
       this.destroy(true)
       return
     }
+
     this.aqua.handleNodeFailover?.(this)
     this._scheduleReconnect()
   }
@@ -257,8 +248,10 @@ class Node {
 
     if (this.infiniteReconnects) {
       const attempt = ++this.reconnectAttempted
-      this.aqua.emit('nodeReconnect', this, { infinite: true, attempt, backoffTime: 10000 })
-      this.reconnectTimeoutId = setTimeout(this._boundHandlers.connect, 10000)
+      const backoffTime = 10_000
+      this.aqua.emit('nodeReconnect', this, { infinite: true, attempt, backoffTime })
+      this.reconnectTimeoutId = setTimeout(this._boundHandlers.connect, backoffTime)
+      this.reconnectTimeoutId.unref?.()
       return
     }
 
@@ -268,8 +261,8 @@ class Node {
       return
     }
 
-    const backoffTime = this._calcBackoff()
     const attempt = ++this.reconnectAttempted
+    const backoffTime = this._calcBackoff(attempt)
 
     this.aqua.emit('nodeReconnect', this, {
       infinite: false,
@@ -278,10 +271,11 @@ class Node {
     })
 
     this.reconnectTimeoutId = setTimeout(this._boundHandlers.connect, backoffTime)
+    this.reconnectTimeoutId.unref?.()
   }
 
-  _calcBackoff() {
-    const exp = Math.min(this.reconnectAttempted, 10)
+  _calcBackoff(attempt) {
+    const exp = Math.min(attempt, 10)
     const baseBackoff = this.reconnectTimeout * Math.pow(Node.BACKOFF_MULTIPLIER, exp)
     const maxJitter = Math.min(Node.JITTER_MAX, baseBackoff * Node.JITTER_FACTOR)
     const jitter = Math.random() * maxJitter
@@ -299,12 +293,10 @@ class Node {
     if (this.isDestroyed || this._isConnecting) return
 
     const currentState = this.ws?.readyState
-
     if (currentState === WS_STATES.OPEN) {
       this._emitDebug('WebSocket already connected')
       return
     }
-
     if (currentState === WS_STATES.CONNECTING || currentState === WS_STATES.CLOSING) {
       this._emitDebug('WebSocket is connecting/closing; skipping new connect')
       return
@@ -341,17 +333,15 @@ class Node {
   _cleanup() {
     const ws = this.ws
     if (!ws) return
+
     ws.removeAllListeners()
 
     try {
-      switch (ws.readyState) {
-        case WS_STATES.OPEN:
-          ws.close(Node.WS_CLOSE_NORMAL)
-          break
-        case WS_STATES.CONNECTING:
-        case WS_STATES.CLOSING:
-          ws.terminate?.()
-          break
+      const state = ws.readyState
+      if (state === WS_STATES.OPEN) {
+        ws.close(Node.WS_CLOSE_NORMAL)
+      } else if (state === WS_STATES.CONNECTING || state === WS_STATES.CLOSING) {
+        ws.terminate?.()
       }
     } catch (err) {
       this._emitError(`Failed to cleanup WebSocket: ${err?.message || err}`)
@@ -395,31 +385,35 @@ class Node {
     if (!payload) return
 
     const s = this.stats
-    if (payload.players !== undefined) s.players = payload.players
-    if (payload.playingPlayers !== undefined) s.playingPlayers = payload.playingPlayers
-    if (payload.uptime !== undefined) s.uptime = payload.uptime
-    if (payload.ping !== undefined) s.ping = payload.ping
 
-    if (payload.memory) {
+    payload.players !== undefined && (s.players = payload.players)
+    payload.playingPlayers !== undefined && (s.playingPlayers = payload.playingPlayers)
+    payload.uptime !== undefined && (s.uptime = payload.uptime)
+    payload.ping !== undefined && (s.ping = payload.ping)
+
+    const pm = payload.memory
+    if (pm) {
       const m = s.memory
-      if (payload.memory.free !== undefined) m.free = payload.memory.free
-      if (payload.memory.used !== undefined) m.used = payload.memory.used
-      if (payload.memory.allocated !== undefined) m.allocated = payload.memory.allocated
-      if (payload.memory.reservable !== undefined) m.reservable = payload.memory.reservable
+      pm.free !== undefined && (m.free = pm.free)
+      pm.used !== undefined && (m.used = pm.used)
+      pm.allocated !== undefined && (m.allocated = pm.allocated)
+      pm.reservable !== undefined && (m.reservable = pm.reservable)
     }
 
-    if (payload.cpu) {
+    const pc = payload.cpu
+    if (pc) {
       const c = s.cpu
-      if (payload.cpu.cores !== undefined) c.cores = payload.cpu.cores
-      if (payload.cpu.systemLoad !== undefined) c.systemLoad = payload.cpu.systemLoad
-      if (payload.cpu.lavalinkLoad !== undefined) c.lavalinkLoad = payload.cpu.lavalinkLoad
+      pc.cores !== undefined && (c.cores = pc.cores)
+      pc.systemLoad !== undefined && (c.systemLoad = pc.systemLoad)
+      pc.lavalinkLoad !== undefined && (c.lavalinkLoad = pc.lavalinkLoad)
     }
 
-    if (payload.frameStats) {
+    const pf = payload.frameStats
+    if (pf) {
       const f = s.frameStats
-      if (payload.frameStats.sent !== undefined) f.sent = payload.frameStats.sent
-      if (payload.frameStats.nulled !== undefined) f.nulled = payload.frameStats.nulled
-      if (payload.frameStats.deficit !== undefined) f.deficit = payload.frameStats.deficit
+      pf.sent !== undefined && (f.sent = pf.sent)
+      pf.nulled !== undefined && (f.nulled = pf.nulled)
+      pf.deficit !== undefined && (f.deficit = pf.deficit)
     }
   }
 
@@ -439,6 +433,7 @@ class Node {
 
     if (this.autoResume) {
       this._resumePlayers().catch(err => {
+        this._emitError(`_resumePlayers failed: ${err?.message || err}`)
       })
     }
   }
@@ -464,7 +459,13 @@ class Node {
   }
 
   _checkDebugStatus() {
-    this._debugEnabled = this.aqua?.listenerCount?.('debug') > 0
+    this._debugEnabled = (this.aqua?.listenerCount?.('debug') || 0) > 0
+  }
+
+  _shouldDebug() {
+    if (this._debugEnabled) return true
+    this._checkDebugStatus()
+    return this._debugEnabled
   }
 
   _emitError(error) {
@@ -474,11 +475,7 @@ class Node {
   }
 
   _emitDebug(message) {
-    if (!this._debugEnabled) {
-      this._checkDebugStatus()
-      if (!this._debugEnabled) return
-    }
-
+    if (!this._shouldDebug()) return
     const out = typeof message === 'function' ? message() : message
     this.aqua.emit('debug', this.name, out)
   }
