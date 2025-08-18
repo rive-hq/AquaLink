@@ -53,8 +53,10 @@ const fnToId = (v) => {
 }
 
 const fnSafeDeleteMessage = async (msg) => {
-  if (msg?.delete) {
-    try { await msg.delete() } catch {}
+  if (msg) {
+    try { await msg.delete() } catch {
+      console.error('Failed to delete message')
+    }
   }
 }
 
@@ -69,7 +71,7 @@ class MicrotaskUpdateBatcher {
 
   batch(data, immediate = false) {
     const player = this.player
-    if (!player || player.destroyed) {
+    if (!player) {
       return Promise.reject(new Error('Player is destroyed'))
     }
 
@@ -91,7 +93,7 @@ class MicrotaskUpdateBatcher {
   }
 
   _flush() {
-    if (!this.updates || !this.player || this.player.destroyed) {
+    if (!this.updates || !this.player) {
       this.updates = null
       this.isScheduled = false
       return Promise.resolve()
@@ -279,7 +281,6 @@ class Player extends EventEmitter {
   }
 
   batchUpdatePlayer(data, immediate = false) {
-    if (this.destroyed) return Promise.reject(new Error('Player is destroyed'))
     return this._updateBatcher.batch(data, immediate)
   }
 
@@ -345,7 +346,7 @@ class Player extends EventEmitter {
 
     this.emit('destroy')
 
-    if (this.nowPlayingMessage) {
+    if (this.shouldDeleteMessage && this.nowPlayingMessage) {
       fnSafeDeleteMessage(this.nowPlayingMessage)
       this.nowPlayingMessage = null
     }
@@ -653,8 +654,11 @@ class Player extends EventEmitter {
       this.previousTracks.push(track)
     }
 
-    await fnSafeDeleteMessage(this.nowPlayingMessage)
-    this.nowPlayingMessage = null
+
+    if (this.shouldDeleteMessage) {
+      await fnSafeDeleteMessage(this.nowPlayingMessage)
+      this.nowPlayingMessage = null
+    }
 
     const reason = payload?.reason
     const isFailure = reason === 'loadFailed' || reason === 'cleanup'
@@ -714,6 +718,31 @@ class Player extends EventEmitter {
     this.aqua.emit('trackChange', this, track, payload)
   }
 
+async _attemptVoiceResume() {
+  if (!this.connection || !this.connection.sessionId) {
+    throw new Error('Missing connection or sessionId')
+  }
+
+  const ok = await this.connection.attemptResume()
+  if (!ok) throw new Error('Resume request failed')
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      this.off('playerUpdate', onUpdate)
+      reject(new Error('No resume confirmation'))
+    }, 5000)
+
+    const onUpdate = (payload) => {
+      if (payload?.state?.connected || typeof payload?.state?.time === 'number') {
+        clearTimeout(timeout)
+        this.off('playerUpdate', onUpdate)
+        resolve()
+      }
+    }
+
+    this.on('playerUpdate', onUpdate)
+  })
+}
+
   async socketClosed(player, track, payload) {
     if (this.destroyed) return
 
@@ -725,17 +754,16 @@ class Player extends EventEmitter {
       return
     }
 
-    if (code === 4015) {
-      try {
-        if (this.connection) {
-          this.connection.resendVoiceUpdate(true)
-          this.aqua.emit('debug', `[Player ${this.guildId}] Attempting resume...`)
-          return
-        }
-      } catch (error) {
-        console.error('Resume failed, falling back to reconnect', error)
-      }
+   if (code === 4015) {
+    this.aqua.emit('debug', `[Player ${this.guildId}] Voice server crashed (4015), attempting resume...`)
+    try {
+      await this._attemptVoiceResume()
+      this.aqua.emit('debug', `[Player ${this.guildId}] Voice resume succeeded`)
+      return
+    } catch (err) {
+      this.aqua.emit('debug', `[Player ${this.guildId}] Resume failed: ${err.message}. Falling back to reconnect`)
     }
+  }
 
     if (code !== 4015 && code !== 4009 && code !== 4006) {
       this.aqua.emit('socketClosed', this, payload)
@@ -872,7 +900,7 @@ class Player extends EventEmitter {
   get(key) {
     return this.destroyed || !this._dataStore ? undefined : this._dataStore.get(key)
   }
-
+  // EVENTO: playerDestroy
   clearData() {
 
     this.previousTracks?.clear()
@@ -885,8 +913,6 @@ class Player extends EventEmitter {
   }
 
   updatePlayer(data) {
-    if (this.destroyed) return Promise.reject(new Error('Player is destroyed'))
-    if (!this.nodes?.rest) return Promise.reject(new Error('Nodes not available'))
     return this.nodes.rest.updatePlayer({ guildId: this.guildId, data })
   }
 
