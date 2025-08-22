@@ -1,6 +1,6 @@
 {
   "name": "aqualink",
-  "version": "2.11.3",
+  "version": "2.11.5",
   "description": "An Lavalink client, focused in pure performance and features",
   "main": "./build/index.js",
   "types": "./build/index.d.ts",
@@ -10,6 +10,7 @@
   "exports": {
     ".": {
       "require": "./build/index.js",
+      "import": "./build/index.js",
       "types": "./build/index.d.ts"
     }
   },
