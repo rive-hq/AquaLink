@@ -100,8 +100,8 @@ pnpm add aqualink
 # 🚧 Latest development build
 pnpm add ToddyTheNoobDud/aqualink
 ```
-
 </details>
+
 ## 🔥 Feature Highlights
 
 <div align="center">
