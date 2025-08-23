@@ -48,6 +48,60 @@
   </table>
 </div>
 
+## 📦 Installation
+**Latest Stable Release: `v2.11.7`** • **Choose your preferred package manager below**
+
+<details>
+<summary><strong>📦 NPM (Most Popular)</strong></summary>
+
+```bash
+# 🎯 Stable release (recommended for production)
+npm install aqualink
+
+# 🚧 Latest development build
+npm install ToddyTheNoobDud/aqualink
+```
+
+</details>
+
+<details>
+<summary><strong>🧶 Yarn (Fast & Reliable)</strong></summary>
+
+```bash
+# 🎯 Stable release (recommended for production)
+yarn add aqualink
+
+# 🚧 Latest development build 
+yarn add ToddyTheNoobDud/aqualink
+```
+
+</details>
+
+<details>
+<summary><strong>⚡ Bun (Lightning Fast)</strong></summary>
+
+```bash
+# 🎯 Stable release (recommended for production)
+bun add aqualink
+
+# 🚧 Latest development build 
+bun add ToddyTheNoobDud/aqualink
+```
+
+</details>
+
+<details>
+<summary><strong>📦 pnpm (Space Efficient)</strong></summary>
+
+```bash
+# 🎯 Stable release (recommended for production)
+pnpm add aqualink
+
+# 🚧 Latest development build
+pnpm add ToddyTheNoobDud/aqualink
+```
+
+</details>
 ## 🔥 Feature Highlights
 
 <div align="center">
