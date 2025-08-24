@@ -7,6 +7,7 @@ const { EventEmitter } = require('tseep')
 const Node = require('./Node')
 const Player = require('./Player')
 const Track = require('./Track')
+const SearchPlatforms = require('./SearchPlatforms')
 const { version: pkgVersion } = require('../../package.json')
 
 // Constants
@@ -28,6 +29,9 @@ const DEFAULT_OPTIONS = Object.freeze({
   plugins: [],
   autoResume: false,
   infiniteReconnects: false,
+  urlFilteringEnabled: true,
+  restrictedDomains: [],
+  allowedDomains: [],
   failoverOptions: Object.freeze({
     enabled: true,
     maxRetries: 3,
@@ -39,14 +43,14 @@ const DEFAULT_OPTIONS = Object.freeze({
   })
 })
 
-const CLEANUP_INTERVAL = 180000 // 3m
+const CLEANUP_INTERVAL = 180000 // 3 minutes
 const MAX_CONCURRENT_OPS = 10
-const BROKEN_PLAYER_TTL = 300000 // 5m
-const FAILOVER_CLEANUP_TTL = 600000 // 10m
+const BROKEN_PLAYER_TTL = 300000 // 5 minutes
+const FAILOVER_CLEANUP_TTL = 600000 // 10 minutes
 const PLAYER_BATCH_SIZE = 20
 const SEEK_DELAY = 120
 const RECONNECT_DELAY = 400
-const CACHE_VALID_TIME = 12000 // 12s
+const CACHE_VALID_TIME = 12000 // 12 seconds
 const NODE_TIMEOUT = 30000
 
 const URL_PATTERN = /^https?:\/\//i
@@ -77,6 +81,9 @@ class Aqua extends EventEmitter {
     this.plugins = this.options.plugins
     this.autoResume = this.options.autoResume
     this.infiniteReconnects = this.options.infiniteReconnects
+    this.urlFilteringEnabled = this.options.urlFilteringEnabled
+    this.restrictedDomains = this.options.restrictedDomains || []
+    this.allowedDomains = this.options.allowedDomains || []
     this.send = this.options.send || this._createDefaultSend()
 
     this._nodeStates = new Map() // nodeId -> { connected, failoverInProgress }
@@ -97,7 +104,6 @@ class Aqua extends EventEmitter {
         }
       }
     })
-
 
     this._bindEventHandlers()
     this._startCleanupTimer()
@@ -635,8 +641,51 @@ class Aqua extends EventEmitter {
       player.removeAllListeners?.()
       await player.destroy?.()
     } finally {
-      // Cleanup is performed by _handlePlayerDestroy via 'destroy' event
     }
+  }
+
+  _isUrlAllowed(url) {
+    if (!this.urlFilteringEnabled || !isProbablyUrl(url)) return true
+
+    try {
+      const urlObj = new URL(url)
+      const domain = urlObj.hostname.toLowerCase().replace(/^www\./, '')
+
+      if (this.allowedDomains.length > 0) {
+        return this.allowedDomains.some(allowed => {
+          if (allowed instanceof RegExp) return allowed.test(domain)
+          return domain.includes(allowed.toLowerCase()) || allowed.toLowerCase().includes(domain)
+        })
+      }
+
+      if (this.restrictedDomains.length > 0) {
+        return !this.restrictedDomains.some(restricted => {
+          if (restricted instanceof RegExp) return restricted.test(domain)
+          return domain.includes(restricted.toLowerCase()) || restricted.toLowerCase().includes(domain)
+        })
+      }
+
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  _resolveSearchPlatform(source) {
+    if (!source) return this.defaultSearchPlatform
+    const normalized = source.toLowerCase().trim()
+    return SearchPlatforms.SEARCH_PLATFORMS[normalized] || source
+  }
+
+  _validateSourceRegex(url) {
+    if (!isProbablyUrl(url)) return null
+
+    for (const [name, regex] of Object.entries(SearchPlatforms.SOURCE_REGEXES)) {
+      if (regex.test(url)) {
+        return name.replace('Regex', '').toLowerCase()
+      }
+    }
+    return null
   }
 
   async resolve({ query, source = this.defaultSearchPlatform, requester, nodes }) {
@@ -645,7 +694,22 @@ class Aqua extends EventEmitter {
     const requestNode = this._getRequestNode(nodes)
     if (!requestNode) throw new Error('No nodes available')
 
-    const formattedQuery = isProbablyUrl(query) ? query : `${source}${SEARCH_PREFIX}${query}`
+    if (isProbablyUrl(query) && !this._isUrlAllowed(query)) {
+      return Object.assign({}, EMPTY_TRACKS_RESPONSE, {
+        loadType: 'error',
+        exception: { message: 'URL is not allowed by current filtering rules', severity: 'COMMON' }
+      })
+    }
+
+    const resolvedSource = this._resolveSearchPlatform(source)
+    
+    if (isProbablyUrl(query)) {
+      const detectedSource = this._validateSourceRegex(query)
+      if (detectedSource && SearchPlatforms.SEARCH_PLATFORMS[detectedSource]) {
+      }
+    }
+
+    const formattedQuery = isProbablyUrl(query) ? query : `${resolvedSource}${SEARCH_PREFIX}${query}`
 
     try {
       const endpoint = `/${this.restVersion}/loadtracks?identifier=${encodeURIComponent(formattedQuery)}`
@@ -765,7 +829,8 @@ class Aqua extends EventEmitter {
   async search(query, requester, source = this.defaultSearchPlatform) {
     if (!query || !requester) return null
     try {
-      const { tracks } = await this.resolve({ query, source, requester })
+      const resolvedSource = this._resolveSearchPlatform(source)
+      const { tracks } = await this.resolve({ query, source: resolvedSource, requester })
       return tracks || null
     } catch {
       return null
@@ -966,6 +1031,59 @@ class Aqua extends EventEmitter {
       if (node !== excludeNode && node.connected) out.push(node)
     }
     return out
+  }
+
+  getSupportedPlatforms() {
+    return Object.keys(SearchPlatforms.SEARCH_PLATFORMS)
+  }
+
+  getSearchPlatformMapping(platform) {
+    const normalized = platform?.toLowerCase()?.trim()
+    return SearchPlatforms.SEARCH_PLATFORMS[normalized] || null
+  }
+
+  isUrlSupported(url) {
+    if (!isProbablyUrl(url)) return false
+    return this._validateSourceRegex(url) !== null
+  }
+
+  getUrlSourceType(url) {
+    return this._validateSourceRegex(url)
+  }
+
+  addRestrictedDomain(domain) {
+    if (domain && !this.restrictedDomains.includes(domain)) {
+      this.restrictedDomains.push(domain)
+    }
+  }
+
+  removeRestrictedDomain(domain) {
+    const index = this.restrictedDomains.indexOf(domain)
+    if (index > -1) {
+      this.restrictedDomains.splice(index, 1)
+    }
+  }
+
+  addAllowedDomain(domain) {
+    if (domain && !this.allowedDomains.includes(domain)) {
+      this.allowedDomains.push(domain)
+    }
+  }
+
+  removeAllowedDomain(domain) {
+    const index = this.allowedDomains.indexOf(domain)
+    if (index > -1) {
+      this.allowedDomains.splice(index, 1)
+    }
+  }
+
+  setUrlFilteringEnabled(enabled) {
+    this.urlFilteringEnabled = !!enabled
+  }
+
+  clearDomainFilters() {
+    this.restrictedDomains.length = 0
+    this.allowedDomains.length = 0
   }
 
   destroy() {
