@@ -10,7 +10,18 @@ const Track = require('./Track')
 const SearchPlatforms = require('./SearchPlatforms')
 const { version: pkgVersion } = require('../../package.json')
 
-// Constants
+const normalizeHost = (h) => {
+  if (!h) return ''
+  h = h.toLowerCase()
+  if (h.startsWith('www.')) h = h.slice(4)
+  return h.endsWith('.') ? h.slice(0, -1) : h
+}
+const hostMatchesSuffix = (host, suffix) => {
+  host = normalizeHost(host)
+  suffix = normalizeHost(suffix)
+  return host === suffix || host.endsWith('.' + suffix)
+}
+
 const SEARCH_PREFIX = ':'
 const EMPTY_ARRAY = Object.freeze([])
 const EMPTY_TRACKS_RESPONSE = Object.freeze({
@@ -107,6 +118,34 @@ class Aqua extends EventEmitter {
 
     this._bindEventHandlers()
     this._startCleanupTimer()
+  }
+
+  _getDomainLists() {
+    if (this._domainLists) return this._domainLists
+
+    const allowedHostSuffixes = []
+    const allowedRegexes = []
+    for (const d of this.allowedDomains) {
+      if (!d) continue
+      if (d instanceof RegExp) allowedRegexes.push(d)
+      else allowedHostSuffixes.push(normalizeHost(String(d)))
+    }
+
+    const restrictedHostSuffixes = []
+    const restrictedRegexes = []
+    for (const d of this.restrictedDomains) {
+      if (!d) continue
+      if (d instanceof RegExp) restrictedRegexes.push(d)
+      else restrictedHostSuffixes.push(normalizeHost(String(d)))
+    }
+
+    this._domainLists = {
+      allowedHostSuffixes,
+      allowedRegexes,
+      restrictedHostSuffixes,
+      restrictedRegexes
+    }
+    return this._domainLists
   }
 
   _createDefaultSend() {
@@ -646,29 +685,38 @@ class Aqua extends EventEmitter {
 
   _isUrlAllowed(url) {
     if (!this.urlFilteringEnabled || !isProbablyUrl(url)) return true
-
+    let hostname
     try {
-      const urlObj = new URL(url)
-      const domain = urlObj.hostname.toLowerCase().replace(/^www\./, '')
-
-      if (this.allowedDomains.length > 0) {
-        return this.allowedDomains.some(allowed => {
-          if (allowed instanceof RegExp) return allowed.test(domain)
-          return domain.includes(allowed.toLowerCase()) || allowed.toLowerCase().includes(domain)
-        })
-      }
-
-      if (this.restrictedDomains.length > 0) {
-        return !this.restrictedDomains.some(restricted => {
-          if (restricted instanceof RegExp) return restricted.test(domain)
-          return domain.includes(restricted.toLowerCase()) || restricted.toLowerCase().includes(domain)
-        })
-      }
-
-      return true
+      hostname = normalizeHost(new URL(url).hostname)
     } catch {
       return false
     }
+
+    const {
+      allowedHostSuffixes, allowedRegexes,
+      restrictedHostSuffixes, restrictedRegexes
+    } = this._getDomainLists()
+
+    if (allowedHostSuffixes.length || allowedRegexes.length) {
+      for (const rx of allowedRegexes) {
+        if (rx.test(hostname)) return true
+      }
+      for (const suffix of allowedHostSuffixes) {
+        if (hostMatchesSuffix(hostname, suffix)) return true
+      }
+      return false
+    }
+
+    if (restrictedHostSuffixes.length || restrictedRegexes.length) {
+      for (const rx of restrictedRegexes) {
+        if (rx.test(hostname)) return false
+      }
+      for (const suffix of restrictedHostSuffixes) {
+        if (hostMatchesSuffix(hostname, suffix)) return false
+      }
+    }
+
+    return true
   }
 
   _resolveSearchPlatform(source) {
@@ -677,15 +725,33 @@ class Aqua extends EventEmitter {
     return SearchPlatforms.SEARCH_PLATFORMS[normalized] || source
   }
 
-  _validateSourceRegex(url) {
-    if (!isProbablyUrl(url)) return null
+  _validateSourceRegex(urlStr) {
+    if (!isProbablyUrl(urlStr)) return null
+    try {
+      const u = new URL(urlStr)
+      const host = normalizeHost(u.hostname)
+      const path = u.pathname.toLowerCase()
+      if (/\.(mp3|m3u8?|mp4|m4a|wav|aacp)(?:$|\?)/i.test(path)) return 'http'
+      if (host === 'music.youtube.com') return 'ytmsearch'
+      if (host === 'youtu.be' || hostMatchesSuffix(host, 'youtube.com')) return 'ytsearch'
+      if (hostMatchesSuffix(host, 'soundcloud.com') || host === 'soundcloud.app.goo.gl') return 'scsearch'
+      if (hostMatchesSuffix(host, 'open.spotify.com')) return 'spsearch'
+      if (hostMatchesSuffix(host, 'deezer.com') || hostMatchesSuffix(host, 'deezer.page.link')) return 'dzsearch'
+      if (hostMatchesSuffix(host, 'music.apple.com')) return 'amsearch'
+      if (hostMatchesSuffix(host, 'tidal.com') || hostMatchesSuffix(host, 'listen.tidal.com')) return 'tdsearch'
+      if (hostMatchesSuffix(host, 'jiosaavn.com')) return 'jssearch'
+      if (hostMatchesSuffix(host, 'music.yandex.ru')) return 'ymsearch'
+      if (hostMatchesSuffix(host, 'bandcamp.com')) return 'bcsearch'
+      if (hostMatchesSuffix(host, 'twitch.tv')) return 'link'
+      if (hostMatchesSuffix(host, 'vimeo.com')) return 'link'
+      if (hostMatchesSuffix(host, 'tiktok.com')) return 'link'
+      if (hostMatchesSuffix(host, 'mixcloud.com')) return 'link'
+      if (hostMatchesSuffix(host, 'radiohost.de')) return 'link'
 
-    for (const [name, regex] of Object.entries(SearchPlatforms.SOURCE_REGEXES)) {
-      if (regex.test(url)) {
-        return name.replace('Regex', '').toLowerCase()
-      }
+      return null
+    } catch {
+      return null
     }
-    return null
   }
 
   async resolve({ query, source = this.defaultSearchPlatform, requester, nodes }) {
@@ -693,23 +759,14 @@ class Aqua extends EventEmitter {
 
     const requestNode = this._getRequestNode(nodes)
     if (!requestNode) throw new Error('No nodes available')
-
-    if (isProbablyUrl(query) && !this._isUrlAllowed(query)) {
-      return Object.assign({}, EMPTY_TRACKS_RESPONSE, {
-        loadType: 'error',
-        exception: { message: 'URL is not allowed by current filtering rules', severity: 'COMMON' }
-      })
-    }
-
-    const resolvedSource = this._resolveSearchPlatform(source)
-    
-    if (isProbablyUrl(query)) {
-      const detectedSource = this._validateSourceRegex(query)
-      if (detectedSource && SearchPlatforms.SEARCH_PLATFORMS[detectedSource]) {
+    if (this.restrictedDomains.length > 0) {
+      if (isProbablyUrl(query) && !this._isUrlAllowed(query)) {
+        this.emit('debug', `Blocked URL by domain restrictions: ${query}`)
+        return EMPTY_TRACKS_RESPONSE
       }
     }
 
-    const formattedQuery = isProbablyUrl(query) ? query : `${resolvedSource}${SEARCH_PREFIX}${query}`
+    const formattedQuery = isProbablyUrl(query) ? query : `${source}${SEARCH_PREFIX}${query}`
 
     try {
       const endpoint = `/${this.restVersion}/loadtracks?identifier=${encodeURIComponent(formattedQuery)}`
@@ -1031,59 +1088,6 @@ class Aqua extends EventEmitter {
       if (node !== excludeNode && node.connected) out.push(node)
     }
     return out
-  }
-
-  getSupportedPlatforms() {
-    return Object.keys(SearchPlatforms.SEARCH_PLATFORMS)
-  }
-
-  getSearchPlatformMapping(platform) {
-    const normalized = platform?.toLowerCase()?.trim()
-    return SearchPlatforms.SEARCH_PLATFORMS[normalized] || null
-  }
-
-  isUrlSupported(url) {
-    if (!isProbablyUrl(url)) return false
-    return this._validateSourceRegex(url) !== null
-  }
-
-  getUrlSourceType(url) {
-    return this._validateSourceRegex(url)
-  }
-
-  addRestrictedDomain(domain) {
-    if (domain && !this.restrictedDomains.includes(domain)) {
-      this.restrictedDomains.push(domain)
-    }
-  }
-
-  removeRestrictedDomain(domain) {
-    const index = this.restrictedDomains.indexOf(domain)
-    if (index > -1) {
-      this.restrictedDomains.splice(index, 1)
-    }
-  }
-
-  addAllowedDomain(domain) {
-    if (domain && !this.allowedDomains.includes(domain)) {
-      this.allowedDomains.push(domain)
-    }
-  }
-
-  removeAllowedDomain(domain) {
-    const index = this.allowedDomains.indexOf(domain)
-    if (index > -1) {
-      this.allowedDomains.splice(index, 1)
-    }
-  }
-
-  setUrlFilteringEnabled(enabled) {
-    this.urlFilteringEnabled = !!enabled
-  }
-
-  clearDomainFilters() {
-    this.restrictedDomains.length = 0
-    this.allowedDomains.length = 0
   }
 
   destroy() {
