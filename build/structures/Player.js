@@ -16,10 +16,9 @@ const EVENT_HANDLERS = Object.freeze({
 
 const _clamp = v => { const n = +v; return n >= 0 && n <= 200 ? n : n !== n ? 100 : n < 0 ? 0 : 200 }
 const _validVol = v => typeof v === 'number' && v >= 0 && v <= 200 && v === v
-const _validPos = p => typeof p === 'number' && p >= 0 && p === p
 const _randIdx = len => (Math.random() * len) | 0
 const _toId = v => v ? (typeof v === 'string' ? v : v.id || null) : null
-const _safeDel = async msg => { if (msg) try { await msg.delete() } catch {} }
+const _safeDel = async msg => { if (msg) try { await msg.delete() } catch { } }
 
 class MicrotaskUpdateBatcher {
   constructor(player) {
@@ -58,7 +57,7 @@ class MicrotaskUpdateBatcher {
     this.isScheduled = false
 
     return this.player.updatePlayer(updates).catch(err => {
-      try { this.player?.aqua?.emit?.('error', new Error(`Update player error: ${err.message}`)) } catch {}
+      try { this.player?.aqua?.emit?.('error', new Error(`Update player error: ${err.message}`)) } catch { }
       throw err
     })
   }
@@ -264,7 +263,7 @@ class Player extends EventEmitter {
 
   async _voiceWatchdog() {
     if (this.destroyed || !this.voiceChannel || this.connected || !this._voiceDownSince ||
-        (Date.now() - this._voiceDownSince) < 10000 || this._voiceRecovering) return
+      (Date.now() - this._voiceDownSince) < 10000 || this._voiceRecovering) return
 
     this._voiceRecovering = true
     try {
@@ -316,7 +315,7 @@ class Player extends EventEmitter {
     this._updateBatcher = null
 
     if (this._boundAquaPlayerMove) {
-      try { this.aqua.off('playerMove', this._boundAquaPlayerMove) } catch {}
+      try { this.aqua.off('playerMove', this._boundAquaPlayerMove) } catch { }
       this._boundAquaPlayerMove = null
     }
 
@@ -324,7 +323,7 @@ class Player extends EventEmitter {
       try {
         this.send({ guild_id: this.guildId, channel_id: null })
         this.aqua?.destroyPlayer?.(this.guildId)
-        this.nodes?.connected && this.nodes?.rest?.destroyPlayer?.(this.guildId).catch(() => {})
+        this.nodes?.connected && this.nodes?.rest?.destroyPlayer?.(this.guildId).catch(() => { })
       } catch (error) {
         console.error(`[Player ${this.guildId}] Destroy error:`, error?.message)
       }
@@ -349,9 +348,10 @@ class Player extends EventEmitter {
   }
 
   seek(position) {
-    if (this.destroyed || !this.playing || !_validPos(position)) return this
+    if (this.destroyed || !this.playing || typeof position !== 'number' || position !== position) return this
     const maxPos = this.current?.info?.length
-    this.position = maxPos ? Math.min(position, maxPos) : position
+    const newPosition = Math.max(0, this.position + position)
+    this.position = maxPos ? Math.min(newPosition, maxPos) : newPosition
     this.batchUpdatePlayer({ position: this.position }, true)
     return this
   }
@@ -701,7 +701,7 @@ class Player extends EventEmitter {
           self_deaf: this.deaf, self_mute: this.mute
         })
       }
-    } catch {}
+    } catch { }
   }
 
   send(data) {
