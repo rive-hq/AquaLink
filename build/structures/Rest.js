@@ -44,22 +44,6 @@ const isValidBase64 = (str) => {
 
 const fastBool = (b) => b ? true : false
 
-class BufferPool {
-  constructor(size = BUFFER_POOL_SIZE) {
-    this.pool = []
-    this.maxSize = size
-  }
-
-  get(size = INITIAL_BUFFER_SIZE) {
-    return this.pool.pop() || Buffer.allocUnsafe(size)
-  }
-
-  release(buffer) {
-    if (this.pool.length < this.maxSize && buffer.length <= 65536) {
-      this.pool.push(buffer)
-    }
-  }
-}
 
 class Rest {
   constructor(aqua, node) {
@@ -112,7 +96,6 @@ class Rest {
     })
 
     this.request = node.secure ? httpsRequest : httpRequest
-    this.bufferPool = new BufferPool()
 
     this._reuseableHeaders = {}
   }
@@ -465,10 +448,6 @@ class Rest {
     if (this.agent) {
       this.agent.destroy()
       this.agent = null
-    }
-    if (this.bufferPool) {
-      this.bufferPool.pool = []
-      this.bufferPool = null
     }
     this._reuseableHeaders = null
   }
