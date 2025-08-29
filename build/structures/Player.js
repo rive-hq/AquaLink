@@ -222,7 +222,7 @@ class Player extends EventEmitter {
       this.playing = true
       this.paused = false
       this.position = 0
-      await this.batchUpdatePlayer({ track: { encoded: this.current.track } }, true)
+      await this.batchUpdatePlayer({ guildId: this.guildId, track: { encoded: this.current.track } }, true)
       return this
     } catch (error) {
       this.aqua.emit('error', error)
@@ -317,29 +317,24 @@ class Player extends EventEmitter {
     const state = !!paused
     if (this.paused === state) return this
     this.paused = state
-    this.batchUpdatePlayer({ paused: state }, true)
+    this.batchUpdatePlayer({ guildId: this.guildId, paused: state }, true)
     return this
   }
 
   seek(position) {
     if (this.destroyed || !this.playing || !_functions.isNum(position)) return this
     const max = this.current?.info?.length
-    const pos = position < 0 ? 0 : position
-    this.position = max && pos > max ? max : pos
-    this.batchUpdatePlayer({ position: this.position }, true)
+    const newPosition = Math.max(0, this.position + position)
+    this.position = max ? Math.min(newPosition, max) : newPosition
+    this.batchUpdatePlayer({ guildId: this.guildId, position: this.position }, true)
     return this
-  }
-
-  seekBy(delta) {
-    if (this.destroyed || !this.playing || !_functions.isNum(delta)) return this
-    return this.seek(this.position + delta)
   }
 
   stop() {
     if (this.destroyed || !this.playing) return this
     this.playing = this.paused = false
     this.position = 0
-    this.batchUpdatePlayer({ track: { encoded: null } }, true)
+    this.batchUpdatePlayer({ guildId: this.guildId, track: { encoded: null } }, true)
     return this
   }
 
@@ -348,7 +343,7 @@ class Player extends EventEmitter {
     const vol = _functions.clamp(volume)
     if (this.volume === vol) return this
     this.volume = vol
-    this.batchUpdatePlayer({ volume: vol })
+    this.batchUpdatePlayer({ guildId: this.guildId, volume: vol })
     return this
   }
 
@@ -366,7 +361,7 @@ class Player extends EventEmitter {
     const id = _functions.toId(channel)
     if (!id) throw new TypeError('Invalid text channel')
     this.textChannel = id
-    this.batchUpdatePlayer({ text_channel: id })
+    this.batchUpdatePlayer({ guildId: this.guildId, text_channel: id })
     return this
   }
 
