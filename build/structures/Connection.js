@@ -119,31 +119,10 @@ class Connection {
     this._lastListenerCheck = now
   }
 
-  _extractRegion(endpoint) {
-    if (!endpoint || typeof endpoint !== 'string') return null
-
-    const dashIndex = endpoint.indexOf('-')
-    if (dashIndex > 0) {
-      const region = endpoint.substring(0, dashIndex)
-      let isValid = true
-      for (let i = 0; i < region.length; i++) {
-        const code = region.charCodeAt(i)
-        if (!((code >= 65 && code <= 90) || (code >= 97 && code <= 122))) {
-          isValid = false
-          break
-        }
-      }
-      if (isValid) return region
-    }
-
-    const match = ENDPOINT_PATTERN.exec(endpoint)
-    return match?.[1] || null
-  }
-
   setServerUpdate(data) {
     if (!data?.endpoint || !data.token ||
-        typeof data.endpoint !== 'string' ||
-        typeof data.token !== 'string') {
+      typeof data.endpoint !== 'string' ||
+      typeof data.token !== 'string') {
       return
     }
 
@@ -153,7 +132,7 @@ class Connection {
       return
     }
 
-    const newRegion = this._extractRegion(trimmedEndpoint)
+    const newRegion = data.endpoint.split('.').shift()?.replace(/[0-9]/g, '');
 
     const hasRegionChange = this.region !== newRegion
     const hasEndpointChange = this._lastEndpoint !== trimmedEndpoint
@@ -175,18 +154,18 @@ class Connection {
     this.token = data.token
 
     if (this._player.paused) {
-      this._player.paused = false
+      this._player.pause(false)
     }
 
     this._scheduleVoiceUpdate()
   }
 
-  resendVoiceUpdate({ resume = false } = {}) {
+  resendVoiceUpdate() {  // Remove the parameter
     if (!(this.sessionId && this.endpoint && this.token)) {
       return false
     }
 
-    this._scheduleVoiceUpdate(resume)
+    this._scheduleVoiceUpdate()  // No parameter needed
     return true
   }
 
@@ -201,9 +180,7 @@ class Connection {
       let needsUpdate = false
 
       if (this.voiceChannel !== channel_id) {
-        if (this._stateFlags & STATE_FLAGS.HAS_MOVE_LISTENERS) {
-          this._aqua.emit('playerMove', this.voiceChannel, channel_id)
-        }
+        this._aqua.emit('playerMove', this.voiceChannel, channel_id)
         this.voiceChannel = channel_id
         this._player.voiceChannel = channel_id
         needsUpdate = true
@@ -249,32 +226,29 @@ class Connection {
 
   async attemptResume() {
     if (!(this.sessionId && this.endpoint && this.token)) {
-      throw new Error('Missing required voice state')
+      return false;
     }
 
-    const payload = this._payloadPool.acquire()
+    const payload = this._payloadPool.acquire(); // USE THE POOL
 
     try {
-      payload.guildId = this._guildId
-      payload.data.voice.token = this.token
-      payload.data.voice.endpoint = this.endpoint
-      payload.data.voice.sessionId = this.sessionId
-      payload.data.voice.resume = true
-      payload.data.volume = this._player?.volume
+      payload.guildId = this._guildId;
+      payload.data.voice.token = this.token;
+      payload.data.voice.endpoint = this.endpoint;
+      payload.data.voice.sessionId = this.sessionId;
+      payload.data.voice.resume = true;
+      payload.data.volume = this._player?.volume;
 
-      if (this.sequence >= 0 && Number.isFinite(this.sequence)) {
-        payload.data.voice.sequence = this.sequence
-      }
-
-      await this._sendUpdate(payload)
-      return true
+      await this._sendUpdate(payload);
+      return true;
     } catch (error) {
+      console.log(`Voice connection resume failed in guild ${this._guildId}: ${error?.message}`);
       if (this._stateFlags & STATE_FLAGS.HAS_DEBUG_LISTENERS) {
-        this._aqua.emit('debug', `[Player ${this._guildId}] Resume update failed: ${error?.message}`)
+        this._aqua.emit('debug', `[Player ${this._guildId}] Voice update failed: ${error?.message}`);
       }
-      return false
+      return false;
     } finally {
-      this._payloadPool.release(payload)
+      this._payloadPool.release(payload); // ALWAYS RELEASE
     }
   }
 
@@ -294,40 +268,31 @@ class Connection {
     this._pendingUpdate = null
   }
 
-  _scheduleVoiceUpdate(isResume = false) {
+  _scheduleVoiceUpdate() {
     if (!(this.sessionId && this.endpoint && this.token)) {
-      return
+      return;
     }
 
     if (this._stateFlags & STATE_FLAGS.UPDATE_SCHEDULED) {
-      return
+      return;
     }
 
-    this._clearPendingUpdate()
+    this._clearPendingUpdate();
 
-    const payload = this._payloadPool.acquire()
-
-    payload.guildId = this._guildId
-    const voice = payload.data.voice
-    voice.token = this.token
-    voice.endpoint = this.endpoint
-    voice.sessionId = this.sessionId
-    payload.data.volume = this._player.volume
-
-    if (isResume) {
-      voice.resume = true
-      voice.sequence = this.sequence
-    }
+    const payload = this._payloadPool.acquire();
+    payload.guildId = this._guildId;
+    payload.data.voice.token = this.token;
+    payload.data.voice.endpoint = this.endpoint;
+    payload.data.voice.sessionId = this.sessionId;
+    payload.data.volume = this._player.volume;
 
     this._pendingUpdate = {
-      isResume,
       payload,
       timestamp: Date.now()
-    }
+    };
 
-    this._stateFlags |= STATE_FLAGS.UPDATE_SCHEDULED
-
-    queueMicrotask(this._executeVoiceUpdate)
+    this._stateFlags |= STATE_FLAGS.UPDATE_SCHEDULED;
+    queueMicrotask(this._executeVoiceUpdate);
   }
 
   _executeVoiceUpdate() {
@@ -345,7 +310,7 @@ class Connection {
     const payload = pending.payload
     this._pendingUpdate = null
 
-    // to avoid any delay. Uncomment, cuz im too lazy
+    // to avoid any delay. Uncomment if needed:
     // if (pending.isResume) {
     //   this._sendUpdateSync(payload)
     //   return
@@ -366,8 +331,8 @@ class Connection {
       await this._nodes.rest.updatePlayer(payload)
     } catch (error) {
       if (error.code !== 'ECONNREFUSED' &&
-          error.code !== 'ENOTFOUND' &&
-          (this._stateFlags & STATE_FLAGS.HAS_DEBUG_LISTENERS)) {
+        error.code !== 'ENOTFOUND' &&
+        (this._stateFlags & STATE_FLAGS.HAS_DEBUG_LISTENERS)) {
         this._aqua.emit('debug', `[Player ${this._guildId}] Update failed: ${error.message}`)
       }
       throw error
