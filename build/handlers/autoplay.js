@@ -1,111 +1,121 @@
-const https = require('https');
-const crypto = require('crypto');
+const https = require('https')
 
-const agent = new https.Agent({
-    keepAlive: true,
-    maxSockets: 5,
-    maxFreeSockets: 2,
-    timeout: 8000,
-    freeSocketTimeout: 4000
-});
+const AGENT_CONFIG = {
+  keepAlive: true,
+  maxSockets: 5,
+  maxFreeSockets: 2,
+  timeout: 8000,
+  freeSocketTimeout: 4000
+}
 
+const agent = new https.Agent(AGENT_CONFIG)
 
-const SOUNDCLOUD_REGEX = /<a\s+itemprop="url"\s+href="(\/[^"]+)"/g;
+const SC_LINK_RE = /<a\s+itemprop="url"\s+href="(\/[^"]+)"/g
+const MAX_REDIRECTS = 3
+const MAX_RESPONSE_BYTES = 5 * 1024 * 1024 // 5 MB
+const MAX_SC_LINKS = 50
+const MAX_SP_RESULTS = 5
+const DEFAULT_TIMEOUT_MS = 8000
 
-const shuffleArray = (arr) => {
-    for (let i = arr.length - 1; i > 0; i--) {
-        const j = Math.random() * (i + 1) | 0;
-        [arr[i], arr[j]] = [arr[j], arr[i]];
+const fastFetch = (url, depth = 0) => new Promise((resolve, reject) => {
+  if (depth > MAX_REDIRECTS) return reject(new Error('Too many redirects'))
+
+  const req = https.get(url, { agent, timeout: DEFAULT_TIMEOUT_MS }, res => {
+    const { statusCode, headers } = res
+
+    if (statusCode >= 300 && statusCode < 400 && headers.location) {
+      res.resume()
+      return fastFetch(new URL(headers.location, url).href, depth + 1).then(resolve, reject)
     }
-    return arr;
-};
 
-const fastFetch = (url, options = {}) => {
-    return new Promise((resolve, reject) => {
-        const req = https.get(url, { ...options, agent }, (res) => {
-            if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-                res.resume();
-                return fastFetch(new URL(res.headers.location, url).href, options)
-                    .then(resolve, reject);
-            }
-
-            if (res.statusCode !== 200) {
-                res.resume();
-                return reject(new Error(`HTTP ${res.statusCode}`));
-            }
-
-            const chunks = [];
-            res.on('data', chunk => chunks.push(chunk));
-            res.on('end', () => resolve(Buffer.concat(chunks).toString()));
-        });
-
-        req.on('error', reject);
-        req.setTimeout(8000, () => req.destroy(new Error('Timeout')));
-    });
-};
-
-const soundAutoPlay = async (baseUrl) => {
-    try {
-        const html = await fastFetch(`${baseUrl}/recommended`);
-
-        const links = [];
-        let match;
-        while ((match = SOUNDCLOUD_REGEX.exec(html)) && links.length < 50) {
-            links.push(`https://soundcloud.com${match[1]}`);
-        }
-
-        if (!links.length) throw new Error("No tracks found");
-
-        return shuffleArray(links);
-    } catch (err) {
-        console.error("SoundCloud error:", err.message);
-        return [];
+    if (statusCode !== 200) {
+      res.resume()
+      return reject(new Error(`HTTP ${statusCode}`))
     }
-};
 
-const spotifyAutoPlay = async (seed, player, requester, excludedIdentifiers = []) => {
-  try {
-    const { trackId, artistIds } = seed
-    if (!trackId) return null
+    const chunks = []
+    let received = 0
 
-    const prevIdentifier = player.current?.identifier
-    let seedQuery = `seed_tracks=${trackId}`
-    if (artistIds) seedQuery += `&seed_artists=${artistIds}`
-    console.log('Seed query:', seedQuery)
-
-    const response = await player.aqua.resolve({
-      query: seedQuery,
-      source: 'spsearch',
-      requester
-    })
-    const candidates = response?.tracks || []
-
-    const seenIds = new Set(excludedIdentifiers)
-    if (prevIdentifier) seenIds.add(prevIdentifier)
-
-    const result = []
-    for (const track of candidates) {
-      const { identifier } = track
-      if (seenIds.has(identifier)) continue
-      seenIds.add(identifier)
-      track.pluginInfo = {
-        ...(track.pluginInfo || {}),
-        clientData: { fromAutoplay: true }
+    res.on('data', chunk => {
+      received += chunk.length
+      if (received > MAX_RESPONSE_BYTES) {
+        req.destroy(new Error('Response too large'))
+        return
       }
-      result.push(track)
-      if (result.length === 5) break
+      chunks.push(chunk)
+    })
+
+    res.on('end', () => {
+      try {
+        const buf = Buffer.concat(chunks)
+        resolve(buf.toString())
+      } catch (err) {
+        reject(err)
+      }
+    })
+  })
+
+  req.on('error', reject)
+  req.setTimeout(DEFAULT_TIMEOUT_MS, () => req.destroy(new Error('Timeout')))
+})
+
+const shuffleInPlace = arr => {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.random() * (i + 1) | 0
+    const tmp = arr[i]
+    arr[i] = arr[j]
+    arr[j] = tmp
+  }
+  return arr
+}
+
+const scAutoPlay = async baseUrl => {
+  try {
+    const html = await fastFetch(`${baseUrl}/recommended`)
+    const links = []
+    for (const m of html.matchAll(SC_LINK_RE)) {
+      if (!m[1]) continue
+      links.push(`https://soundcloud.com${m[1]}`)
+      if (links.length >= MAX_SC_LINKS) break
+    }
+    return links.length ? shuffleInPlace(links) : []
+  } catch (err) {
+    console.error('scAutoPlay error:', err?.message || err)
+    return []
+  }
+}
+
+const spAutoPlay = async (seed, player, requester, excludedIds = []) => {
+  try {
+    if (!seed?.trackId) return null
+
+    const seedQuery = `seed_tracks=${seed.trackId}${seed.artistIds ? `&seed_artists=${seed.artistIds}` : ''}`
+    const res = await player.aqua.resolve({ query: seedQuery, source: 'spsearch', requester })
+
+    const candidates = res?.tracks || []
+    if (!candidates.length) return null
+
+    const seen = new Set(excludedIds)
+    const prevId = player.current?.identifier
+    if (prevId) seen.add(prevId)
+
+    const out = []
+    for (const t of candidates) {
+      if (seen.has(t.identifier)) continue
+      seen.add(t.identifier)
+      t.pluginInfo = { ...(t.pluginInfo || {}), clientData: { fromAutoplay: true } }
+      out.push(t)
+      if (out.length === MAX_SP_RESULTS) break
     }
 
-    return result
-
+    return out.length ? out : null
   } catch (err) {
-    console.error('Spotify autoplay error:', err)
+    console.error('spAutoPlay error:', err)
     return null
   }
 }
 
-
 module.exports = {
-    scAutoPlay: soundAutoPlay,
-    spAutoPlay: spotifyAutoPlay
-};
+  scAutoPlay,
+  spAutoPlay
+}
