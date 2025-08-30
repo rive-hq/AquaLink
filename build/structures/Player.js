@@ -32,8 +32,8 @@ const _functions = {
   randIdx: len => (Math.random() * len) | 0,
   toId: v => v?.id || v || null,
   isNum: v => typeof v === 'number' && v === v,
-  noop: () => {},
-  safeUnref: t => { if (t?.unref) try { t.unref() } catch {} },
+  noop: () => { },
+  safeUnref: t => { if (t?.unref) try { t.unref() } catch { } },
   isInvalidLoad: r => !r?.tracks?.length || INVALID_LOADS.has(r.loadType),
   safeDel: msg => { if (msg?.delete) msg.delete().catch(_functions.noop) }
 }
@@ -71,7 +71,7 @@ class MicrotaskUpdateBatcher {
     this.updates = null
     this.scheduled = 0
     return p.updatePlayer(u).catch(err => {
-      try { p.aqua?.emit?.('error', new Error(`Update error: ${err.message}`)) } catch {}
+      try { p.aqua?.emit?.('error', new Error(`Update error: ${err.message}`)) } catch { }
       throw err
     })
   }
@@ -294,7 +294,7 @@ class Player extends EventEmitter {
     this.nowPlayingMessage = null
     this.off('playerUpdate', this._boundPlayerUpdate)
     this.off('event', this._boundEvent)
-    try { this.aqua.off('playerMove', this._boundAquaPlayerMove) } catch {}
+    try { this.aqua.off('playerMove', this._boundAquaPlayerMove) } catch { }
     this.removeAllListeners()
     this._updateBatcher?.destroy()
     this._updateBatcher = null
@@ -303,7 +303,7 @@ class Player extends EventEmitter {
         this.send({ guild_id: this.guildId, channel_id: null })
         this.aqua?.destroyPlayer?.(this.guildId)
         this.nodes?.connected && this.nodes?.rest?.destroyPlayer?.(this.guildId).catch(_functions.noop)
-      } catch {}
+      } catch { }
     }
     this.clearData()
     this.queue = this.connection = this.filters = this._dataStore = null
@@ -323,15 +323,15 @@ class Player extends EventEmitter {
 
   seek(position) {
     if (this.destroyed || !this.playing || !_functions.isNum(position)) return this
-    const max = this.current?.info?.length
-    let newPosition = position
-    if (position < 0) {
-      newPosition = Math.max(0, this.position + position)
-    } else if (position > 0) {
-      newPosition = this.position + position
-    }
-    this.position = max ? Math.min(newPosition, max) : newPosition
-    this.batchUpdatePlayer({ guildId: this.guildId, position: this.position }, true)
+
+    const len = this.current && this.current.info ? this.current.info.length : 0
+    const pos = position === 0 ? 0 : this.position + position
+
+    const clamped = len ? Math.min(Math.max(pos, 0), len) : Math.max(pos, 0)
+
+    this.position = clamped
+    this.batchUpdatePlayer({ guildId: this.guildId, position: clamped }, true)
+
     return this
   }
 
@@ -662,7 +662,7 @@ class Player extends EventEmitter {
           self_deaf: this.deaf, self_mute: this.mute
         })
       }
-    } catch {}
+    } catch { }
   }
 
   send(data) {
