@@ -324,7 +324,12 @@ class Player extends EventEmitter {
   seek(position) {
     if (this.destroyed || !this.playing || !_functions.isNum(position)) return this
     const max = this.current?.info?.length
-    const newPosition = Math.max(0, this.position + position)
+    let newPosition = position
+    if (position < 0) {
+      newPosition = Math.max(0, this.position + position)
+    } else if (position > 0) {
+      newPosition = this.position + position
+    }
     this.position = max ? Math.min(newPosition, max) : newPosition
     this.batchUpdatePlayer({ guildId: this.guildId, position: this.position }, true)
     return this
