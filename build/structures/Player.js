@@ -27,6 +27,7 @@ const PREVIOUS_IDS_MAX = 20
 const AUTOPLAY_MAX = 3
 const INVALID_LOADS = new Set(['error', 'empty', 'LOAD_FAILED', 'NO_MATCHES'])
 
+
 const _functions = {
   clamp: v => (v = +v, v !== v ? 100 : v < 0 ? 0 : v > 200 ? 200 : v),
   randIdx: len => (Math.random() * len) | 0,
@@ -339,6 +340,7 @@ class Player extends EventEmitter {
     if (this.destroyed || !this.playing) return this
     this.playing = this.paused = false
     this.position = 0
+    this.current = null
     this.batchUpdatePlayer({ guildId: this.guildId, track: { encoded: null } }, true)
     return this
   }
