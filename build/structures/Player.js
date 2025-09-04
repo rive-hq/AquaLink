@@ -223,7 +223,7 @@ class Player extends EventEmitter {
       this.playing = true
       this.paused = false
       this.position = 0
-      await this.batchUpdatePlayer({ guildId: this.guildId, track: { encoded: this.current.track } }, true)
+      await this.batchUpdatePlayer({ guildId: this.guildId, encodedTrack: this.current.track }, true)
       return this
     } catch (error) {
       this.aqua.emit('error', error)
@@ -251,7 +251,7 @@ class Player extends EventEmitter {
 
   async _voiceWatchdog() {
     const down = this._voiceDownSince && (Date.now() - this._voiceDownSince) >= VOICE_DOWN_THRESHOLD
-    if (this.destroyed || !this.voiceChannel || this.connected || !down || this._voiceRecovering) return
+    if (this.destroyed || !this.voiceChannel || this.connected || !down || this._voiceRecovering || this.reconnectionRetries >= 4) return
     this._voiceRecovering = true
     try {
       if (await this.connection.attemptResume().catch(_functions.noop)) {
@@ -273,9 +273,11 @@ class Player extends EventEmitter {
       }), MUTE_TOGGLE_DELAY)
       this.connection.resendVoiceUpdate({ resume: false })
       this.aqua.emit('debug', `[P:${this.guildId}] Watchdog: forced rejoin`)
+      this.reconnectionRetries++
     } catch (err) {
       this.aqua.emit('debug', `[P:${this.guildId}] Watchdog err: ${err?.message}`)
     } finally {
+      this.reconnectionRetries = 0
       this._voiceRecovering = false
     }
   }
@@ -340,8 +342,7 @@ class Player extends EventEmitter {
     if (this.destroyed || !this.playing) return this
     this.playing = this.paused = false
     this.position = 0
-    this.current = null
-    this.batchUpdatePlayer({ guildId: this.guildId, track: { encoded: null } }, true)
+    this.batchUpdatePlayer({ guildId: this.guildId, encodedTrack: null }, true)
     return this
   }
 
@@ -359,7 +360,6 @@ class Player extends EventEmitter {
     const idx = typeof mode === 'string' ? LOOP_MODE_NAMES.indexOf(mode) : mode
     if (idx < 0 || idx > 2) throw new Error('Invalid loop mode')
     this.loop = idx
-    this.batchUpdatePlayer({ loop: LOOP_MODE_NAMES[idx] })
     return this
   }
 
