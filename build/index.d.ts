@@ -5,25 +5,53 @@ declare module "aqualink" {
     export class Aqua extends EventEmitter {
         constructor(client: any, nodes: NodeOptions[], options?: AquaOptions);
 
-       // Additional properties found in implementation
-        plugins: Plugin[];
-        players: Map<string, Player>;
+        // Core Properties
+        client: any;
+        nodes: NodeOptions[];
         nodeMap: Map<string, Node>;
+        players: Map<string, Player>;
+        clientId: string | null;
+        initiated: boolean;
+        version: string;
+        options: AquaOptions;
+        failoverOptions: FailoverOptions;
+
+        // Configuration Properties
+        shouldDeleteMessage: boolean;
+        defaultSearchPlatform: SearchSource;
+        leaveOnEnd: boolean;
+        restVersion: RestVersion;
+        plugins: Plugin[];
+        autoResume: boolean;
+        infiniteReconnects: boolean;
+        urlFilteringEnabled?: boolean;
+        restrictedDomains: string[];
+        allowedDomains: string[];
+        loadBalancer: LoadBalancerStrategy;
+        send: (payload: any) => void;
+
+        // Internal State Management
         _nodeStates: Map<string, { connected: boolean; failoverInProgress: boolean }>;
         _failoverQueue: Map<string, number>;
         _lastFailoverAttempt: Map<string, number>;
-        _brokenPlayers: Map<string, any>;
+        _brokenPlayers: Map<string, BrokenPlayerState>;
         _rebuildLocks: Set<string>;
         _leastUsedNodesCache: Node[] | null;
         _leastUsedNodesCacheTime: number;
         _nodeLoadCache: Map<string, number>;
         _nodeLoadCacheTime: Map<string, number>;
+        _cleanupTimer: NodeJS.Timer | null;
+        _onNodeConnect?: (node: Node) => void;
+        _onNodeDisconnect?: (node: Node) => void;
 
+        // Getters
+        get leastUsedNodes(): Node[];
 
+        // Core Methods
         init(clientId: string): Promise<Aqua>;
         createNode(options: NodeOptions): Promise<Node>;
         destroyNode(identifier: string): void;
-        updateVoiceState(data: VoiceStateUpdate): void;
+        updateVoiceState(data: VoiceStateUpdate | VoiceServerUpdate): void;
         fetchRegion(region: string): Node[];
         createConnection(options: ConnectionOptions): Player;
         createPlayer(node: Node, options: PlayerOptions): Player;
@@ -32,12 +60,52 @@ declare module "aqualink" {
         get(guildId: string): Player;
         search(query: string, requester: any, source?: SearchSource): Promise<Track[] | null>;
 
+        // Save/Load Methods
+        savePlayer(): Promise<void>;
+        loadPlayers(): Promise<void>;
 
-        // Missing public methods
+        // Failover and Migration Methods
+        handleNodeFailover(failedNode: Node): Promise<void>;
+
+        // Utility Methods
+        destroy(): Promise<void>;
+
+        // Internal Methods
+        _invalidateCache(): void;
+        _getCachedNodeLoad(node: Node): number;
+        _calculateNodeLoad(node: Node): number;
+        _createNode(options: NodeOptions): Promise<Node>;
+        _destroyNode(identifier: string): void;
+        _cleanupNode(nodeId: string): void;
+        _storeBrokenPlayers(node: Node): void;
+        _rebuildBrokenPlayers(node: Node): Promise<void>;
+        _rebuildPlayer(brokenState: BrokenPlayerState, targetNode: Node): Promise<Player>;
+        _migratePlayersOptimized(players: Player[], availableNodes: Node[]): Promise<MigrationResult[]>;
+        _migratePlayer(player: Player, pickNode: () => Node): Promise<Player>;
+        _capturePlayerState(player: Player): PlayerState | null;
+        _createPlayerOnNode(targetNode: Node, playerState: PlayerState): Promise<Player>;
+        _restorePlayerState(newPlayer: Player, playerState: PlayerState): Promise<void>;
+        _getRequestNode(nodes?: string | Node | Node[]): Node;
+        _chooseLeastBusyNode(nodes: Node[]): Node | null;
+        _constructResponse(response: any, requester: any, requestNode: Node): ResolveResponse;
+        _resolveSearchPlatform(source: string): SearchSource;
+        _getAvailableNodes(excludeNode?: Node): Node[];
+        _performCleanup(): void;
+        _handlePlayerDestroy(player: Player): void;
+        _waitForFirstNode(timeout?: number): Promise<void>;
+        _restorePlayer(data: SavedPlayerData): Promise<void>;
+        _parseRequester(requesterString: string | null): any;
+        _loadPlugins(): Promise<void>;
+        _createDefaultSend(): (packet: any) => void;
+        _bindEventHandlers(): void;
+        _startCleanupTimer(): void;
+        _onNodeReady(node: Node, data: { resumed: boolean }): void;
+
+        // Optional bypass checks
         bypassChecks?: { nodeFetchInfo?: boolean };
     }
 
-    export class Node {
+    export class Node extends EventEmitter {
         constructor(aqua: Aqua, connOptions: NodeOptions, options?: NodeAdditionalOptions);
 
         // Core Properties
@@ -66,10 +134,28 @@ declare module "aqualink" {
         players: Set<Player>;
         options: NodeOptions;
 
+        // Additional Properties
+        timeout: number;
+        maxPayload: number;
+        skipUTF8Validation: boolean;
+        _isConnecting: boolean;
+        _debugEnabled: boolean;
+        _headers: Record<string, string>;
+        _boundHandlers: Record<string, Function>;
+
         // Methods
         connect(): Promise<void>;
         destroy(clean?: boolean): void;
         getStats(): Promise<NodeStats>;
+
+        // Internal Methods
+        _handleOpen(): Promise<void>;
+        _handleError(error: any): void;
+        _handleMessage(data: any, isBinary: boolean): void;
+        _handleClose(code: number, reason: any): void;
+        _handleReady(payload: any): Promise<void>;
+        _emitError(error: any): void;
+        _emitDebug(message: string | (() => string)): void;
     }
 
     export class Player extends EventEmitter {
@@ -81,6 +167,7 @@ declare module "aqualink" {
             readonly TRACK: 1;
             readonly QUEUE: 2;
         };
+        static readonly EVENT_HANDLERS: Record<string, string>;
 
         // Core Properties
         aqua: Aqua;
@@ -112,6 +199,19 @@ declare module "aqualink" {
         autoplayRetries: number;
         reconnectionRetries: number;
         previousIdentifiers: Set<string>;
+        self_deaf: boolean;
+        self_mute: boolean;
+
+        // Additional Internal Properties
+        previousTracks: CircularBuffer;
+        _updateBatcher: MicrotaskUpdateBatcher;
+        _dataStore: Map<string, any> | null;
+        _voiceDownSince: number;
+        _voiceRecovering: boolean;
+        _voiceWatchdogTimer: NodeJS.Timer | null;
+        _boundPlayerUpdate: (packet: any) => void;
+        _boundEvent: (payload: any) => void;
+        _boundAquaPlayerMove: (oldChannel: string, newChannel: string) => void;
 
         // Getters
         get previous(): Track | null;
@@ -151,6 +251,28 @@ declare module "aqualink" {
         // Utility Methods
         send(data: any): void;
         batchUpdatePlayer(data: any, immediate?: boolean): Promise<void>;
+
+        // Internal Methods
+        _parseLoop(loop: any): LoopMode;
+        _bindEvents(): void;
+        _startWatchdog(): void;
+        _handlePlayerUpdate(packet: any): void;
+        _handleEvent(payload: any): Promise<void>;
+        _voiceWatchdog(): Promise<void>;
+        _attemptVoiceResume(): Promise<void>;
+        _getAutoplayTrack(sourceName: string, identifier: string, uri: string, requester: any, prev: Track): Promise<Track | null>;
+        _handleAquaPlayerMove(oldChannel: string, newChannel: string): void;
+
+        // Event handler methods (called internally)
+        trackStart(player: Player, track: Track): Promise<void>;
+        trackEnd(player: Player, track: Track, payload: any): Promise<void>;
+        trackError(player: Player, track: Track, payload: any): Promise<void>;
+        trackStuck(player: Player, track: Track, payload: any): Promise<void>;
+        trackChange(player: Player, track: Track, payload: any): Promise<void>;
+        socketClosed(player: Player, track: Track, payload: any): Promise<void>;
+        lyricsLine(player: Player, track: Track, payload: any): Promise<void>;
+        lyricsFound(player: Player, track: Track, payload: any): Promise<void>;
+        lyricsNotFound(player: Player, track: Track, payload: any): Promise<void>;
     }
 
     export class Track {
@@ -171,6 +293,10 @@ declare module "aqualink" {
         playlist: PlaylistInfo | null;
         requester: any;
         nodes: Node;
+        node: Node | null;
+
+        // Internal Properties
+        _infoCache: TrackInfo | null;
 
         // Getters
         get info(): TrackInfo;
@@ -179,9 +305,12 @@ declare module "aqualink" {
 
         // Methods
         resolveThumbnail(url?: string): string | null;
-        resolve(aqua: Aqua): Promise<Track | null>;
+        resolve(aqua: Aqua, opts?: TrackResolutionOptions): Promise<Track | null>;
         isValid(): boolean;
         dispose(): void;
+
+        // Internal Methods
+        _computeArtworkFromKnownSources(): string | null;
     }
 
     export class Rest {
@@ -192,6 +321,13 @@ declare module "aqualink" {
         sessionId: string;
         calls: number;
 
+        // Additional Properties
+        timeout: number;
+        baseUrl: string;
+        defaultHeaders: Record<string, string>;
+        agent: any; // HTTP/HTTPS Agent
+
+        // Core Methods
         setSessionId(sessionId: string): void;
         makeRequest(method: HttpMethod, endpoint: string, body?: any): Promise<any>;
         updatePlayer(options: UpdatePlayerOptions): Promise<any>;
@@ -200,30 +336,51 @@ declare module "aqualink" {
         subscribeLiveLyrics(guildId: string, sync?: boolean): Promise<any>;
         unsubscribeLiveLyrics(guildId: string): Promise<any>;
         getStats(): Promise<NodeStats>;
+
+        // Additional REST Methods
+        getPlayer(guildId: string): Promise<any>;
+        getPlayers(): Promise<any>;
+        decodeTrack(encodedTrack: string): Promise<any>;
+        decodeTracks(encodedTracks: string[]): Promise<any>;
+        getInfo(): Promise<NodeInfo>;
+        getVersion(): Promise<string>;
+        getRoutePlannerStatus(): Promise<any>;
+        freeRoutePlannerAddress(address: string): Promise<any>;
+        freeAllRoutePlannerAddresses(): Promise<any>;
+        destroy(): void;
     }
 
     export class Queue extends Array<Track> {
         constructor(...elements: Track[]);
 
         // Properties
-        size: number;
-        first: Track | null;
-        last: Track | null;
+        readonly size: number;
+        readonly first: Track | null;
+        readonly last: Track | null;
 
         // Methods
+        add(track: Track): Queue;
         add(...tracks: Track[]): void;
         push(track: Track): number;
         unshift(track: Track): number;
         shift(): Track | undefined;
+        remove(track: Track): boolean;
         clear(): void;
+        shuffle(): Queue;
+        peek(): Track | null;
         isEmpty(): boolean;
         toArray(): Track[];
+        at(index: number): Track | null;
+        dequeue(): Track | undefined;
+        enqueue(track: Track): Queue;
     }
 
     export class Filters {
         constructor(player: Player, options?: FilterOptions);
 
         player: Player;
+        _pendingUpdate: boolean;
+
         filters: {
             volume: number;
             equalizer: EqualizerBand[];
@@ -247,13 +404,13 @@ declare module "aqualink" {
         // Filter Methods
         setEqualizer(bands: EqualizerBand[]): Filters;
         setKaraoke(enabled: boolean, options?: KaraokeSettings): Filters;
-        setTimescale(options?: TimescaleSettings): Filters;
-        setTremolo(options?: TremoloSettings): Filters;
-        setVibrato(options?: VibratoSettings): Filters;
-        setRotation( options?: RotationSettings): Filters;
-        setDistortion( options?: DistortionSettings): Filters;
-        setChannelMix(options?: ChannelMixSettings): Filters;
-        setLowPass( options?: LowPassSettings): Filters;
+        setTimescale(enabled: boolean, options?: TimescaleSettings): Filters;
+        setTremolo(enabled: boolean, options?: TremoloSettings): Filters;
+        setVibrato(enabled: boolean, options?: VibratoSettings): Filters;
+        setRotation(enabled: boolean, options?: RotationSettings): Filters;
+        setDistortion(enabled: boolean, options?: DistortionSettings): Filters;
+        setChannelMix(enabled: boolean, options?: ChannelMixSettings): Filters;
+        setLowPass(enabled: boolean, options?: LowPassSettings): Filters;
         setBassboost(enabled: boolean, options?: { value?: number }): Filters;
         setSlowmode(enabled: boolean, options?: { rate?: number }): Filters;
         setNightcore(enabled: boolean, options?: { rate?: number }): Filters;
@@ -261,6 +418,10 @@ declare module "aqualink" {
         set8D(enabled: boolean, options?: { rotationHz?: number }): Filters;
         clearFilters(): Promise<Filters>;
         updateFilters(): Promise<Filters>;
+
+        // Internal Methods
+        _setFilter(filterName: string, enabled: boolean, options?: any): Filters;
+        _scheduleUpdate(): Filters;
     }
 
     export class Connection {
@@ -273,10 +434,33 @@ declare module "aqualink" {
         region: string | null;
         sequence: number;
 
+        // Internal Properties
+        _player: Player;
+        _aqua: Aqua;
+        _nodes: Node;
+        _guildId: string;
+        _clientId: string;
+        _lastEndpoint: string | null;
+        _pendingUpdate: any;
+        _updateTimer: NodeJS.Timeout | null;
+        _hasDebugListeners: boolean;
+        _hasMoveListeners: boolean;
+
+        // Methods
         setServerUpdate(data: VoiceServerUpdate['d']): void;
         setStateUpdate(data: VoiceStateUpdate['d']): void;
         updateSequence(seq: number): void;
         destroy(): void;
+        attemptResume(): Promise<boolean>;
+        resendVoiceUpdate(options?: { resume?: boolean }): void;
+
+        // Internal Methods
+        _extractRegion(endpoint: string): string | null;
+        _scheduleVoiceUpdate(isResume?: boolean): void;
+        _executeVoiceUpdate(): void;
+        _sendUpdate(payload: any): Promise<void>;
+        _handleDisconnect(): void;
+        _clearPendingUpdate(): void;
     }
 
     export class Plugin {
@@ -284,6 +468,32 @@ declare module "aqualink" {
         name: string;
         load(aqua: Aqua): void | Promise<void>;
         unload?(aqua: Aqua): void | Promise<void>;
+    }
+
+    // Utility Classes
+    export class MicrotaskUpdateBatcher {
+        constructor(player: Player);
+        player: Player | null;
+        updates: any;
+        scheduled: number;
+        flush: () => Promise<void>;
+
+        batch(data: any, immediate?: boolean): Promise<void>;
+        destroy(): void;
+        _flush(): Promise<void>;
+    }
+
+    export class CircularBuffer {
+        constructor(size?: number);
+        buffer: any[];
+        size: number;
+        index: number;
+        count: number;
+
+        push(item: any): void;
+        getLast(): any;
+        clear(): void;
+        toArray(): any[];
     }
 
     // Configuration Interfaces
@@ -296,6 +506,10 @@ declare module "aqualink" {
         send?: (payload: any) => void;
         autoResume?: boolean;
         infiniteReconnects?: boolean;
+        urlFilteringEnabled?: boolean;
+        restrictedDomains?: string[];
+        allowedDomains?: string[];
+        loadBalancer?: LoadBalancerStrategy;
         failoverOptions?: FailoverOptions;
     }
 
@@ -312,7 +526,7 @@ declare module "aqualink" {
     export interface NodeOptions {
         host: string;
         name?: string;
-        port?: number;
+        port?: number | string;
         password?: string;
         secure?: boolean;
         sessionId?: string;
@@ -427,14 +641,18 @@ declare module "aqualink" {
 
     export interface TrackData {
         encoded?: string;
+        track?: string;
         info: TrackInfo;
         playlist?: PlaylistInfo;
+        node?: Node;
+        nodes?: Node;
     }
 
     export interface PlaylistInfo {
         name: string;
         selectedTrack?: number;
         thumbnail?: string;
+        title?: string;
     }
 
     export interface LavalinkException {
@@ -586,6 +804,53 @@ declare module "aqualink" {
         skipTrackSource?: boolean;
     }
 
+    // State Management Interfaces
+    export interface PlayerState {
+        guildId: string;
+        textChannel: string;
+        voiceChannel: string;
+        volume: number;
+        paused: boolean;
+        position: number;
+        current: Track | null;
+        queue: Track[];
+        repeat: LoopMode;
+        shuffle: boolean;
+        deaf: boolean;
+        connected: boolean;
+    }
+
+    export interface BrokenPlayerState extends PlayerState {
+        originalNodeId: string;
+        brokenAt: number;
+    }
+
+    export interface MigrationResult {
+        success: boolean;
+        error?: any;
+    }
+
+    export interface SavedPlayerData {
+        g: string; // guildId
+        t: string; // textChannel
+        v: string; // voiceChannel
+        u: string | null; // uri
+        p: number; // position
+        ts: number; // timestamp
+        q: string[]; // queue uris
+        r: string | null; // requester
+        vol: number; // volume
+        pa: boolean; // paused
+        pl: boolean; // playing
+        nw: string | null; // nowPlayingMessage id
+    }
+
+    export interface TrackResolutionOptions {
+        platform?: SearchSource;
+        node?: Node;
+        toFront?: boolean;
+    }
+
     // Type Unions and Enums
     export type SearchSource =
         | 'ytsearch'
@@ -613,11 +878,17 @@ declare module "aqualink" {
         | 'playlist'
         | 'search'
         | 'empty'
-        | 'error';
+        | 'error'
+        | 'LOAD_FAILED'
+        | 'NO_MATCHES';
 
     export type RestVersion = 'v3' | 'v4';
 
     export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
+
+    export type LoadBalancerStrategy = 'leastLoad' | 'leastRest' | 'random';
+
+    export type EventHandler<T = any> = (...args: T[]) => void | Promise<void>;
 
     // Event Interfaces
     export interface AquaEvents {
@@ -654,6 +925,21 @@ declare module "aqualink" {
         'error': (node: Node | null, error: Error) => void;
     }
 
+    export interface PlayerEvents {
+        'destroy': () => void;
+        'playerUpdate': (packet: any) => void;
+        'event': (payload: any) => void;
+        'trackStart': (track: Track) => void;
+        'trackEnd': (track: Track, reason?: string) => void;
+        'trackError': (track: Track, error: any) => void;
+        'trackStuck': (track: Track, thresholdMs: number) => void;
+        'trackChange': (track: Track, payload: any) => void;
+        'socketClosed': (payload: any) => void;
+        'lyricsLine': (track: Track, payload: any) => void;
+        'lyricsFound': (track: Track, payload: any) => void;
+        'lyricsNotFound': (track: Track, payload: any) => void;
+    }
+
     // Event Emitter Type Extensions for Aqua
     interface Aqua {
         on<K extends keyof AquaEvents>(event: K, listener: AquaEvents[K]): this;
@@ -677,22 +963,8 @@ declare module "aqualink" {
         removeAllListeners<K extends keyof AquaEvents>(event?: K): this;
         removeAllListeners(event?: string | symbol): this;
     }
-    export interface PlayerEvents {
-        'destroy': () => void;
-        'playerUpdate': (packet: any) => void;
-        'event': (payload: any) => void;
-        'trackStart': (track: Track) => void;
-        'trackEnd': (track: Track, reason?: string) => void;
-        'trackError': (track: Track, error: any) => void;
-        'trackStuck': (track: Track, thresholdMs: number) => void;
-        'trackChange': (track: Track, payload: any) => void;
-        'socketClosed': (payload: any) => void;
-        'lyricsLine': (track: Track, payload: any) => void;
-        'lyricsFound': (track: Track, payload: any) => void;
-        'lyricsNotFound': (track: Track, payload: any) => void;
-    }
 
-      interface Player {
+    interface Player {
         on<K extends keyof PlayerEvents>(event: K, listener: PlayerEvents[K]): this;
         on(event: string | symbol, listener: (...args: any[]) => void): this;
 
@@ -715,115 +987,6 @@ declare module "aqualink" {
         removeAllListeners(event?: string | symbol): this;
     }
 
-    // Missing Player Properties and Methods
-    interface Player {
-        // Additional properties found in implementation
-        self_deaf: boolean;
-        self_mute: boolean;
-        players: Set<Player>; // For Node class
-
-        // Internal properties
-        _updateBatcher: any;
-        _dataStore: Map<string, any>;
-
-        // Event handler methods (these are called internally)
-        trackStart(player: Player, track: Track): Promise<void>;
-        trackEnd(player: Player, track: Track, payload: any): Promise<void>;
-        trackError(player: Player, track: Track, payload: any): Promise<void>;
-        trackStuck(player: Player, track: Track, payload: any): Promise<void>;
-        trackChange(player: Player, track: Track, payload: any): Promise<void>;
-        socketClosed(player: Player, track: Track, payload: any): Promise<void>;
-        lyricsLine(player: Player, track: Track, payload: any): Promise<void>;
-        lyricsFound(player: Player, track: Track, payload: any): Promise<void>;
-        lyricsNotFound(player: Player, track: Track, payload: any): Promise<void>;
-    }
-
-    interface Node {
-        // Additional properties found in implementation
-        timeout: number;
-        maxPayload: number;
-        skipUTF8Validation: boolean;
-        _isConnecting: boolean;
-        _debugEnabled: boolean;
-        _headers: Record<string, string>;
-        _boundHandlers: Record<string, Function>;
-
-        // Methods missing from original definitions
-        _handleOpen(): Promise<void>;
-        _handleError(error: any): void;
-        _handleMessage(data: any, isBinary: boolean): void;
-        _handleClose(code: number, reason: any): void;
-        _handleReady(payload: any): Promise<void>;
-        _emitError(error: any): void;
-        _emitDebug(message: string | (() => string)): void;
-    }
-
-    interface Rest {
-        // Additional properties
-        timeout: number;
-        baseUrl: string;
-        defaultHeaders: Record<string, string>;
-        agent: any; // HTTP/HTTPS Agent
-
-        // Missing REST methods found in implementation
-        getPlayer(guildId: string): Promise<any>;
-        getPlayers(): Promise<any>;
-        decodeTrack(encodedTrack: string): Promise<any>;
-        decodeTracks(encodedTracks: string[]): Promise<any>;
-        getInfo(): Promise<NodeInfo>;
-        getVersion(): Promise<string>;
-        getRoutePlannerStatus(): Promise<any>;
-        freeRoutePlannerAddress(address: string): Promise<any>;
-        freeAllRoutePlannerAddresses(): Promise<any>;
-        destroy(): void;
-    }
-
-   interface Connection {
-        // Internal properties found in implementation
-        _player: Player;
-        _aqua: Aqua;
-        _nodes: Node;
-        _guildId: string;
-        _clientId: string;
-        _lastEndpoint: string | null;
-        _pendingUpdate: any;
-        _updateTimer: NodeJS.Timeout | null;
-        _hasDebugListeners: boolean;
-        _hasMoveListeners: boolean;
-
-        // Methods not in original definition
-        _extractRegion(endpoint: string): string | null;
-        _scheduleVoiceUpdate(isResume?: boolean): void;
-        _executeVoiceUpdate(): void;
-        _sendUpdate(payload: any): Promise<void>;
-        _handleDisconnect(): void;
-        _clearPendingUpdate(): void;
-    }
-
-  export type EventHandler<T = any> = (...args: T[]) => void | Promise<void>;
-
-    // Extended ResolveOptions for internal use
-    export interface ExtendedResolveOptions extends ResolveOptions {
-        node?: Node;
-    }
-     interface Plugin {
-        // Optional unload method should be properly typed
-        unload?(aqua: Aqua): void | Promise<void>;
-    }
-
-      export const LOOP_MODES: {
-        readonly NONE: 0;
-        readonly TRACK: 1;
-        readonly QUEUE: 2;
-    };
-
-      interface Player {
-        readonly EVENT_HANDLERS: Record<string, string>;
-    }
-      export interface TrackResolutionOptions {
-        toFront?: boolean;
-    }
-
     // Additional Filter Preset Options
     export interface FilterPresetOptions {
         value?: number;
@@ -840,19 +1003,16 @@ declare module "aqualink" {
         body?: any;
     }
 
-    // Save/Load Player Data Interfaces
-    export interface SavedPlayerData {
-        g: string; // guildId
-        t: string; // textChannel
-        v: string; // voiceChannel
-        u: string | null; // uri
-        p: number; // position
-        ts: number; // timestamp
-        q: string[]; // queue uris
-        r: string | null; // requester
-        vol: number; // volume
-        pa: boolean; // paused
-        pl: boolean; // playing
-        nw: string | null; // nowPlayingMessage id
+    // Extended ResolveOptions for internal use
+    export interface ExtendedResolveOptions extends ResolveOptions {
+        node?: Node;
     }
+
+    // Export constants
+    export const LOOP_MODES: {
+        readonly NONE: 0;
+        readonly TRACK: 1;
+        readonly QUEUE: 2;
+    };
+
 }
