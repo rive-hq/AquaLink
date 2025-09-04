@@ -502,6 +502,7 @@ class Player extends EventEmitter {
     if (this.destroyed) return
     track && this.previousTracks?.push(track)
     this.shouldDeleteMessage && _functions.safeDel(this.nowPlayingMessage)
+    this.current = null;
     const reason = payload?.reason
     const isFailure = reason === 'loadFailed' || reason === 'cleanup'
     const isReplaced = reason === 'replaced'
