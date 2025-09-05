@@ -164,7 +164,7 @@ const nodes = [
         host: "127.0.0.1",
         password: "your_password",
         port: 2333,
-        secure: false,
+        ssl: false,
         name: "main-node"
     }
 ];
