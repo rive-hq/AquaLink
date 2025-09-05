@@ -61,8 +61,8 @@ declare module "aqualink" {
         search(query: string, requester: any, source?: SearchSource): Promise<Track[] | null>;
 
         // Save/Load Methods
-        savePlayer(): Promise<void>;
-        loadPlayers(): Promise<void>;
+        savePlayer(filePath?: string): Promise<void>;
+        loadPlayers(filePath?: string): Promise<void>;
 
         // Failover and Migration Methods
         handleNodeFailover(failedNode: Node): Promise<void>;
@@ -114,7 +114,7 @@ declare module "aqualink" {
         name: string;
         port: number;
         password: string;
-        secure: boolean;
+        ssl: boolean;
         sessionId: string | null;
         regions: string[];
         wsUrl: string;

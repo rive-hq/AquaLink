@@ -779,8 +779,6 @@ class Aqua extends EventEmitter {
       this._nodeLoadCache.clear()
       this._nodeLoadCacheTime.clear()
     }
-    if (urlParseCache.size > 500) urlParseCache.clear()
-    if (normalizedHostCache.size > 1000) normalizedHostCache.clear()
   }
 
   _getAvailableNodes(excludeNode) {
@@ -813,8 +811,6 @@ class Aqua extends EventEmitter {
     this._nodeLoadCache.clear()
     this._nodeLoadCacheTime.clear()
     this._leastUsedNodesCache = null
-    urlParseCache.clear()
-    normalizedHostCache.clear()
     this.removeAllListeners()
     return Promise.all(destroyTasks)
   }

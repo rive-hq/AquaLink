@@ -1,30 +1,41 @@
 'use strict'
 
-const POOL_SIZE = 10
-const LISTENER_CHECK_INTERVAL = 5000
-const UPDATE_TIMEOUT = 5000
-
-const ENDPOINT_PATTERN = /^([a-z-]+)/i
+const POOL_SIZE = 12
+const LISTENER_CHECK_INTERVAL = 4000
+const UPDATE_TIMEOUT = 4000
+const RECONNECT_DELAY = 1000
+const MAX_RECONNECT_ATTEMPTS = 3
 
 const STATE_FLAGS = {
-  CONNECTED: 1 << 0,
-  PAUSED: 1 << 1,
-  SELF_DEAF: 1 << 2,
-  SELF_MUTE: 1 << 3,
-  HAS_DEBUG_LISTENERS: 1 << 4,
-  HAS_MOVE_LISTENERS: 1 << 5,
-  UPDATE_SCHEDULED: 1 << 6
+  CONNECTED: 1,
+  PAUSED: 2,
+  SELF_DEAF: 4,
+  SELF_MUTE: 8,
+  HAS_DEBUG: 16,
+  HAS_MOVE: 32,
+  UPDATE_SCHEDULED: 64,
+  DISCONNECTING: 128
 }
 
-class UpdatePayloadPool {
+const ENDPOINT_REGION_REGEX = /^([a-z-]+)(?:\d+)?/i
+
+const _functions = {
+  safeUnref: (timer) => timer?.unref?.(),
+  isValidString: (str) => typeof str === 'string' && str.length > 0,
+  isValidNumber: (num) => typeof num === 'number' && num >= 0 && Number.isFinite(num),
+  resetVoicePayload: (voice) => {
+    voice.token = voice.endpoint = voice.sessionId = null
+    voice.resume = voice.sequence = undefined
+  }
+}
+
+class OptimizedPayloadPool {
   constructor() {
     this.pool = new Array(POOL_SIZE)
-    this.size = 0
-
+    this.size = POOL_SIZE
     for (let i = 0; i < POOL_SIZE; i++) {
       this.pool[i] = this._createPayload()
     }
-    this.size = POOL_SIZE
   }
 
   _createPayload() {
@@ -44,40 +55,29 @@ class UpdatePayloadPool {
   }
 
   acquire() {
-    if (this.size > 0) {
-      return this.pool[--this.size]
-    }
-    return this._createPayload()
+    return this.size > 0 ? this.pool[--this.size] : this._createPayload()
   }
 
   release(payload) {
     if (!payload || this.size >= POOL_SIZE) return
-
     payload.guildId = null
-    const voice = payload.data.voice
-    voice.token = null
-    voice.endpoint = null
-    voice.sessionId = null
-    voice.resume = undefined
-    voice.sequence = undefined
+    _functions.resetVoicePayload(payload.data.voice)
     payload.data.volume = null
-
     this.pool[this.size++] = payload
   }
 }
 
-const sharedPayloadPool = new UpdatePayloadPool()
+const sharedPool = new OptimizedPayloadPool()
 
 class Connection {
   constructor(player) {
-    // Validate once
-    if (!player?.aqua?.clientId || !player.nodes) {
+    if (!player?.aqua?.clientId || !player.nodes?.rest) {
       throw new TypeError('Invalid player configuration')
     }
 
     this._player = player
     this._aqua = player.aqua
-    this._nodes = player.nodes
+    this._rest = player.nodes.rest
     this._guildId = player.guildId
     this._clientId = player.aqua.clientId
 
@@ -87,100 +87,64 @@ class Connection {
     this.token = null
     this.region = null
     this.sequence = 0
+
     this._lastEndpoint = null
     this._pendingUpdate = null
-
     this._stateFlags = 0
     this._lastListenerCheck = 0
-
-    this._payloadPool = sharedPayloadPool
+    this._reconnectAttempts = 0
+    this._destroyed = false
+    this._reconnectTimer = null
 
     this._executeVoiceUpdate = this._executeVoiceUpdate.bind(this)
-
-    this._checkListeners()
-  }
-
-  _checkListeners() {
-    const now = Date.now()
-    if (now - this._lastListenerCheck < LISTENER_CHECK_INTERVAL) {
-      return
-    }
-
-    let flags = this._stateFlags
-    flags = this._aqua.listenerCount('debug') > 0
-      ? flags | STATE_FLAGS.HAS_DEBUG_LISTENERS
-      : flags & ~STATE_FLAGS.HAS_DEBUG_LISTENERS
-
-    flags = this._aqua.listenerCount('playerMove') > 0
-      ? flags | STATE_FLAGS.HAS_MOVE_LISTENERS
-      : flags & ~STATE_FLAGS.HAS_MOVE_LISTENERS
-
-    this._stateFlags = flags
-    this._lastListenerCheck = now
+    this._handleReconnect = this._handleReconnect.bind(this)
   }
 
   setServerUpdate(data) {
-    if (!data?.endpoint || !data.token ||
-      typeof data.endpoint !== 'string' ||
-      typeof data.token !== 'string') {
-      return
-    }
+    if (this._destroyed || !data?.endpoint || !data.token ||
+        !_functions.isValidString(data.endpoint) || !_functions.isValidString(data.token)) return
 
-    const trimmedEndpoint = data.endpoint.trim()
+    const endpoint = data.endpoint.trim()
+    if (this._lastEndpoint === endpoint && this.token === data.token) return
 
-    if (this._lastEndpoint === trimmedEndpoint && this.token === data.token) {
-      return
-    }
+    const match = ENDPOINT_REGION_REGEX.exec(endpoint)
+    const newRegion = match ? match[1] : 'unknown'
+    const regionChanged = this.region !== newRegion
+    const endpointChanged = this._lastEndpoint !== endpoint
 
-    const newRegion = data.endpoint.split('.').shift()?.replace(/[0-9]/g, '');
-
-    const hasRegionChange = this.region !== newRegion
-    const hasEndpointChange = this._lastEndpoint !== trimmedEndpoint
-
-    if (hasRegionChange || hasEndpointChange) {
-      if (hasRegionChange && (this._stateFlags & STATE_FLAGS.HAS_DEBUG_LISTENERS)) {
-        this._aqua.emit('debug', `[Player ${this._guildId}] Region: ${this.region || 'none'} → ${newRegion}`)
-      }
-
-      if (hasEndpointChange) {
+    if (regionChanged || endpointChanged) {
+      if (endpointChanged) {
         this.sequence = 0
-        this._lastEndpoint = trimmedEndpoint
+        this._lastEndpoint = endpoint
+        this._reconnectAttempts = 0
       }
-
-      this.endpoint = trimmedEndpoint
+      this.endpoint = endpoint
       this.region = newRegion
     }
 
     this.token = data.token
-
-    if (this._player.paused) {
-      this._player.pause(false)
-    }
-
+    if (this._player.paused) this._player.pause(false)
     this._scheduleVoiceUpdate()
   }
 
-  resendVoiceUpdate() {  // Remove the parameter
-    if (!(this.sessionId && this.endpoint && this.token)) {
-      return false
-    }
-
-    this._scheduleVoiceUpdate()  // No parameter needed
+  resendVoiceUpdate() {
+    if (this._destroyed || !(this.sessionId && this.endpoint && this.token)) return false
+    this._scheduleVoiceUpdate()
     return true
   }
 
   setStateUpdate(data) {
-    if (!data || data.user_id !== this._clientId) {
-      return
-    }
+    if (this._destroyed || !data || data.user_id !== this._clientId) return
 
-    const { session_id, channel_id, self_deaf, self_mute } = data
+    const {session_id, channel_id, self_deaf, self_mute} = data
 
     if (channel_id) {
       let needsUpdate = false
 
       if (this.voiceChannel !== channel_id) {
-        this._aqua.emit('playerMove', this.voiceChannel, channel_id)
+        if (this._stateFlags & STATE_FLAGS.HAS_MOVE) {
+          this._aqua.emit('playerMove', this.voiceChannel, channel_id)
+        }
         this.voiceChannel = channel_id
         this._player.voiceChannel = channel_id
         needsUpdate = true
@@ -189,28 +153,25 @@ class Connection {
       if (this.sessionId !== session_id) {
         this.sessionId = session_id
         needsUpdate = true
+        this._reconnectAttempts = 0
       }
-
 
       this._player.self_deaf = !!self_deaf
       this._player.self_mute = !!self_mute
       this._player.connected = true
+      this._stateFlags |= STATE_FLAGS.CONNECTED
 
-      if (needsUpdate) {
-        this._scheduleVoiceUpdate()
-      }
+      if (needsUpdate) this._scheduleVoiceUpdate()
     } else {
       this._handleDisconnect()
     }
   }
 
   _handleDisconnect() {
-    if (!this._player?.connected) return
+    if (this._destroyed || !(this._stateFlags & STATE_FLAGS.CONNECTED)) return
 
-    if (this._stateFlags & STATE_FLAGS.HAS_DEBUG_LISTENERS) {
-      this._aqua.emit('debug', `[Player ${this._guildId}] Disconnected`)
-    }
-
+    this._stateFlags = (this._stateFlags | STATE_FLAGS.DISCONNECTING) & ~STATE_FLAGS.CONNECTED
+    this._player.connected = false
     this._clearPendingUpdate()
 
     this.voiceChannel = null
@@ -218,134 +179,135 @@ class Connection {
     this.sequence = 0
 
     try {
-      this._player.destroy()
+      if (typeof this._player.destroy === 'function') this._player.destroy()
     } catch (error) {
-      this._aqua.emit('error', new Error(`Player destroy failed: ${error.message}`))
+      this._aqua.emit('debug', new Error(`Player destroy failed: ${error.message}`))
+    } finally {
+      this._stateFlags &= ~STATE_FLAGS.DISCONNECTING
     }
   }
 
   async attemptResume() {
-    if (!(this.sessionId && this.endpoint && this.token)) {
-      return false;
-    }
+    this._aqua.emit('debug', `Attempt voice: G: ${this._guildId} E: ${this.endpoint} T: ${this.token} S: ${this.sessionId}`)
+    if (this._destroyed || !(this.sessionId && this.endpoint && this.token) ||
+        this._reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) return false
 
-    const payload = this._payloadPool.acquire(); // USE THE POOL
+    this._reconnectAttempts++
+    const payload = sharedPool.acquire()
 
     try {
-      payload.guildId = this._guildId;
-      payload.data.voice.token = this.token;
-      payload.data.voice.endpoint = this.endpoint;
-      payload.data.voice.sessionId = this.sessionId;
-      payload.data.voice.resume = true;
-      payload.data.volume = this._player?.volume;
+      payload.guildId = this._guildId
+      const voice = payload.data.voice
+      voice.token = this.token
+      voice.endpoint = this.endpoint
+      voice.sessionId = this.sessionId
+      voice.resume = true
+      voice.sequence = this.sequence
+      payload.data.volume = this._player?.volume ?? 100
 
-      await this._sendUpdate(payload);
-      return true;
+      await this._sendUpdate(payload)
+      this._reconnectAttempts = 0
+      return true
     } catch (error) {
-      console.log(`Voice connection resume failed in guild ${this._guildId}: ${error?.message}`);
-      if (this._stateFlags & STATE_FLAGS.HAS_DEBUG_LISTENERS) {
-        this._aqua.emit('debug', `[Player ${this._guildId}] Voice update failed: ${error?.message}`);
+      if (this._reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+        const delay = RECONNECT_DELAY * Math.pow(2, this._reconnectAttempts - 1)
+        this._reconnectTimer = setTimeout(this._handleReconnect, delay)
+        _functions.safeUnref(this._reconnectTimer)
       }
-      return false;
+      return false
     } finally {
-      this._payloadPool.release(payload); // ALWAYS RELEASE
+      sharedPool.release(payload)
     }
   }
 
+  _handleReconnect() {
+    if (!this._destroyed) this.attemptResume()
+  }
+
   updateSequence(seq) {
-    if (typeof seq === 'number' && seq >= 0 && Number.isFinite(seq)) {
+    if (_functions.isValidNumber(seq)) {
       this.sequence = Math.max(seq, this.sequence)
     }
   }
 
   _clearPendingUpdate() {
     this._stateFlags &= ~STATE_FLAGS.UPDATE_SCHEDULED
-
     if (this._pendingUpdate?.payload) {
-      this._payloadPool.release(this._pendingUpdate.payload)
+      sharedPool.release(this._pendingUpdate.payload)
     }
-
     this._pendingUpdate = null
   }
 
   _scheduleVoiceUpdate() {
-    if (!(this.sessionId && this.endpoint && this.token)) {
-      return;
-    }
+    if (this._destroyed || !(this.sessionId && this.endpoint && this.token) ||
+        (this._stateFlags & STATE_FLAGS.UPDATE_SCHEDULED)) return
 
-    if (this._stateFlags & STATE_FLAGS.UPDATE_SCHEDULED) {
-      return;
-    }
+    this._clearPendingUpdate()
+    const payload = sharedPool.acquire()
 
-    this._clearPendingUpdate();
+    payload.guildId = this._guildId
+    const voice = payload.data.voice
+    voice.token = this.token
+    voice.endpoint = this.endpoint
+    voice.sessionId = this.sessionId
+    voice.resume = undefined
+    voice.sequence = undefined
+    payload.data.volume = this._player.volume
 
-    const payload = this._payloadPool.acquire();
-    payload.guildId = this._guildId;
-    payload.data.voice.token = this.token;
-    payload.data.voice.endpoint = this.endpoint;
-    payload.data.voice.sessionId = this.sessionId;
-    payload.data.volume = this._player.volume;
-
-    this._pendingUpdate = {
-      payload,
-      timestamp: Date.now()
-    };
-
-    this._stateFlags |= STATE_FLAGS.UPDATE_SCHEDULED;
-    queueMicrotask(this._executeVoiceUpdate);
+    this._pendingUpdate = {payload, timestamp: Date.now()}
+    this._stateFlags |= STATE_FLAGS.UPDATE_SCHEDULED
+    queueMicrotask(this._executeVoiceUpdate)
   }
 
   _executeVoiceUpdate() {
-    this._stateFlags &= ~STATE_FLAGS.UPDATE_SCHEDULED
+    if (this._destroyed) return
 
+    this._stateFlags &= ~STATE_FLAGS.UPDATE_SCHEDULED
     const pending = this._pendingUpdate
     if (!pending) return
 
     if (Date.now() - pending.timestamp > UPDATE_TIMEOUT) {
-      this._payloadPool.release(pending.payload)
+      sharedPool.release(pending.payload)
       this._pendingUpdate = null
       return
     }
 
     const payload = pending.payload
     this._pendingUpdate = null
-
-    // to avoid any delay. Uncomment if needed:
-    // if (pending.isResume) {
-    //   this._sendUpdateSync(payload)
-    //   return
-    // }
-
-    this._sendUpdate(payload)
-      .finally(() => {
-        this._payloadPool.release(payload)
-      })
+    this._sendUpdate(payload).finally(() => sharedPool.release(payload))
   }
 
   async _sendUpdate(payload) {
-    if (!this._nodes?.rest) {
-      throw new Error('Nodes or REST interface not available')
-    }
+    if (this._destroyed) throw new Error('Connection destroyed')
+    if (!this._rest) throw new Error('REST interface unavailable')
 
     try {
-      await this._nodes.rest.updatePlayer(payload)
+      await this._rest.updatePlayer(payload)
     } catch (error) {
-      if (error.code !== 'ECONNREFUSED' &&
-        error.code !== 'ENOTFOUND' &&
-        (this._stateFlags & STATE_FLAGS.HAS_DEBUG_LISTENERS)) {
-        this._aqua.emit('debug', `[Player ${this._guildId}] Update failed: ${error.message}`)
+      const isNetworkError = error.code === 'ECONNREFUSED' ||
+                            error.code === 'ENOTFOUND' ||
+                            error.code === 'ETIMEDOUT'
+      if (!isNetworkError) {
+        this._aqua.emit('debug', new Error(`Voice update failed: ${error.message}`))
       }
       throw error
     }
   }
 
   destroy() {
+    if (this._destroyed) return
+
+    this._destroyed = true
     this._clearPendingUpdate()
+
+    if (this._reconnectTimer) {
+      clearTimeout(this._reconnectTimer)
+      this._reconnectTimer = null
+    }
 
     this._player = null
     this._aqua = null
-    this._nodes = null
-    this._payloadPool = null
+    this._rest = null
 
     this.voiceChannel = null
     this.sessionId = null
@@ -353,7 +315,10 @@ class Connection {
     this.token = null
     this.region = null
     this._lastEndpoint = null
+
     this._stateFlags = 0
+    this.sequence = 0
+    this._reconnectAttempts = 0
   }
 }
 

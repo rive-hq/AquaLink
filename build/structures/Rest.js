@@ -11,8 +11,6 @@ const BASE64_URL_REGEX = /^[A-Za-z0-9_-]*={0,2}$/
 
 const MAX_RESPONSE_SIZE = 10 * 1024 * 1024
 const API_VERSION = 'v4'
-const BUFFER_POOL_SIZE = 16
-const INITIAL_BUFFER_SIZE = 8192
 
 const EMPTY_STRING = ''
 const UTF8_ENCODING = 'utf8'

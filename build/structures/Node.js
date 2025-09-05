@@ -6,9 +6,44 @@ const Rest = require('./Rest')
 const WS_STATES = Object.freeze({ CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3 })
 const FATAL_CLOSE_CODES = new Set([4003, 4004, 4010, 4011, 4012, 4015])
 
+const WS_PATH = '/v4/websocket'
 const OPEN_BRACE = 123
 const LYRICS_PREFIX = 'Lyrics'
 const LYRICS_PREFIX_LEN = LYRICS_PREFIX.length
+
+const _functions = Object.freeze({
+  buildWsUrl(host, port, ssl) {
+    const needsBrackets = host.includes(':') && !host.startsWith('[') && !host.endsWith(']')
+    const h = needsBrackets ? `[${host}]` : host
+    return `ws${ssl ? 's' : ''}://${h}:${port}${WS_PATH}`
+  },
+  dataToStringIfJson(data, isBinary) {
+    if (isBinary) return null
+    if (typeof data === 'string') return data.length > 0 && data.charCodeAt(0) === OPEN_BRACE ? data : null
+    if (Buffer.isBuffer(data)) {
+      if (data.length === 0 || data[0] !== OPEN_BRACE) return null
+      try { return data.toString('utf8') } catch { return null }
+    }
+    return null
+  },
+  tryParseJson(str) {
+    try { return { ok: true, value: JSON.parse(str) } } catch (err) { return { ok: false, err } }
+  },
+  isLyricsOp(op) {
+    return typeof op === 'string' && op.length >= LYRICS_PREFIX_LEN && op.startsWith(LYRICS_PREFIX)
+  },
+  reasonToString(reason) {
+    if (!reason) return 'No reason provided'
+    if (typeof reason === 'string') return reason
+    if (Buffer.isBuffer(reason)) {
+      try { return reason.toString('utf8') } catch { return String(reason) }
+    }
+    return String(reason)
+  },
+  assignIfPresent(target, src, keys) {
+    for (const k of keys) if (src[k] !== undefined) target[k] = src[k]
+  }
+})
 
 class Node {
   static BACKOFF_MULTIPLIER = 1.5
@@ -30,9 +65,9 @@ class Node {
     this.password = connOptions.password || 'youshallnotpass'
     this.sessionId = connOptions.sessionId || null
     this.regions = connOptions.regions || []
-    this.secure = !!connOptions.secure
+    this.ssl = !!connOptions.ssl
 
-    this.wsUrl = `ws${this.secure ? 's' : ''}://${this.host}:${this.port}/v4/websocket`
+    this.wsUrl = _functions.buildWsUrl(this.host, this.port, this.ssl)
 
     this.rest = new Rest(aqua, this)
 
@@ -73,26 +108,6 @@ class Node {
       close: this._handleClose.bind(this),
       connect: this.connect.bind(this)
     })
-
-    this._debugEnabled = false
-    this._checkDebugStatus()
-  }
-
-  _resetStats() {
-    const s = this.stats
-    s.players = 0
-    s.playingPlayers = 0
-    s.uptime = 0
-    s.ping = 0
-
-    const m = s.memory
-    m.free = m.used = m.allocated = m.reservable = 0
-
-    const c = s.cpu
-    c.cores = c.systemLoad = c.lavalinkLoad = 0
-
-    const f = s.frameStats
-    f.sent = f.nulled = f.deficit = 0
   }
 
   _buildHeaders() {
@@ -123,54 +138,25 @@ class Node {
   }
 
   _handleError(error) {
-    this._isConnecting = false
     const err = error instanceof Error ? error : new Error(String(error))
     this.aqua.emit('nodeError', this, err)
   }
 
-  _dataToStringOrNull(data, isBinary) {
-    if (isBinary) return null
-
-    if (typeof data === 'string') {
-      if (data.length === 0 || data.charCodeAt(0) !== OPEN_BRACE) return null
-      return data
-    }
-
-    if (Buffer.isBuffer(data)) {
-      if (data.length === 0 || data[0] !== OPEN_BRACE) return null
-      try {
-        return data.toString('utf8')
-      } catch {
-        return null
-      }
-    }
-
-    return null
-  }
-
-  _tryParseJson(str) {
-    try {
-      return { ok: true, value: JSON.parse(str) }
-    } catch (err) {
-      return { ok: false, err }
-    }
-  }
-
   _handleMessage(data, isBinary) {
-    const str = this._dataToStringOrNull(data, isBinary)
+    const str = _functions.dataToStringIfJson(data, isBinary)
     if (!str) {
       this._emitDebug('Ignored non-JSON or invalid message frame')
       return
     }
 
-    const parsed = this._tryParseJson(str)
+    const parsed = _functions.tryParseJson(str)
     if (!parsed.ok) {
       this._emitDebug(() => `JSON parse failed: ${parsed.err && parsed.err.message ? parsed.err.message : 'Unknown error'}`)
       return
     }
 
     const payload = parsed.value
-    const op = payload?.op
+    const op = payload && payload.op
     if (!op) return
 
     switch (op) {
@@ -181,33 +167,26 @@ class Node {
         this._handleReady(payload)
         break
       case 'playerUpdate':
-        this._handlePlayerUpdate(payload)
+        this._emitToPlayer('playerUpdate', payload)
         break
       case 'event':
-        this._handlePlayerEvent(payload)
+        this._emitToPlayer('event', payload)
         break
       default:
         this._handleCustomStringOp(op, payload)
     }
   }
 
-  _handlePlayerUpdate(payload) {
-    const guildId = payload?.guildId
+  _emitToPlayer(eventName, payload) {
+    const guildId = payload && payload.guildId
     if (!guildId) return
-    const player = this.aqua.players.get(guildId)
-    player?.emit('playerUpdate', payload)
-  }
-
-  _handlePlayerEvent(payload) {
-    const guildId = payload?.guildId
-    if (!guildId) return
-    const player = this.aqua.players.get(guildId)
-    player?.emit('event', payload)
+    const player = this.aqua?.players?.get?.(guildId)
+    if (player && typeof player.emit === 'function') player.emit(eventName, payload)
   }
 
   _handleCustomStringOp(op, payload) {
-    if (op.length >= LYRICS_PREFIX_LEN && op.startsWith(LYRICS_PREFIX)) {
-      const player = payload.guildId ? this.aqua.players.get(payload.guildId) : null
+    if (_functions.isLyricsOp(op)) {
+      const player = payload.guildId ? this.aqua?.players?.get?.(payload.guildId) : null
       this.aqua.emit(op, player, payload.track || null, payload)
       return
     }
@@ -220,7 +199,7 @@ class Node {
     this.connected = false
     this._isConnecting = false
 
-    const reasonStr = reason ? (typeof reason === 'string' ? reason : String(reason)) : 'No reason provided'
+    const reasonStr = _functions.reasonToString(reason)
     this.aqua.emit('nodeDisconnect', this, { code, reason: reasonStr })
 
     if (this.isDestroyed) return
@@ -264,11 +243,7 @@ class Node {
     const attempt = ++this.reconnectAttempted
     const backoffTime = this._calcBackoff(attempt)
 
-    this.aqua.emit('nodeReconnect', this, {
-      infinite: false,
-      attempt,
-      backoffTime
-    })
+    this.aqua.emit('nodeReconnect', this, { infinite: false, attempt, backoffTime })
 
     this.reconnectTimeoutId = setTimeout(this._boundHandlers.connect, backoffTime)
     this.reconnectTimeoutId.unref?.()
@@ -340,7 +315,7 @@ class Node {
       const state = ws.readyState
       if (state === WS_STATES.OPEN) {
         ws.close(Node.WS_CLOSE_NORMAL)
-      } else if (state === WS_STATES.CONNECTING || state === WS_STATES.CLOSING) {
+      } else {
         ws.terminate?.()
       }
     } catch (err) {
@@ -365,13 +340,11 @@ class Node {
     this.connected = false
     this.aqua.destroyNode?.(this.name)
     this.aqua.emit('nodeDestroy', this)
-
     this.info = null
   }
 
   async getStats() {
     if (this.connected) return this.stats
-
     try {
       const newStats = await this.rest.getStats()
       if (newStats) this._updateStats(newStats)
@@ -383,42 +356,28 @@ class Node {
 
   _updateStats(payload) {
     if (!payload) return
-
     const s = this.stats
 
-    payload.players !== undefined && (s.players = payload.players)
-    payload.playingPlayers !== undefined && (s.playingPlayers = payload.playingPlayers)
-    payload.uptime !== undefined && (s.uptime = payload.uptime)
-    payload.ping !== undefined && (s.ping = payload.ping)
+    _functions.assignIfPresent(s, payload, ['players', 'playingPlayers', 'uptime', 'ping'])
 
-    const pm = payload.memory
-    if (pm) {
+    if (payload.memory) {
       const m = s.memory
-      pm.free !== undefined && (m.free = pm.free)
-      pm.used !== undefined && (m.used = pm.used)
-      pm.allocated !== undefined && (m.allocated = pm.allocated)
-      pm.reservable !== undefined && (m.reservable = pm.reservable)
+      _functions.assignIfPresent(m, payload.memory, ['free', 'used', 'allocated', 'reservable'])
     }
 
-    const pc = payload.cpu
-    if (pc) {
+    if (payload.cpu) {
       const c = s.cpu
-      pc.cores !== undefined && (c.cores = pc.cores)
-      pc.systemLoad !== undefined && (c.systemLoad = pc.systemLoad)
-      pc.lavalinkLoad !== undefined && (c.lavalinkLoad = pc.lavalinkLoad)
+      _functions.assignIfPresent(c, payload.cpu, ['cores', 'systemLoad', 'lavalinkLoad'])
     }
 
-    const pf = payload.frameStats
-    if (pf) {
+    if (payload.frameStats) {
       const f = s.frameStats
-      pf.sent !== undefined && (f.sent = pf.sent)
-      pf.nulled !== undefined && (f.nulled = pf.nulled)
-      pf.deficit !== undefined && (f.deficit = pf.deficit)
+      _functions.assignIfPresent(f, payload.frameStats, ['sent', 'nulled', 'deficit'])
     }
   }
 
   async _handleReady(payload) {
-    const sessionId = payload?.sessionId
+    const sessionId = payload && payload.sessionId
     if (!sessionId) {
       this._emitError('Ready payload missing sessionId')
       return
@@ -440,17 +399,12 @@ class Node {
 
   async _resumePlayers() {
     if (!this.sessionId) return
-
     try {
       await this.rest.makeRequest('PATCH', `/v4/sessions/${this.sessionId}`, {
         resuming: true,
         timeout: this.resumeTimeout
       })
-
-      if (this.aqua.loadPlayers) {
-        await this.aqua.loadPlayers()
-      }
-
+      if (this.aqua.loadPlayers) await this.aqua.loadPlayers()
       this._emitDebug('Session resumed successfully')
     } catch (err) {
       this._emitError(`Failed to resume session: ${err?.message || err}`)
@@ -458,24 +412,13 @@ class Node {
     }
   }
 
-  _checkDebugStatus() {
-    this._debugEnabled = (this.aqua?.listenerCount?.('debug') || 0) > 0
-  }
-
-  _shouldDebug() {
-    if (this._debugEnabled) return true
-    this._checkDebugStatus()
-    return this._debugEnabled
-  }
-
   _emitError(error) {
     const errorObj = error instanceof Error ? error : new Error(String(error))
-    console.error(`[Aqua] [${this.name}] Error:`, errorObj.message)
     this.aqua.emit('error', this, errorObj)
   }
 
   _emitDebug(message) {
-    if (!this._shouldDebug()) return
+    if ((this.aqua?.listenerCount?.('debug') || 0) === 0) return
     const out = typeof message === 'function' ? message() : message
     this.aqua.emit('debug', this.name, out)
   }
