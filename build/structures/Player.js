@@ -296,7 +296,12 @@ class Player extends EventEmitter {
     this.isAutoplay = false;
     this.autoplayRetries = this.reconnectionRetries = 0;
     this.voiceChannel = null;
-    this.nowPlayingMessage = null;
+    if (this.shouldDeleteMessage && this.nowPlayingMessage) {
+      this.nowPlayingMessage.delete();
+      this.nowPlayingMessage = null;
+    }
+
+
 
     this.removeAllListeners();
     this.off('playerUpdate', this._boundPlayerUpdate);
