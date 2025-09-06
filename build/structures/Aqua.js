@@ -39,6 +39,7 @@ const DEFAULT_OPTIONS = Object.freeze({
   autoResume: true,
   infiniteReconnects: true,
   loadBalancer: 'leastLoad',
+  useHttp2: false,
   failoverOptions: Object.freeze({
     enabled: true,
     maxRetries: 3,
@@ -93,6 +94,7 @@ class Aqua extends EventEmitter {
     this.restrictedDomains = opts.restrictedDomains || []
     this.allowedDomains = opts.allowedDomains || []
     this.loadBalancer = opts.loadBalancer
+    this.useHttp2 = opts.useHttp2
     this.send = opts.send || this._createDefaultSend()
 
     this._nodeStates = new Map()
