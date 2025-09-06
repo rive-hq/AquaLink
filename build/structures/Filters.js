@@ -66,13 +66,17 @@ class Filters {
   }
 
   _scheduleUpdate() {
-    if (this._pendingUpdate) return this
-    this._pendingUpdate = true
+    if (this._pendingUpdate || !this.player) return this;
+    this._pendingUpdate = true;
     queueMicrotask(() => {
-      this._pendingUpdate = false
-      this.updateFilters().catch(() => {})
-    })
-    return this
+      if (!this.player) {
+        this._pendingUpdate = false;
+        return;
+      }
+      this._pendingUpdate = false;
+      this.updateFilters().catch(() => { });
+    });
+    return this;
   }
 
   setEqualizer(bands) {

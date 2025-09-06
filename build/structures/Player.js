@@ -283,36 +283,78 @@ class Player extends EventEmitter {
   }
 
   destroy({ preserveClient = true, skipRemote = false } = {}) {
-    if (this.destroyed) return this
+    if (this.destroyed) return this;
+
+    this.destroyed = true;
+
     if (this._voiceWatchdogTimer) {
-      clearInterval(this._voiceWatchdogTimer)
-      this._voiceWatchdogTimer = null
+      clearInterval(this._voiceWatchdogTimer);
+      this._voiceWatchdogTimer = null;
     }
-    this.destroyed = true
-    this.connected = this.playing = this.paused = this.isAutoplay = false
-    this.autoplayRetries = this.reconnectionRetries = 0
-    this.voiceChannel = null
-    this.emit('destroy')
-    this.shouldDeleteMessage && this.nowPlayingMessage && _functions.safeDel(this.nowPlayingMessage)
-    this.nowPlayingMessage = null
-    this.off('playerUpdate', this._boundPlayerUpdate)
-    this.off('event', this._boundEvent)
-    try { this.aqua.off('playerMove', this._boundAquaPlayerMove) } catch { }
-    this.removeAllListeners()
-    this._updateBatcher?.destroy()
-    this._updateBatcher = null
+
+    this.connected = this.playing = this.paused = this.isAutoplay = false;
+    this.isAutoplay = false;
+    this.autoplayRetries = this.reconnectionRetries = 0;
+    this.voiceChannel = null;
+    this.nowPlayingMessage = null;
+
+    this.removeAllListeners();
+    this.off('playerUpdate', this._boundPlayerUpdate);
+    this.off('event', this._boundEvent);
+
+    if (this.aqua && this._boundAquaPlayerMove) {
+      this.aqua.removeListener('playerMove', this._boundAquaPlayerMove);
+      this.aqua.off('playerMove', this._boundAquaPlayerMove);
+    }
+
+    if (this._updateBatcher) {
+      this._updateBatcher.destroy();
+      this._updateBatcher = null;
+    }
+
+    if (this.connection) {
+      this.connection.destroy();
+      this.connection = null;
+    }
+
+    if (this.queue) {
+      this.queue.clear();
+      this.queue = null;
+    }
+
+    if (this.previousTracks) {
+      this.previousTracks.clear();
+      this.previousTracks = null;
+    }
+
+    if (this.previousIdentifiers) {
+      this.previousIdentifiers.clear();
+      this.previousIdentifiers = null;
+    }
+
+    this.filters = null;
+    this._dataStore = null;
+    this.current = null;
+    this.autoplaySeed = null;
+
+    this._boundPlayerUpdate = null;
+    this._boundEvent = null;
+    this._boundAquaPlayerMove = null;
+
     if (!skipRemote) {
       try {
-        this.send({ guild_id: this.guildId, channel_id: null })
-        this.aqua?.destroyPlayer?.(this.guildId)
-        this.nodes?.connected && this.nodes?.rest?.destroyPlayer?.(this.guildId).catch(_functions.noop)
-      } catch { }
+        this.send({ guild_id: this.guildId, channel_id: null });
+        this.aqua?.destroyPlayer?.(this.guildId);
+        this.nodes?.connected && this.nodes?.rest?.destroyPlayer?.(this.guildId).catch(() => { });
+      } catch (e) { }
     }
-    this.clearData()
-    this.queue = this.connection = this.filters = this._dataStore = null
-    this._boundPlayerUpdate = this._boundEvent = this._boundAquaPlayerMove = null
-    if (!preserveClient) this.aqua = this.nodes = null
-    return this
+
+    if (!preserveClient) {
+      this.aqua = null;
+      this.nodes = null;
+    }
+
+    return this;
   }
 
   pause(paused) {
@@ -684,12 +726,15 @@ class Player extends EventEmitter {
   }
 
   clearData() {
-    this.previousTracks?.clear()
-    this._dataStore?.clear()
-    this.previousIdentifiers?.clear()
-    this.current = null
-    this.position = this.timestamp = 0
-    return this
+    this.previousTracks?.clear();
+    this._dataStore?.clear();
+    this.previousIdentifiers?.clear();
+    if (this.current?.dispose) this.current.dispose();
+    this.current = null;
+    this.position = this.timestamp = 0;
+    this.queue?.forEach(track => track?.dispose?.());
+    this.queue?.clear();
+    return this;
   }
 
   updatePlayer(data) {

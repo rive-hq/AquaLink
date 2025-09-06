@@ -6,8 +6,8 @@ const { EventEmitter } = require('tseep')
 const Node = require('./Node')
 const Player = require('./Player')
 const Track = require('./Track')
-const SearchPlatforms = require('./SearchPlatforms')
 const { version: pkgVersion } = require('../../package.json')
+const { fail } = require('node:assert')
 
 const SEARCH_PREFIX = ':'
 const EMPTY_ARRAY = Object.freeze([])
@@ -19,7 +19,6 @@ const EMPTY_TRACKS_RESPONSE = Object.freeze({
   tracks: EMPTY_ARRAY
 })
 
-const CLEANUP_INTERVAL = 180000
 const MAX_CONCURRENT_OPS = 10
 const BROKEN_PLAYER_TTL = 300000
 const FAILOVER_CLEANUP_TTL = 600000
@@ -109,7 +108,6 @@ class Aqua extends EventEmitter {
 
     this.on('nodeReady', this._onNodeReady.bind(this))
     this._bindEventHandlers()
-    this._startCleanupTimer()
   }
 
   _onNodeReady(node, { resumed }) {
@@ -141,9 +139,10 @@ class Aqua extends EventEmitter {
 
   _bindEventHandlers() {
     if (!this.autoResume) return
-    this._onNodeConnect = node => {
+    this._onNodeConnect = async node => {
       this._invalidateCache()
-      queueMicrotask(() => this._rebuildBrokenPlayers(node))
+      await this._rebuildBrokenPlayers(node)
+      this._performCleanup()
     }
     this._onNodeDisconnect = node => {
       this._invalidateCache()
@@ -151,10 +150,6 @@ class Aqua extends EventEmitter {
     }
     this.on('nodeConnect', this._onNodeConnect)
     this.on('nodeDisconnect', this._onNodeDisconnect)
-  }
-
-  _startCleanupTimer() {
-    this._cleanupTimer = _unref(setInterval(() => this._performCleanup(), CLEANUP_INTERVAL))
   }
 
   get leastUsedNodes() {
@@ -253,7 +248,7 @@ class Aqua extends EventEmitter {
   _destroyNode(identifier) {
     const node = this.nodeMap.get(identifier)
     if (node) {
-      try { node.destroy?.() } catch {}
+      try { node.destroy?.() } catch { }
       this._cleanupNode(identifier)
       this.emit('nodeDestroy', node)
     }
@@ -312,6 +307,7 @@ class Aqua extends EventEmitter {
     }
     for (const guildId of successes) this._brokenPlayers.delete(guildId)
     if (successes.length) this.emit('playersRebuilt', node, successes.length)
+    this._performCleanup()
   }
 
   async _rebuildPlayer(brokenState, targetNode) {
@@ -492,7 +488,7 @@ class Aqua extends EventEmitter {
     const existing = this.players.get(options.guildId)
     if (existing) {
       if (options.voiceChannel && existing.voiceChannel !== options.voiceChannel) {
-        try { existing.connect(options) } catch {}
+        try { existing.connect(options) } catch { }
       }
       return existing
     }
@@ -505,7 +501,7 @@ class Aqua extends EventEmitter {
 
   createPlayer(node, options) {
     const existing = this.players.get(options.guildId)
-    if (existing) try { existing.destroy?.() } catch {}
+    if (existing) try { existing.destroy?.() } catch { }
     const player = new Player(this, node, options)
     this.players.set(options.guildId, player)
     node?.players?.add?.(player)
@@ -529,7 +525,7 @@ class Aqua extends EventEmitter {
       this.players.delete(guildId)
       player.removeAllListeners?.()
       await player.destroy?.()
-    } finally {}
+    } finally { }
   }
 
   async resolve({ query, source = this.defaultSearchPlatform, requester, nodes }) {
@@ -649,7 +645,7 @@ class Aqua extends EventEmitter {
     } catch (error) {
       this.emit('debug', 'Aqua', `Load players error: ${error?.message || String(error)}`)
     } finally {
-      await fs.promises.unlink(lockFile).catch(() => {})
+      await fs.promises.unlink(lockFile).catch(() => { })
     }
   }
 
@@ -688,7 +684,7 @@ class Aqua extends EventEmitter {
     } catch (error) {
       this.emit('error', null, new Error(`Save players failed: ${error?.message || String(error)}`))
     } finally {
-      await fs.promises.unlink(lockFile).catch(() => {})
+      await fs.promises.unlink(lockFile).catch(() => { })
     }
   }
 
@@ -721,7 +717,7 @@ class Aqua extends EventEmitter {
       if (p.nw && p.t) {
         const channel = this.client.channels?.cache?.get(p.t)
         if (channel?.messages) {
-          try { player.nowPlayingMessage = await channel.messages.fetch(p.nw).catch(() => null) } catch {}
+          try { player.nowPlayingMessage = await channel.messages.fetch(p.nw).catch(() => null) } catch { }
         }
       }
     } catch (error) {
@@ -763,24 +759,60 @@ class Aqua extends EventEmitter {
   }
 
   _performCleanup() {
-    const now = Date.now()
-    const expiredPlayers = []
+    const now = Date.now();
+
+    const expiredPlayers = [];
     for (const [guildId, state] of this._brokenPlayers) {
-      if (now - state.brokenAt > BROKEN_PLAYER_TTL) expiredPlayers.push(guildId)
+      if (now - state.brokenAt > BROKEN_PLAYER_TTL) {
+        expiredPlayers.push(guildId);
+      }
     }
-    for (const guildId of expiredPlayers) this._brokenPlayers.delete(guildId)
-    const expiredNodes = []
+    for (const guildId of expiredPlayers) {
+      this._brokenPlayers.delete(guildId);
+    }
+
+    const expiredNodes = [];
     for (const [nodeId, ts] of this._lastFailoverAttempt) {
-      if (now - ts > FAILOVER_CLEANUP_TTL) expiredNodes.push(nodeId)
+      if (now - ts > FAILOVER_CLEANUP_TTL) {
+        expiredNodes.push(nodeId);
+      }
     }
     for (const nodeId of expiredNodes) {
-      this._lastFailoverAttempt.delete(nodeId)
-      this._failoverQueue.delete(nodeId)
+      this._lastFailoverAttempt.delete(nodeId);
+      this._failoverQueue.delete(nodeId);
     }
-    if (this._nodeLoadCache.size > 50) {
-      this._nodeLoadCache.clear()
-      this._nodeLoadCacheTime.clear()
+
+    if (this._brokenPlayers.size > 100) {
+      const oldest = [...this._brokenPlayers.entries()]
+        .sort((a, b) => a[1].brokenAt - b[1].brokenAt)
+        .slice(0, this._brokenPlayers.size - 50);
+      for (const [guildId] of oldest) {
+        this._brokenPlayers.delete(guildId);
+      }
     }
+
+    if (this._failoverQueue.size > 50) {
+      this._failoverQueue.clear();
+    }
+
+    if (this._lastFailoverAttempt.size > 50) {
+      this._lastFailoverAttempt.clear();
+    }
+
+    for (const [nodeId, state] of this._nodeStates) {
+      if (!this.nodeMap.has(nodeId)) {
+        this._nodeStates.delete(nodeId);
+      }
+    }
+
+    this._invalidateCache();
+
+    if (this._nodeLoadCache.size > 20) {
+      this._nodeLoadCache.clear();
+      this._nodeLoadCacheTime.clear();
+    }
+
+    this.emit("debug", `Cleanup: broken=${this._brokenPlayers.size}, failover=${this._failoverQueue.size}, players=${this.players.size}`);
   }
 
   _getAvailableNodes(excludeNode) {
@@ -799,11 +831,12 @@ class Aqua extends EventEmitter {
     const destroyTasks = []
     for (const player of this.players.values()) {
       player.removeAllListeners?.()
-      if (player.destroy) destroyTasks.push(Promise.resolve(player.destroy()).catch(() => {}))
+      if (player.destroy) destroyTasks.push(Promise.resolve(player.destroy()).catch(() => { }))
     }
     for (const node of this.nodeMap.values()) {
-      if (node.destroy) destroyTasks.push(Promise.resolve(node.destroy()).catch(() => {}))
+      if (node.destroy) destroyTasks.push(Promise.resolve(node.destroy()).catch(() => { }))
     }
+    // Clear all collections to prevent memory leaks
     this.players.clear()
     this.nodeMap.clear()
     this._nodeStates.clear()
@@ -812,6 +845,7 @@ class Aqua extends EventEmitter {
     this._brokenPlayers.clear()
     this._nodeLoadCache.clear()
     this._nodeLoadCacheTime.clear()
+    this._rebuildLocks.clear()
     this._leastUsedNodesCache = null
     this.removeAllListeners()
     return Promise.all(destroyTasks)

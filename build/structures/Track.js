@@ -107,7 +107,7 @@ class Track {
 
   isValid() {
     return (typeof this.track === 'string' && this.track.length > 0)
-        || (typeof this.uri === 'string' && this.uri.length > 0);
+      || (typeof this.uri === 'string' && this.uri.length > 0);
   }
 
   dispose() {
@@ -115,6 +115,15 @@ class Track {
     this.requester = null;
     this.node = null;
     this.nodes = null;
+    this.playlist = null;
+
+    this.track = null;
+    this.identifier = '';
+    this.author = '';
+    this.title = '';
+    this.uri = '';
+    this.sourceName = '';
+    this.artworkUrl = '';
   }
 
   _computeArtworkFromKnownSources() {

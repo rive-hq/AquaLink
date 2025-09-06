@@ -37,16 +37,19 @@ class Queue extends Array {
     remove(track) {
         const index = this.indexOf(track);
         if (index === -1) return false;
-        
-        this.splice(index, 1);
+        const [removed] = this.splice(index, 1);
+        if (removed?.dispose) removed.dispose();
         return true;
     }
 
     // Clear all tracks from the queue
     clear() {
+        for (let i = 0; i < this.length; i++) {
+            if (this[i]?.dispose) this[i].dispose();
+            this[i] = null;
+        }
         this.length = 0;
     }
-
     // Shuffle the tracks in the queue
     shuffle() {
         for (let i = this.length - 1; i > 0; i--) {

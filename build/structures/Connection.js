@@ -31,10 +31,10 @@ const _functions = {
 
 class OptimizedPayloadPool {
   constructor() {
-    this.pool = new Array(POOL_SIZE)
-    this.size = POOL_SIZE
+    this.pool = new Array(POOL_SIZE);
+    this.size = POOL_SIZE;
     for (let i = 0; i < POOL_SIZE; i++) {
-      this.pool[i] = this._createPayload()
+      this.pool[i] = this._createPayload();
     }
   }
 
@@ -51,22 +51,36 @@ class OptimizedPayloadPool {
         },
         volume: null
       }
-    }
+    };
   }
 
   acquire() {
-    return this.size > 0 ? this.pool[--this.size] : this._createPayload()
+    return this.size > 0 ? this.pool[--this.size] : this._createPayload();
   }
 
   release(payload) {
-    if (!payload || this.size >= POOL_SIZE) return
-    payload.guildId = null
-    _functions.resetVoicePayload(payload.data.voice)
-    payload.data.volume = null
-    this.pool[this.size++] = payload
+    if (!payload || this.size >= POOL_SIZE) return;
+
+    payload.guildId = null;
+    const voice = payload.data.voice;
+    voice.token = null;
+    voice.endpoint = null;
+    voice.sessionId = null;
+    voice.resume = undefined;
+    voice.sequence = undefined;
+    payload.data.volume = null;
+
+    this.pool[this.size++] = payload;
+  }
+
+  destroy() {
+    for (let i = 0; i < this.size; i++) {
+      this.pool[i] = null;
+    }
+    this.pool = null;
+    this.size = 0;
   }
 }
-
 const sharedPool = new OptimizedPayloadPool()
 
 class Connection {
@@ -189,8 +203,9 @@ class Connection {
 
   async attemptResume() {
     this._aqua.emit('debug', `Attempt voice: G: ${this._guildId} E: ${this.endpoint} T: ${this.token} S: ${this.sessionId}`)
-    if (this._destroyed || !(this.sessionId && this.endpoint && this.token) ||
-        this._reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) return false
+    // if we have SessionID and guild id, but does  not have endpoint and token, try rebuilding the connection
+
+    if (this._destroyed || !this.sessionId || this._reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) return false
 
     this._reconnectAttempts++
     const payload = sharedPool.acquire()
@@ -201,7 +216,7 @@ class Connection {
       voice.token = this.token
       voice.endpoint = this.endpoint
       voice.sessionId = this.sessionId
-      voice.resume = true
+      voice.resume = !!(this.endpoint && this.token)
       voice.sequence = this.sequence
       payload.data.volume = this._player?.volume ?? 100
 

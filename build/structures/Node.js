@@ -62,7 +62,7 @@ class Node {
     this.host = connOptions.host || 'localhost'
     this.name = connOptions.name || this.host
     this.port = connOptions.port || 2333
-    this.password = connOptions.password || 'youshallnotpass'
+    this.password = connOptions.auth || 'youshallnotpass'
     this.sessionId = connOptions.sessionId || null
     this.regions = connOptions.regions || []
     this.ssl = !!connOptions.ssl
@@ -306,23 +306,20 @@ class Node {
   }
 
   _cleanup() {
-    const ws = this.ws
-    if (!ws) return
-
-    ws.removeAllListeners()
-
+    const ws = this.ws;
+    if (!ws) return;
+    ws.removeAllListeners();
     try {
-      const state = ws.readyState
+      const state = ws.readyState;
       if (state === WS_STATES.OPEN) {
-        ws.close(Node.WS_CLOSE_NORMAL)
+        ws.close(Node.WS_CLOSE_NORMAL);
       } else {
-        ws.terminate?.()
+        ws.terminate();
       }
     } catch (err) {
-      this._emitError(`Failed to cleanup WebSocket: ${err?.message || err}`)
+      this._emitError(`Failed to cleanup WebSocket: ${err.message}`);
     }
-
-    this.ws = null
+    this.ws = null;
   }
 
   destroy(clean = false) {
@@ -340,6 +337,7 @@ class Node {
     this.connected = false
     this.aqua.destroyNode?.(this.name)
     this.aqua.emit('nodeDestroy', this)
+    this.rest?.destroy?.();
     this.info = null
   }
 
