@@ -511,6 +511,7 @@ declare module "aqualink" {
         allowedDomains?: string[];
         loadBalancer?: LoadBalancerStrategy;
         failoverOptions?: FailoverOptions;
+        useHttp2?: boolean;
     }
 
     export interface FailoverOptions {
