@@ -2,7 +2,7 @@
 
 const WebSocket = require('ws')
 const Rest = require('./Rest')
-
+const { AqualinkEvents } = require('./AqualinkEvents')
 const WS_STATES = Object.freeze({ CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3 })
 const FATAL_CLOSE_CODES = new Set([4003, 4004, 4010, 4011, 4012, 4015])
 
@@ -62,7 +62,7 @@ class Node {
     this.host = connOptions.host || 'localhost'
     this.name = connOptions.name || this.host
     this.port = connOptions.port || 2333
-    this.password = connOptions.auth || 'youshallnotpass'
+    this.auth = connOptions.auth || 'youshallnotpass'
     this.sessionId = connOptions.sessionId || null
     this.regions = connOptions.regions || []
     this.ssl = !!connOptions.ssl
@@ -112,7 +112,7 @@ class Node {
 
   _buildHeaders() {
     const headers = Object.create(null)
-    headers.Authorization = this.password
+    headers.Authorization = this.auth
     headers['User-Id'] = this.aqua.clientId
     headers['Client-Name'] = this._clientName
     if (this.sessionId) headers['Session-Id'] = this.sessionId
@@ -134,12 +134,12 @@ class Node {
         })
     }
 
-    this.aqua.emit('nodeConnected', this)
+    this.aqua.emit(AqualinkEvents.NodeConnect, this)
   }
 
   _handleError(error) {
     const err = error instanceof Error ? error : new Error(String(error))
-    this.aqua.emit('nodeError', this, err)
+    this.aqua.emit(AqualinkEvents.NodeError, this, err)
   }
 
   _handleMessage(data, isBinary) {
@@ -167,7 +167,7 @@ class Node {
         this._handleReady(payload)
         break
       case 'playerUpdate':
-        this._emitToPlayer('playerUpdate', payload)
+        this._emitToPlayer(AqualinkEvents.PlayerUpdate, payload)
         break
       case 'event':
         this._emitToPlayer('event', payload)
@@ -191,7 +191,7 @@ class Node {
       return
     }
 
-    this.aqua.emit('nodeCustomOp', this, op, payload)
+    this.aqua.emit(AqualinkEvents.NodeCustomOp, this, op, payload)
     this._emitDebug(() => `Unknown string op from Lavalink: ${op}`)
   }
 
@@ -200,7 +200,7 @@ class Node {
     this._isConnecting = false
 
     const reasonStr = _functions.reasonToString(reason)
-    this.aqua.emit('nodeDisconnect', this, { code, reason: reasonStr })
+    this.aqua.emit(AqualinkEvents.NodeDisconnect, this, { code, reason: reasonStr })
 
     if (this.isDestroyed) return
 
@@ -228,7 +228,7 @@ class Node {
     if (this.infiniteReconnects) {
       const attempt = ++this.reconnectAttempted
       const backoffTime = 10_000
-      this.aqua.emit('nodeReconnect', this, { infinite: true, attempt, backoffTime })
+      this.aqua.emit(AqualinkEvents.NodeReconnect, this, { infinite: true, attempt, backoffTime })
       this.reconnectTimeoutId = setTimeout(this._boundHandlers.connect, backoffTime)
       this.reconnectTimeoutId.unref?.()
       return
@@ -243,7 +243,7 @@ class Node {
     const attempt = ++this.reconnectAttempted
     const backoffTime = this._calcBackoff(attempt)
 
-    this.aqua.emit('nodeReconnect', this, { infinite: false, attempt, backoffTime })
+    this.aqua.emit(AqualinkEvents.NodeReconnect, this, { infinite: false, attempt, backoffTime })
 
     this.reconnectTimeoutId = setTimeout(this._boundHandlers.connect, backoffTime)
     this.reconnectTimeoutId.unref?.()
@@ -336,7 +336,7 @@ class Node {
 
     this.connected = false
     this.aqua.destroyNode?.(this.name)
-    this.aqua.emit('nodeDestroy', this)
+    this.aqua.emit(AqualinkEvents.NodeDestroy, this)
     this.rest?.destroy?.();
     this.info = null
   }
@@ -385,8 +385,8 @@ class Node {
     this.rest.setSessionId(sessionId)
     this._headers['Session-Id'] = sessionId
 
-    this.aqua.emit('nodeReady', this, { resumed: !!payload.resumed })
-    this.aqua.emit('nodeConnect', this)
+    this.aqua.emit(AqualinkEvents.NodeReady, this, { resumed: !!payload.resumed })
+    this.aqua.emit(AqualinkEvents.NodeConnect, this)
 
     if (this.autoResume) {
       this._resumePlayers().catch(err => {
@@ -412,13 +412,13 @@ class Node {
 
   _emitError(error) {
     const errorObj = error instanceof Error ? error : new Error(String(error))
-    this.aqua.emit('error', this, errorObj)
+    this.aqua.emit(AqualinkEvents.Error, this, errorObj)
   }
 
   _emitDebug(message) {
-    if ((this.aqua?.listenerCount?.('debug') || 0) === 0) return
+    if ((this.aqua?.listenerCount?.(AqualinkEvents.Debug) || 0) === 0) return
     const out = typeof message === 'function' ? message() : message
-    this.aqua.emit('debug', this.name, out)
+    this.aqua.emit(AqualinkEvents.Debug, this.name, out)
   }
 }
 

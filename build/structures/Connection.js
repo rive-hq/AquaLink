@@ -1,7 +1,6 @@
 'use strict'
-
+const { AqualinkEvents } = require('./AqualinkEvents')
 const POOL_SIZE = 12
-const LISTENER_CHECK_INTERVAL = 4000
 const UPDATE_TIMEOUT = 4000
 const RECONNECT_DELAY = 1000
 const MAX_RECONNECT_ATTEMPTS = 3
@@ -14,7 +13,8 @@ const STATE_FLAGS = {
   HAS_DEBUG: 16,
   HAS_MOVE: 32,
   UPDATE_SCHEDULED: 64,
-  DISCONNECTING: 128
+  DISCONNECTING: 128,
+  ATTEMPTING_RESUME: 256  // Added flag to prevent concurrent resume attempts
 }
 
 const ENDPOINT_REGION_REGEX = /^([a-z-]+)(?:\d+)?/i
@@ -114,6 +114,20 @@ class Connection {
     this._handleReconnect = this._handleReconnect.bind(this)
   }
 
+  // Check if we have minimum required data for voice connection
+  _hasValidVoiceData() {
+    return !!(this.sessionId && this.endpoint && this.token)
+  }
+
+  // Check if connection is in a restorable state
+  _canAttemptResume() {
+    return !this._destroyed &&
+           this._hasValidVoiceData() &&
+           this._reconnectAttempts < MAX_RECONNECT_ATTEMPTS &&
+           !(this._stateFlags & STATE_FLAGS.ATTEMPTING_RESUME) &&
+           !(this._stateFlags & STATE_FLAGS.DISCONNECTING)
+  }
+
   setServerUpdate(data) {
     if (this._destroyed || !data?.endpoint || !data.token ||
         !_functions.isValidString(data.endpoint) || !_functions.isValidString(data.token)) return
@@ -142,7 +156,7 @@ class Connection {
   }
 
   resendVoiceUpdate() {
-    if (this._destroyed || !(this.sessionId && this.endpoint && this.token)) return false
+    if (this._destroyed || !this._hasValidVoiceData()) return false
     this._scheduleVoiceUpdate()
     return true
   }
@@ -157,7 +171,7 @@ class Connection {
 
       if (this.voiceChannel !== channel_id) {
         if (this._stateFlags & STATE_FLAGS.HAS_MOVE) {
-          this._aqua.emit('playerMove', this.voiceChannel, channel_id)
+          this._aqua.emit(AqualinkEvents.PlayerMove, this.voiceChannel, channel_id)
         }
         this.voiceChannel = channel_id
         this._player.voiceChannel = channel_id
@@ -169,6 +183,8 @@ class Connection {
         needsUpdate = true
         this._reconnectAttempts = 0
       }
+
+      this._player.connection.sessionId = session_id || this._player.connection.sessionId
 
       this._player.self_deaf = !!self_deaf
       this._player.self_mute = !!self_mute
@@ -188,6 +204,12 @@ class Connection {
     this._player.connected = false
     this._clearPendingUpdate()
 
+    // Clear reconnect timer if active
+    if (this._reconnectTimer) {
+      clearTimeout(this._reconnectTimer)
+      this._reconnectTimer = null
+    }
+
     this.voiceChannel = null
     this.sessionId = null
     this.sequence = 0
@@ -195,19 +217,25 @@ class Connection {
     try {
       if (typeof this._player.destroy === 'function') this._player.destroy()
     } catch (error) {
-      this._aqua.emit('debug', new Error(`Player destroy failed: ${error.message}`))
+      this._aqua.emit(AqualinkEvents.Debug, new Error(`Player destroy failed: ${error.message}`))
     } finally {
       this._stateFlags &= ~STATE_FLAGS.DISCONNECTING
     }
   }
 
   async attemptResume() {
-    this._aqua.emit('debug', `Attempt voice: G: ${this._guildId} E: ${this.endpoint} T: ${this.token} S: ${this.sessionId}`)
-    // if we have SessionID and guild id, but does  not have endpoint and token, try rebuilding the connection
+    // Early validation - don't attempt if we don't have required data
+    if (!this._canAttemptResume()) {
+      this._aqua.emit(AqualinkEvents.Debug, `Resume blocked: destroyed=${this._destroyed}, hasValidData=${this._hasValidVoiceData()}, attempts=${this._reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}`)
+      return false
+    }
 
-    if (this._destroyed || !this.sessionId || this._reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) return false
-
+    // Set attempting resume flag to prevent concurrent attempts
+    this._stateFlags |= STATE_FLAGS.ATTEMPTING_RESUME
     this._reconnectAttempts++
+
+    this._aqua.emit(AqualinkEvents.Debug, `Attempt voice: G: ${this._guildId} E: ${this.endpoint} T: ${this.token?.substring(0, 10)}... S: ${this.sessionId}`)
+
     const payload = sharedPool.acquire()
 
     try {
@@ -216,27 +244,41 @@ class Connection {
       voice.token = this.token
       voice.endpoint = this.endpoint
       voice.sessionId = this.sessionId
-      voice.resume = !!(this.endpoint && this.token)
+      voice.resume = true  // Always try to resume when we have valid data
       voice.sequence = this.sequence
       payload.data.volume = this._player?.volume ?? 100
 
       await this._sendUpdate(payload)
+
+      // Success - reset attempt counter
       this._reconnectAttempts = 0
+      this._aqua.emit(AqualinkEvents.Debug, `Resume successful for guild ${this._guildId}`)
       return true
+
     } catch (error) {
-      if (this._reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+      this._aqua.emit(AqualinkEvents.Debug, `Resume failed for guild ${this._guildId}: ${error.message}`)
+
+      // Only schedule retry if we haven't exceeded max attempts
+      if (this._reconnectAttempts < MAX_RECONNECT_ATTEMPTS && !this._destroyed) {
         const delay = RECONNECT_DELAY * Math.pow(2, this._reconnectAttempts - 1)
         this._reconnectTimer = setTimeout(this._handleReconnect, delay)
         _functions.safeUnref(this._reconnectTimer)
+      } else {
+        this._aqua.emit(AqualinkEvents.Debug, `Max reconnect attempts reached for guild ${this._guildId}`)
       }
+
       return false
+
     } finally {
+      this._stateFlags &= ~STATE_FLAGS.ATTEMPTING_RESUME
       sharedPool.release(payload)
     }
   }
 
   _handleReconnect() {
-    if (!this._destroyed) this.attemptResume()
+    if (!this._destroyed) {
+      this.attemptResume()
+    }
   }
 
   updateSequence(seq) {
@@ -254,7 +296,7 @@ class Connection {
   }
 
   _scheduleVoiceUpdate() {
-    if (this._destroyed || !(this.sessionId && this.endpoint && this.token) ||
+    if (this._destroyed || !this._hasValidVoiceData() ||
         (this._stateFlags & STATE_FLAGS.UPDATE_SCHEDULED)) return
 
     this._clearPendingUpdate()
@@ -303,7 +345,7 @@ class Connection {
                             error.code === 'ENOTFOUND' ||
                             error.code === 'ETIMEDOUT'
       if (!isNetworkError) {
-        this._aqua.emit('debug', new Error(`Voice update failed: ${error.message}`))
+        this._aqua.emit(AqualinkEvents.Debug, new Error(`Voice update failed: ${error.message}`))
       }
       throw error
     }

@@ -1,6 +1,7 @@
 'use strict'
 
 const { EventEmitter } = require('tseep')
+const { AqualinkEvents } = require('./AqualinkEvents')
 const Connection = require('./Connection')
 const Queue = require('./Queue')
 const Filters = require('./Filters')
@@ -72,7 +73,7 @@ class MicrotaskUpdateBatcher {
     this.updates = null
     this.scheduled = 0
     return p.updatePlayer(u).catch(err => {
-      try { p.aqua?.emit?.('error', new Error(`Update error: ${err.message}`)) } catch { }
+      try { p.aqua?.emit?.(AqualinkEvents.Error, new Error(`Update error: ${err.message}`)) } catch { }
       throw err
     })
   }
@@ -182,20 +183,20 @@ class Player extends EventEmitter {
     } else {
       this._voiceDownSince = 0
     }
-    this.aqua.emit('playerUpdate', this, packet)
+    this.aqua.emit(AqualinkEvents.PlayerUpdate, this, packet)
   }
 
   async _handleEvent(payload) {
     if (this.destroyed || !payload?.type) return
     const handler = this[EVENT_HANDLERS[payload.type]]
     if (typeof handler !== 'function') {
-      this.aqua.emit('nodeError', this, new Error(`Unknown event: ${payload.type}`))
+      this.aqua.emit(AqualinkEvents.NodeError, this, new Error(`Unknown event: ${payload.type}`))
       return
     }
     try {
       await handler.call(this, this, this.current, payload)
     } catch (error) {
-      this.aqua.emit('error', error)
+      this.aqua.emit(AqualinkEvents.Error, error)
     }
   }
 
@@ -226,7 +227,7 @@ class Player extends EventEmitter {
       await this.batchUpdatePlayer({ guildId: this.guildId, encodedTrack: this.current.track }, true)
       return this
     } catch (error) {
-      this.aqua.emit('error', error)
+      this.aqua.emit(AqualinkEvents.Error, error)
       return this.queue?.size ? this.play() : this
     }
   }
@@ -249,38 +250,98 @@ class Player extends EventEmitter {
     return this
   }
 
-  async _voiceWatchdog() {
-    const down = this._voiceDownSince && (Date.now() - this._voiceDownSince) >= VOICE_DOWN_THRESHOLD
-    if (this.destroyed || !this.voiceChannel || this.connected || !down || this._voiceRecovering || this.reconnectionRetries >= 4) return
-    this._voiceRecovering = true
-    try {
-      if (await this.connection.attemptResume().catch(_functions.noop)) {
-        this.aqua.emit('debug', `[P:${this.guildId}] Watchdog: resume ok`)
-        return
-      }
-      const toggle = !this.mute
+async _voiceWatchdog() {
+  // Don't attempt recovery if:
+  // - Player is destroyed
+  // - No voice channel configured
+  // - Already connected
+  // - Not enough time has passed since voice went down
+  // - Already attempting recovery
+  // - Exceeded maximum reconnection attempts
+  if (this.destroyed ||
+      !this.voiceChannel ||
+      this.connected ||
+      !this._voiceDownSince ||
+      (Date.now() - this._voiceDownSince) < VOICE_DOWN_THRESHOLD ||
+      this._voiceRecovering ||
+      this.reconnectionRetries >= 4) {
+    return
+  }
+
+  // Check if we have the minimum required connection data
+  const hasVoiceData = this.connection?.sessionId && this.connection?.endpoint && this.connection?.token
+
+  if (!hasVoiceData) {
+    this.aqua.emit(AqualinkEvents.Debug, `[P:${this.guildId}] Watchdog: Missing voice connection data, skipping recovery`)
+    // If we don't have voice data for too long, consider the connection permanently broken
+    if ((Date.now() - this._voiceDownSince) > VOICE_DOWN_THRESHOLD * 3) {
+      this.aqua.emit(AqualinkEvents.Debug, `[P:${this.guildId}] Watchdog: Voice data missing too long, destroying player`)
+      this.destroy()
+    }
+    return
+  }
+
+  this._voiceRecovering = true
+  const recoveryStartTime = Date.now()
+
+  try {
+    // First try: Attempt to resume existing connection
+    if (await this.connection.attemptResume()) {
+      this.aqua.emit(AqualinkEvents.Debug, `[P:${this.guildId}] Watchdog: Resume successful`)
+      this.reconnectionRetries = 0
+      this._voiceDownSince = 0 // Reset the timer
+      return
+    }
+
+    // Second try: Force rejoin by toggling mute state
+    this.aqua.emit(AqualinkEvents.Debug, `[P:${this.guildId}] Watchdog: Resume failed, attempting forced rejoin`)
+
+    const originalMute = this.mute
+    const toggleMute = !originalMute
+
+    // Send initial state change
+    this.send({
+      guild_id: this.guildId,
+      channel_id: this.voiceChannel,
+      self_deaf: this.deaf,
+      self_mute: toggleMute
+    })
+
+    // Wait for mute toggle delay, then restore original state
+    await new Promise(resolve => setTimeout(resolve, MUTE_TOGGLE_DELAY))
+
+    if (!this.destroyed) {
       this.send({
         guild_id: this.guildId,
         channel_id: this.voiceChannel,
         self_deaf: this.deaf,
-        self_mute: toggle
+        self_mute: originalMute
       })
-      setTimeout(() => !this.destroyed && this.send({
-        guild_id: this.guildId,
-        channel_id: this.voiceChannel,
-        self_deaf: this.deaf,
-        self_mute: this.mute
-      }), MUTE_TOGGLE_DELAY)
-      this.connection.resendVoiceUpdate({ resume: false })
-      this.aqua.emit('debug', `[P:${this.guildId}] Watchdog: forced rejoin`)
-      this.reconnectionRetries++
-    } catch (err) {
-      this.aqua.emit('debug', `[P:${this.guildId}] Watchdog err: ${err?.message}`)
-    } finally {
-      this.reconnectionRetries = 0
-      this._voiceRecovering = false
     }
+
+    // Try to resend voice update
+    this.connection.resendVoiceUpdate()
+
+    this.aqua.emit(AqualinkEvents.Debug, `[P:${this.guildId}] Watchdog: Forced rejoin completed`)
+    this.reconnectionRetries++
+
+  } catch (err) {
+    this.aqua.emit(AqualinkEvents.Debug, `[P:${this.guildId}] Watchdog error: ${err?.message}`)
+    this.reconnectionRetries++
+
+    // If we've exhausted all recovery attempts, destroy the player
+    if (this.reconnectionRetries >= 4) {
+      this.aqua.emit(AqualinkEvents.Debug, `[P:${this.guildId}] Watchdog: Max recovery attempts reached, destroying player`)
+      this.destroy()
+    }
+  } finally {
+    this._voiceRecovering = false
+
+    // Log recovery attempt duration for debugging
+    const recoveryDuration = Date.now() - recoveryStartTime
+    this.aqua.emit(AqualinkEvents.Debug, `[P:${this.guildId}] Watchdog: Recovery attempt completed in ${recoveryDuration}ms`)
   }
+}
 
   destroy({ preserveClient = true, skipRemote = false } = {}) {
     if (this.destroyed) return this;
@@ -300,9 +361,7 @@ class Player extends EventEmitter {
       this.nowPlayingMessage.delete();
       this.nowPlayingMessage = null;
     }
-
-
-
+    this.emit('destroy');
     this.removeAllListeners();
     this.off('playerUpdate', this._boundPlayerUpdate);
     this.off('event', this._boundEvent);
@@ -358,7 +417,6 @@ class Player extends EventEmitter {
       this.aqua = null;
       this.nodes = null;
     }
-
     return this;
   }
 
@@ -504,10 +562,10 @@ class Player extends EventEmitter {
           return this
         }
       } catch (err) {
-        this.aqua.emit('error', new Error(`Autoplay ${i + 1} fail: ${err.message}`))
+        this.aqua.emit(AqualinkEvents.Error, new Error(`Autoplay ${i + 1} fail: ${err.message}`))
       }
     }
-    this.aqua.emit('autoplayFailed', this, new Error('Max retries'))
+    this.aqua.emit(AqualinkEvents.AutoplayFailed, this, new Error('Max retries'))
     this.stop()
     return this
   }
@@ -542,7 +600,7 @@ class Player extends EventEmitter {
     if (this.destroyed) return
     this.playing = true
     this.paused = false
-    this.aqua.emit('trackStart', this, track)
+    this.aqua.emit(AqualinkEvents.TrackStart, this, track)
   }
 
   async trackEnd(player, track, payload) {
@@ -556,9 +614,9 @@ class Player extends EventEmitter {
     if (isFailure) {
       if (!this.queue?.size) {
         this.clearData()
-        this.aqua.emit('queueEnd', this)
+        this.aqua.emit(AqualinkEvents.QueueEnd, this)
       } else {
-        this.aqua.emit('trackEnd', this, track, reason)
+        this.aqua.emit(AqualinkEvents.TrackEnd, this, track, reason)
         await this.play()
       }
       return
@@ -569,7 +627,7 @@ class Player extends EventEmitter {
       else if (l === 2) this.queue.push(track)
     }
     if (this.queue?.size) {
-      this.aqua.emit('trackEnd', this, track, reason)
+      this.aqua.emit(AqualinkEvents.TrackEnd, this, track, reason)
       await this.play()
     } else if (this.isAutoplayEnabled && !isReplaced) {
       await this.autoplay()
@@ -579,26 +637,26 @@ class Player extends EventEmitter {
         this.clearData()
         this.destroy()
       }
-      this.aqua.emit('queueEnd', this)
+      this.aqua.emit(AqualinkEvents.QueueEnd, this)
     }
   }
 
   async trackError(player, track, payload) {
     if (!this.destroyed) {
-      this.aqua.emit('trackError', this, track, payload)
+      this.aqua.emit(AqualinkEvents.TrackError, this, track, payload)
       this.stop()
     }
   }
 
   async trackStuck(player, track, payload) {
     if (!this.destroyed) {
-      this.aqua.emit('trackStuck', this, track, payload)
+      this.aqua.emit(AqualinkEvents.TrackStuck, this, track, payload)
       this.stop()
     }
   }
 
   async trackChange(player, track, payload) {
-    !this.destroyed && this.aqua.emit('trackChange', this, track, payload)
+    !this.destroyed && this.aqua.emit(AqualinkEvents.TrackChange, this, track, payload)
   }
 
   async _attemptVoiceResume() {
@@ -624,28 +682,28 @@ class Player extends EventEmitter {
     if (this.destroyed) return
     const code = payload?.code
     if (code === 4022) {
-      this.aqua.emit('socketClosed', this, payload)
+      this.aqua.emit(AqualinkEvents.SocketClosed, this, payload)
       this.destroy()
       return
     }
     if (code === 4015) {
-      this.aqua.emit('debug', `[P:${this.guildId}] Voice crash, resuming...`)
+      this.aqua.emit(AqualinkEvents.Debug, `[P:${this.guildId}] Voice crash, resuming...`)
       try {
         await this._attemptVoiceResume()
-        this.aqua.emit('debug', `[P:${this.guildId}] Resume ok`)
+        this.aqua.emit(AqualinkEvents.Debug, `[P:${this.guildId}] Resume ok`)
         return
       } catch (err) {
-        this.aqua.emit('debug', `[P:${this.guildId}] Resume fail: ${err.message}`)
+        this.aqua.emit(AqualinkEvents.Debug, `[P:${this.guildId}] Resume fail: ${err.message}`)
       }
     }
     if (![4015, 4009, 4006].includes(code)) {
-      this.aqua.emit('socketClosed', this, payload)
+      this.aqua.emit(AqualinkEvents.SocketClosed, this, payload)
       return
     }
     const aqua = this.aqua
     const vcId = _functions.toId(this.voiceChannel)
     if (!vcId) {
-      aqua?.emit?.('socketClosed', this, payload)
+      aqua?.emit?.(AqualinkEvents.SocketClosed, this, payload)
       return
     }
     const state = {
@@ -678,28 +736,28 @@ class Player extends EventEmitter {
           state.position > 5000 && setTimeout(() => !np.destroyed && np.seek(state.position), SEEK_DELAY)
           state.paused && setTimeout(() => !np.destroyed && np.pause(true), PAUSE_DELAY)
         }
-        aqua.emit('playerReconnected', np, { oldPlayer: this, restoredState: state })
+        aqua.emit(AqualinkEvents.PlayerReconnected, np, { oldPlayer: this, restoredState: state })
       } catch (error) {
         const retriesLeft = RECONNECT_MAX - attempt
-        aqua.emit('reconnectionFailed', this, { error, code, payload, retriesLeft })
+        aqua.emit(AqualinkEvents.ReconnectionFailed, this, { error, code, payload, retriesLeft })
         retriesLeft > 0
           ? setTimeout(() => tryReconnect(attempt + 1), Math.min(RETRY_BACKOFF_BASE * attempt, RETRY_BACKOFF_MAX))
-          : aqua.emit('socketClosed', this, payload)
+          : aqua.emit(AqualinkEvents.SocketClosed, this, payload)
       }
     }
     tryReconnect(1)
   }
 
   async lyricsLine(player, track, payload) {
-    !this.destroyed && this.aqua.emit('lyricsLine', this, track, payload)
+    !this.destroyed && this.aqua.emit(AqualinkEvents.LyricsLine, this, track, payload)
   }
 
   async lyricsFound(player, track, payload) {
-    !this.destroyed && this.aqua.emit('lyricsFound', this, track, payload)
+    !this.destroyed && this.aqua.emit(AqualinkEvents.LyricsFound, this, track, payload)
   }
 
   async lyricsNotFound(player, track, payload) {
-    !this.destroyed && this.aqua.emit('lyricsNotFound', this, track, payload)
+    !this.destroyed && this.aqua.emit(AqualinkEvents.LyricsNotFound, this, track, payload)
   }
 
   _handleAquaPlayerMove(oldChannel, newChannel) {
@@ -717,7 +775,7 @@ class Player extends EventEmitter {
 
   send(data) {
     try { this.aqua.send({ op: 4, d: data }) }
-    catch (err) { this.aqua.emit('error', new Error(`Send fail: ${err.message}`)) }
+    catch (err) { this.aqua.emit(AqualinkEvents.Error, new Error(`Send fail: ${err.message}`)) }
   }
 
   set(key, value) {

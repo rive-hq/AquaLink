@@ -5,6 +5,7 @@ const { Agent: HttpsAgent, request: httpsRequest } = require('node:https')
 const { Agent: HttpAgent, request: httpRequest } = require('node:http')
 const http2 = require('node:http2')
 const { createBrotliDecompress, createUnzip } = require('node:zlib')
+const { AqualinkEvents } = require('./AqualinkEvents')
 
 const BASE64_STANDARD_REGEX = /^[A-Za-z0-9+/]*={0,2}$/
 const BASE64_URL_REGEX = /^[A-Za-z0-9_-]*={0,2}$/
@@ -471,7 +472,7 @@ class Rest {
     const title = track?.info?.title
 
     if (!track || (!gid && !hasEncoded && !title)) {
-      this.aqua?.emit?.('error', '[Aqua/Lyrics] Invalid track object')
+      this.aqua?.emit?.(AqualinkEvents.Error, '[Aqua/Lyrics] Invalid track object')
       return null
     }
 
