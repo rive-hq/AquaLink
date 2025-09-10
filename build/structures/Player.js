@@ -10,10 +10,17 @@ const { spAutoPlay, scAutoPlay } = require('../handlers/autoplay')
 const LOOP_MODES = Object.freeze({ NONE: 0, TRACK: 1, QUEUE: 2 })
 const LOOP_MODE_NAMES = Object.freeze(['none', 'track', 'queue'])
 const EVENT_HANDLERS = Object.freeze({
-  TrackStartEvent: 'trackStart', TrackEndEvent: 'trackEnd', TrackExceptionEvent: 'trackError',
-  TrackStuckEvent: 'trackStuck', TrackChangeEvent: 'trackChange', WebSocketClosedEvent: 'socketClosed',
-  LyricsLineEvent: 'lyricsLine', LyricsFoundEvent: 'lyricsFound', LyricsNotFoundEvent: 'lyricsNotFound'
+  TrackStartEvent: 'trackStart',
+  TrackEndEvent: 'trackEnd',
+  TrackExceptionEvent: 'trackError',
+  TrackStuckEvent: 'trackStuck',
+  TrackChangeEvent: 'trackChange',
+  WebSocketClosedEvent: 'socketClosed',
+  LyricsLineEvent: 'lyricsLine',
+  LyricsFoundEvent: 'lyricsFound',
+  LyricsNotFoundEvent: 'lyricsNotFound'
 })
+
 const WATCHDOG_INTERVAL = 15000
 const VOICE_DOWN_THRESHOLD = 10000
 const RECONNECT_MAX = 3
@@ -28,14 +35,13 @@ const PREVIOUS_IDS_MAX = 20
 const AUTOPLAY_MAX = 3
 const INVALID_LOADS = new Set(['error', 'empty', 'LOAD_FAILED', 'NO_MATCHES'])
 
-
 const _functions = {
   clamp: v => (v = +v, v !== v ? 100 : v < 0 ? 0 : v > 200 ? 200 : v),
   randIdx: len => (Math.random() * len) | 0,
   toId: v => v?.id || v || null,
   isNum: v => typeof v === 'number' && v === v,
-  noop: () => { },
-  safeUnref: t => { if (t?.unref) try { t.unref() } catch { } },
+  noop: () => {},
+  safeUnref: t => { if (t?.unref) try { t.unref() } catch {} },
   isInvalidLoad: r => !r?.tracks?.length || INVALID_LOADS.has(r.loadType),
   safeDel: msg => { if (msg?.delete) msg.delete().catch(_functions.noop) }
 }
@@ -47,6 +53,7 @@ class MicrotaskUpdateBatcher {
     this.scheduled = 0
     this.flush = this._flush.bind(this)
   }
+
   batch(data, immediate) {
     const p = this.player
     if (!p) return Promise.reject(new Error('Player destroyed'))
@@ -62,6 +69,7 @@ class MicrotaskUpdateBatcher {
     }
     return Promise.resolve()
   }
+
   _flush() {
     const p = this.player
     const u = this.updates
@@ -73,10 +81,11 @@ class MicrotaskUpdateBatcher {
     this.updates = null
     this.scheduled = 0
     return p.updatePlayer(u).catch(err => {
-      try { p.aqua?.emit?.(AqualinkEvents.Error, new Error(`Update error: ${err.message}`)) } catch { }
+      try { p.aqua?.emit?.(AqualinkEvents.Error, new Error(`Update error: ${err.message}`)) } catch {}
       throw err
     })
   }
+
   destroy() {
     this.updates = this.scheduled = this.player = this.flush = null
   }
@@ -88,28 +97,34 @@ class CircularBuffer {
     this.size = size
     this.index = this.count = 0
   }
+
   push(item) {
     if (!item) return
     this.buffer[this.index] = item
     this.index = (this.index + 1) % this.size
     this.count < this.size && this.count++
   }
+
   getLast() {
     return this.count ? this.buffer[(this.index - 1 + this.size) % this.size] : null
   }
+
   clear() {
     if (!this.count) return
     this.buffer.fill(null, 0, this.count)
     this.count = this.index = 0
   }
+
   toArray() {
     if (!this.count) return []
     const result = new Array(this.count)
     const start = this.count === this.size ? this.index : 0
-    for (let i = 0, idx = 0; i < this.count; ++i) {
+    let idx = 0
+    for (let i = 0; i < this.count; ++i) {
       const item = this.buffer[(start + i) % this.size]
-      item && (result[idx++] = item)
+      if (item) result[idx++] = item
     }
+    result.length = idx
     return result
   }
 }
@@ -121,6 +136,7 @@ class Player extends EventEmitter {
   constructor(aqua, nodes, options = {}) {
     super()
     if (!aqua || !nodes || !options.guildId) throw new TypeError('Missing required parameters')
+
     Object.assign(this, {
       aqua, nodes, guildId: options.guildId, textChannel: options.textChannel,
       voiceChannel: options.voiceChannel, playing: false, paused: false, connected: false,
@@ -131,7 +147,6 @@ class Player extends EventEmitter {
     })
 
     this.volume = _functions.clamp(+options.defaultVolume || 100)
-
     this.loop = this._parseLoop(options.loop)
 
     const aquaOpts = aqua.options || {}
@@ -250,174 +265,114 @@ class Player extends EventEmitter {
     return this
   }
 
-async _voiceWatchdog() {
-  // Don't attempt recovery if:
-  // - Player is destroyed
-  // - No voice channel configured
-  // - Already connected
-  // - Not enough time has passed since voice went down
-  // - Already attempting recovery
-  // - Exceeded maximum reconnection attempts
-  if (this.destroyed ||
-      !this.voiceChannel ||
-      this.connected ||
-      !this._voiceDownSince ||
-      (Date.now() - this._voiceDownSince) < VOICE_DOWN_THRESHOLD ||
-      this._voiceRecovering ||
-      this.reconnectionRetries >= 4) {
-    return
-  }
-
-  // Check if we have the minimum required connection data
-  const hasVoiceData = this.connection?.sessionId && this.connection?.endpoint && this.connection?.token
-
-  if (!hasVoiceData) {
-    this.aqua.emit(AqualinkEvents.Debug, `[P:${this.guildId}] Watchdog: Missing voice connection data, skipping recovery`)
-    // If we don't have voice data for too long, consider the connection permanently broken
-    if ((Date.now() - this._voiceDownSince) > VOICE_DOWN_THRESHOLD * 3) {
-      this.aqua.emit(AqualinkEvents.Debug, `[P:${this.guildId}] Watchdog: Voice data missing too long, destroying player`)
-      this.destroy()
-    }
-    return
-  }
-
-  this._voiceRecovering = true
-  const recoveryStartTime = Date.now()
-
-  try {
-    // First try: Attempt to resume existing connection
-    if (await this.connection.attemptResume()) {
-      this.aqua.emit(AqualinkEvents.Debug, `[P:${this.guildId}] Watchdog: Resume successful`)
-      this.reconnectionRetries = 0
-      this._voiceDownSince = 0 // Reset the timer
+  async _voiceWatchdog() {
+    if (this.destroyed ||
+        !this.voiceChannel ||
+        this.connected ||
+        !this._voiceDownSince ||
+        (Date.now() - this._voiceDownSince) < VOICE_DOWN_THRESHOLD ||
+        this._voiceRecovering ||
+        this.reconnectionRetries >= 4) {
       return
     }
 
-    // Second try: Force rejoin by toggling mute state
-    this.aqua.emit(AqualinkEvents.Debug, `[P:${this.guildId}] Watchdog: Resume failed, attempting forced rejoin`)
+    const hasVoiceData = this.connection?.sessionId && this.connection?.endpoint && this.connection?.token
+    if (!hasVoiceData) {
+      if ((Date.now() - this._voiceDownSince) > VOICE_DOWN_THRESHOLD * 3) {
+        this.destroy()
+      }
+      return
+    }
 
-    const originalMute = this.mute
-    const toggleMute = !originalMute
+    this._voiceRecovering = true
+    try {
+      if (await this.connection.attemptResume()) {
+        this.reconnectionRetries = 0
+        this._voiceDownSince = 0
+        return
+      }
 
-    // Send initial state change
-    this.send({
-      guild_id: this.guildId,
-      channel_id: this.voiceChannel,
-      self_deaf: this.deaf,
-      self_mute: toggleMute
-    })
-
-    // Wait for mute toggle delay, then restore original state
-    await new Promise(resolve => setTimeout(resolve, MUTE_TOGGLE_DELAY))
-
-    if (!this.destroyed) {
+      const originalMute = this.mute
       this.send({
         guild_id: this.guildId,
         channel_id: this.voiceChannel,
         self_deaf: this.deaf,
-        self_mute: originalMute
+        self_mute: !originalMute
       })
+
+      await new Promise(resolve => setTimeout(resolve, MUTE_TOGGLE_DELAY))
+
+      if (!this.destroyed) {
+        this.send({
+          guild_id: this.guildId,
+          channel_id: this.voiceChannel,
+          self_deaf: this.deaf,
+          self_mute: originalMute
+        })
+      }
+
+      this.connection.resendVoiceUpdate()
+      this.reconnectionRetries++
+    } catch (err) {
+      this.reconnectionRetries++
+      if (this.reconnectionRetries >= 4) {
+        this.destroy()
+      }
+    } finally {
+      this._voiceRecovering = false
     }
-
-    // Try to resend voice update
-    this.connection.resendVoiceUpdate()
-
-    this.aqua.emit(AqualinkEvents.Debug, `[P:${this.guildId}] Watchdog: Forced rejoin completed`)
-    this.reconnectionRetries++
-
-  } catch (err) {
-    this.aqua.emit(AqualinkEvents.Debug, `[P:${this.guildId}] Watchdog error: ${err?.message}`)
-    this.reconnectionRetries++
-
-    // If we've exhausted all recovery attempts, destroy the player
-    if (this.reconnectionRetries >= 4) {
-      this.aqua.emit(AqualinkEvents.Debug, `[P:${this.guildId}] Watchdog: Max recovery attempts reached, destroying player`)
-      this.destroy()
-    }
-  } finally {
-    this._voiceRecovering = false
-
-    // Log recovery attempt duration for debugging
-    const recoveryDuration = Date.now() - recoveryStartTime
-    this.aqua.emit(AqualinkEvents.Debug, `[P:${this.guildId}] Watchdog: Recovery attempt completed in ${recoveryDuration}ms`)
   }
-}
 
   destroy({ preserveClient = true, skipRemote = false } = {}) {
-    if (this.destroyed) return this;
+    if (this.destroyed) return this
 
-    this.destroyed = true;
+    this.destroyed = true
 
     if (this._voiceWatchdogTimer) {
-      clearInterval(this._voiceWatchdogTimer);
-      this._voiceWatchdogTimer = null;
+      clearInterval(this._voiceWatchdogTimer)
+      this._voiceWatchdogTimer = null
     }
 
-    this.connected = this.playing = this.paused = this.isAutoplay = false;
-    this.isAutoplay = false;
-    this.autoplayRetries = this.reconnectionRetries = 0;
-    this.voiceChannel = null;
+    this.connected = this.playing = this.paused = this.isAutoplay = false
+    this.autoplayRetries = this.reconnectionRetries = 0
+    this.voiceChannel = null
+
     if (this.shouldDeleteMessage && this.nowPlayingMessage) {
-      this.nowPlayingMessage.delete();
-      this.nowPlayingMessage = null;
+      this.nowPlayingMessage.delete()
+      this.nowPlayingMessage = null
     }
-    this.emit('destroy');
-    this.removeAllListeners();
-    this.off('playerUpdate', this._boundPlayerUpdate);
-    this.off('event', this._boundEvent);
+
+    this.emit('destroy')
+    this.removeAllListeners()
 
     if (this.aqua && this._boundAquaPlayerMove) {
-      this.aqua.removeListener('playerMove', this._boundAquaPlayerMove);
-      this.aqua.off('playerMove', this._boundAquaPlayerMove);
+      this.aqua.removeListener('playerMove', this._boundAquaPlayerMove)
     }
 
-    if (this._updateBatcher) {
-      this._updateBatcher.destroy();
-      this._updateBatcher = null;
-    }
+    this._updateBatcher?.destroy()
+    this.connection?.destroy()
+    this.queue?.clear()
+    this.previousTracks?.clear()
+    this.previousIdentifiers?.clear()
 
-    if (this.connection) {
-      this.connection.destroy();
-      this.connection = null;
-    }
-
-    if (this.queue) {
-      this.queue.clear();
-      this.queue = null;
-    }
-
-    if (this.previousTracks) {
-      this.previousTracks.clear();
-      this.previousTracks = null;
-    }
-
-    if (this.previousIdentifiers) {
-      this.previousIdentifiers.clear();
-      this.previousIdentifiers = null;
-    }
-
-    this.filters = null;
-    this._dataStore = null;
-    this.current = null;
-    this.autoplaySeed = null;
-
-    this._boundPlayerUpdate = null;
-    this._boundEvent = null;
-    this._boundAquaPlayerMove = null;
+    this._updateBatcher = this.connection = this.queue = this.previousTracks = null
+    this.previousIdentifiers = this.filters = this._dataStore = this.current = null
+    this.autoplaySeed = this._boundPlayerUpdate = this._boundEvent = null
+    this._boundAquaPlayerMove = null
 
     if (!skipRemote) {
       try {
-        this.send({ guild_id: this.guildId, channel_id: null });
-        this.aqua?.destroyPlayer?.(this.guildId);
-        this.nodes?.connected && this.nodes?.rest?.destroyPlayer?.(this.guildId).catch(() => { });
-      } catch (e) { }
+        this.send({ guild_id: this.guildId, channel_id: null })
+        this.aqua?.destroyPlayer?.(this.guildId)
+        this.nodes?.connected && this.nodes?.rest?.destroyPlayer?.(this.guildId).catch(() => {})
+      } catch (e) {}
     }
 
     if (!preserveClient) {
-      this.aqua = null;
-      this.nodes = null;
+      this.aqua = null
+      this.nodes = null
     }
-    return this;
+    return this
   }
 
   pause(paused) {
@@ -432,14 +387,12 @@ async _voiceWatchdog() {
   seek(position) {
     if (this.destroyed || !this.playing || !_functions.isNum(position)) return this
 
-    const len = this.current && this.current.info ? this.current.info.length : 0
+    const len = this.current?.info?.length || 0
     const pos = position === 0 ? 0 : this.position + position
-
     const clamped = len ? Math.min(Math.max(pos, 0), len) : Math.max(pos, 0)
 
     this.position = clamped
     this.batchUpdatePlayer({ guildId: this.guildId, position: clamped }, true)
-
     return this
   }
 
@@ -607,7 +560,7 @@ async _voiceWatchdog() {
     if (this.destroyed) return
     track && this.previousTracks?.push(track)
     this.shouldDeleteMessage && _functions.safeDel(this.nowPlayingMessage)
-    this.current = null;
+    this.current = null
     const reason = payload?.reason
     const isFailure = reason === 'loadFailed' || reason === 'cleanup'
     const isReplaced = reason === 'replaced'
@@ -687,14 +640,10 @@ async _voiceWatchdog() {
       return
     }
     if (code === 4015) {
-      this.aqua.emit(AqualinkEvents.Debug, `[P:${this.guildId}] Voice crash, resuming...`)
       try {
         await this._attemptVoiceResume()
-        this.aqua.emit(AqualinkEvents.Debug, `[P:${this.guildId}] Resume ok`)
         return
-      } catch (err) {
-        this.aqua.emit(AqualinkEvents.Debug, `[P:${this.guildId}] Resume fail: ${err.message}`)
-      }
+      } catch (err) {}
     }
     if (![4015, 4009, 4006].includes(code)) {
       this.aqua.emit(AqualinkEvents.SocketClosed, this, payload)
@@ -770,7 +719,7 @@ async _voiceWatchdog() {
           self_deaf: this.deaf, self_mute: this.mute
         })
       }
-    } catch { }
+    } catch {}
   }
 
   send(data) {
@@ -789,15 +738,15 @@ async _voiceWatchdog() {
   }
 
   clearData() {
-    this.previousTracks?.clear();
-    this._dataStore?.clear();
-    this.previousIdentifiers?.clear();
-    if (this.current?.dispose) this.current.dispose();
-    this.current = null;
-    this.position = this.timestamp = 0;
-    this.queue?.forEach(track => track?.dispose?.());
-    this.queue?.clear();
-    return this;
+    this.previousTracks?.clear()
+    this._dataStore?.clear()
+    this.previousIdentifiers?.clear()
+    if (this.current?.dispose) this.current.dispose()
+    this.current = null
+    this.position = this.timestamp = 0
+    this.queue?.forEach(track => track?.dispose?.())
+    this.queue?.clear()
+    return this
   }
 
   updatePlayer(data) {
