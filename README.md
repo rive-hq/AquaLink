@@ -49,7 +49,7 @@
 </div>
 
 ## 📦 Installation
-**Latest Stable Release: `v2.11.7`** • **Choose your preferred package manager below**
+**Latest Stable Release: `v2.13.0`** • **Choose your preferred package manager below**
 
 <details>
 <summary><strong>📦 NPM (Most Popular)</strong></summary>
@@ -174,8 +174,8 @@ const aqua = new Aqua(client, nodes, {
     restVersion: "v4",
     autoResume: true,
     infiniteReconnects: true,
-    autoplayPlatform: ['spsearch', 'ytsearch', 'scsearch'],
-    nodeResolver: 'LeastLoad'
+    loadBalancer: 'LeastLoad',
+    leaveOnEnd: false
 });
 
 client.aqua = aqua;
