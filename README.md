@@ -49,7 +49,7 @@
 </div>
 
 ## 📦 Installation
-**Latest Stable Release: `v2.11.7`** • **Choose your preferred package manager below**
+**Latest Stable Release: `v2.13.0`** • **Choose your preferred package manager below**
 
 <details>
 <summary><strong>📦 NPM (Most Popular)</strong></summary>
@@ -71,7 +71,7 @@ npm install ToddyTheNoobDud/aqualink
 # 🎯 Stable release (recommended for production)
 yarn add aqualink
 
-# 🚧 Latest development build 
+# 🚧 Latest development build
 yarn add ToddyTheNoobDud/aqualink
 ```
 
@@ -84,7 +84,7 @@ yarn add ToddyTheNoobDud/aqualink
 # 🎯 Stable release (recommended for production)
 bun add aqualink
 
-# 🚧 Latest development build 
+# 🚧 Latest development build
 bun add ToddyTheNoobDud/aqualink
 ```
 
@@ -174,8 +174,8 @@ const aqua = new Aqua(client, nodes, {
     restVersion: "v4",
     autoResume: true,
     infiniteReconnects: true,
-    autoplayPlatform: ['spsearch', 'ytsearch', 'scsearch'],
-    nodeResolver: 'LeastLoad'
+    loadBalancer: 'LeastLoad',
+    leaveOnEnd: false
 });
 
 client.aqua = aqua;
@@ -313,7 +313,7 @@ client.on(Events.MessageCreate, async (message) => {
 
 For detailed usage, API references, and examples, check out our official documentation:
 
-  [![Docs](https://img.shields.io/badge/Documentation-0099FF?style=for-the-badge&logo=readthedocs&logoColor=white)](https://roddynnn.github.io/docs/)
+  [![Docs](https://img.shields.io/badge/Documentation-0099FF?style=for-the-badge&logo=readthedocs&logoColor=white)](https://aqualink-6006388d.mintlify.app)
 
 📌 **Get Started Quickly**
 - Installation guide
@@ -321,7 +321,7 @@ For detailed usage, API references, and examples, check out our official documen
 - Advanced features
 - Troubleshooting
 
-🔗 Visit: **[Aqualink Docs](https://roddynnn.github.io/docs)**
+🔗 Visit: **[Aqualink Docs](https://aqualink-6006388d.mintlify.app)**
 
 ## 👑 Premium Bots Using Aqualink
 
@@ -377,10 +377,10 @@ For detailed usage, API references, and examples, check out our official documen
   <tbody>
     <tr>
       <td align="center" valign="top" width="50%">
-        <a href="https://github.com/pomicee">
-          <img src="https://avatars.githubusercontent.com/u/134554554?v=4?s=100" width="100px;" alt="pomicee"/>
+        <a href="https://github.com/southctrl">
+          <img src="https://avatars.githubusercontent.com/u/134554554?v=4?s=100" width="100px;" alt="southctrl"/>
           <br />
-          <sub><b>asynico</b></sub>
+          <sub><b>southctrl</b></sub>
         </a>
         <br />
         <a href="#code-pomicee" title="Code">💻</a>
