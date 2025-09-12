@@ -62,7 +62,7 @@ class Rest {
     })
 
     this.defaultHeaders = Object.freeze({
-      Authorization: String(node.password || node.auth || EMPTY_STRING),
+      Authorization: String(node.auth || node.password || EMPTY_STRING),
       Accept: 'application/json, */*;q=0.5',
       'Accept-Encoding': 'gzip, deflate, br',
       'User-Agent': `Aqualink/${aqua?.version || '1.0'} (Node.js ${process.version})`
@@ -202,7 +202,7 @@ class Rest {
           }
 
           if (status >= 400) {
-            const error = new Error(`HTTP ${status} ${method} ${endpoint}`)
+            const error = new Error(`HTTP ${status} ${method} ${url}`)
             error.statusCode = status
             error.statusMessage = res.statusMessage
             error.headers = res.headers

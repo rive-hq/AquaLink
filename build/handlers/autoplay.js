@@ -12,9 +12,9 @@ const agent = new https.Agent(AGENT_CONFIG)
 
 const SC_LINK_RE = /<a\s+itemprop="url"\s+href="(\/[^"]+)"/g
 const MAX_REDIRECTS = 3
-const MAX_RESPONSE_BYTES = 5 * 1024 * 1024
+const MAX_RESPONSE_BYTES = 5 * 1024 * 1024 // 5 MB
 const MAX_SC_LINKS = 50
-const MAX_SP_RESULTS = 10
+const MAX_SP_RESULTS = 5
 const DEFAULT_TIMEOUT_MS = 8000
 
 const fastFetch = (url, depth = 0) => new Promise((resolve, reject) => {
@@ -87,75 +87,28 @@ const scAutoPlay = async baseUrl => {
 
 const spAutoPlay = async (seed, player, requester, excludedIds = []) => {
   try {
-    if (!seed?.trackId && !seed?.artistIds) return null
+    if (!seed?.trackId) return null
+
+    const seedQuery = `seed_tracks=${seed.trackId}${seed.artistIds ? `&seed_artists=${seed.artistIds}` : ''}`
+    const res = await player.aqua.resolve({ query: seedQuery, source: 'spsearch', requester })
+
+    const candidates = res?.tracks || []
+    if (!candidates.length) return null
 
     const seen = new Set(excludedIds)
     const prevId = player.current?.identifier
     if (prevId) seen.add(prevId)
 
-    const allCandidates = []
-    const queries = []
-
-    if (seed.trackId) {
-      queries.push(`mix:track:${seed.trackId}`)
+    const out = []
+    for (const t of candidates) {
+      if (seen.has(t.identifier)) continue
+      seen.add(t.identifier)
+      t.pluginInfo = { ...(t.pluginInfo || {}), clientData: { fromAutoplay: true } }
+      out.push(t)
+      if (out.length === MAX_SP_RESULTS) break
     }
 
-    if (seed.artistIds) {
-      const artistId = seed.artistIds.split(',')[0].trim()
-      queries.push(`mix:artist:${artistId}`)
-    }
-
-    for (const query of queries) {
-      try {
-        let res
-        try {
-
-          res = await player.aqua.resolve({ query, source: 'sprec', requester })
-        } catch (aquaErr) {
-          console.log('Aqua resolve failed, trying Lavalink fallback:', aquaErr.message)
-
-          if (player.nodes?.rest) {
-            const lavalinkRes = await player.nodes.rest.get(`/v4/loadtracks?identifier=${encodeURIComponent(query)}`)
-            res = { tracks: lavalinkRes.tracks || [] }
-          } else {
-            throw aquaErr
-          }
-        }
-
-        const candidates = res?.tracks || []
-
-        let prioritizedCandidates = candidates
-        if (seed.artistIds && candidates.length > 0) {
-          const seedArtists = seed.artistIds.split(',').map(a => a.trim().toLowerCase())
-          const artistTracks = candidates.filter(t =>
-            t.info?.author && seedArtists.some(seedArtist =>
-              t.info.author.toLowerCase().includes(seedArtist) ||
-              seedArtist.includes(t.info.author.toLowerCase())
-            )
-          )
-          const otherTracks = candidates.filter(t => !artistTracks.includes(t))
-          prioritizedCandidates = [...artistTracks, ...otherTracks]
-        }
-
-        for (const t of prioritizedCandidates) {
-          if (!seen.has(t.identifier)) {
-            seen.add(t.identifier)
-            t.pluginInfo = { ...(t.pluginInfo || {}), clientData: { fromAutoplay: true } }
-            allCandidates.push(t)
-          }
-        }
-      } catch (queryErr) {
-        console.error(`Query ${query} failed:`, queryErr.message)
-      }
-    }
-
-    if (!allCandidates.length) return null
-
-    const shuffled = shuffleInPlace([...allCandidates])
-    const out = shuffled.slice(0, MAX_SP_RESULTS)
-
-    console.log(`Returning ${out.length} autoplay tracks`)
-    return out
+    return out.length ? out : null
   } catch (err) {
     console.error('spAutoPlay error:', err)
     return null

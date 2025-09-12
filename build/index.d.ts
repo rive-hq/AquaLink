@@ -529,7 +529,7 @@ declare module "aqualink" {
         name?: string;
         port?: number | string;
         auth?: string;
-        secure?: boolean;
+        ssl?: boolean;
         sessionId?: string;
         regions?: string[];
     }
@@ -1014,6 +1014,40 @@ declare module "aqualink" {
         readonly NONE: 0;
         readonly TRACK: 1;
         readonly QUEUE: 2;
+    };
+
+    export const AqualinkEvents: {
+        readonly TrackStart: 'trackStart';
+        readonly TrackEnd: 'trackEnd';
+        readonly TrackError: 'trackError';
+        readonly TrackStuck: 'trackStuck';
+        readonly TrackChange: 'trackChange';
+        readonly SocketClosed: 'socketClosed';
+        readonly LyricsLine: 'lyricsLine';
+        readonly LyricsFound: 'lyricsFound';
+        readonly LyricsNotFound: 'lyricsNotFound';
+        readonly QueueEnd: 'queueEnd';
+        readonly PlayerUpdate: 'playerUpdate';
+        readonly PlayerMove: 'playerMove';
+        readonly PlayerReconnected: 'playerReconnected';
+        readonly AutoplayFailed: 'autoplayFailed';
+        readonly ReconnectionFailed: 'reconnectionFailed';
+        readonly NodeConnect: 'nodeConnect';
+        readonly NodeCreate: 'nodeCreate';
+        readonly NodeError: 'nodeError';
+        readonly NodeDisconnect: 'nodeDisconnect';
+        readonly NodeReconnect: 'nodeReconnect';
+        readonly NodeDestroy: 'nodeDestroy';
+        readonly NodeReady: 'nodeReady';
+        readonly NodeCustomOp: 'nodeCustomOp';
+        readonly NodeFailover: 'nodeFailover';
+        readonly NodeFailoverComplete: 'nodeFailoverComplete';
+        readonly Debug: 'debug';
+        readonly Error: 'error';
+        readonly PlayerCreate: 'playerCreate';
+        readonly PlayerDestroy: 'playerDestroy';
+        readonly PlayersRebuilt: 'playersRebuilt';
+        readonly PlayerMigrated: 'playerMigrated';
     };
 
 }
