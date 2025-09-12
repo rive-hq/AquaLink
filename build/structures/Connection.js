@@ -1,9 +1,12 @@
 'use strict'
 const { AqualinkEvents } = require('./AqualinkEvents')
+
 const POOL_SIZE = 12
 const UPDATE_TIMEOUT = 4000
 const RECONNECT_DELAY = 1000
 const MAX_RECONNECT_ATTEMPTS = 3
+const RESUME_BACKOFF_MAX = 8000
+const VOICE_DATA_TIMEOUT = 30000
 
 const STATE_FLAGS = {
   CONNECTED: 1,
@@ -14,31 +17,35 @@ const STATE_FLAGS = {
   HAS_MOVE: 32,
   UPDATE_SCHEDULED: 64,
   DISCONNECTING: 128,
-  ATTEMPTING_RESUME: 256  // Added flag to prevent concurrent resume attempts
+  ATTEMPTING_RESUME: 256,
+  VOICE_DATA_STALE: 512
 }
 
 const ENDPOINT_REGION_REGEX = /^([a-z-]+)(?:\d+)?/i
 
-const _functions = {
-  safeUnref: (timer) => timer?.unref?.(),
-  isValidString: (str) => typeof str === 'string' && str.length > 0,
-  isValidNumber: (num) => typeof num === 'number' && num >= 0 && Number.isFinite(num),
-  resetVoicePayload: (voice) => {
+const helpers = {
+  safeUnref: timer => timer && typeof timer.unref === 'function' && timer.unref(),
+  isValidString: str => typeof str === 'string' && str.length > 0,
+  isValidNumber: num => typeof num === 'number' && num >= 0 && Number.isFinite(num),
+  resetVoicePayload: voice => {
     voice.token = voice.endpoint = voice.sessionId = null
     voice.resume = voice.sequence = undefined
-  }
+  },
+  extractRegionFromEndpoint: endpoint => {
+    const match = ENDPOINT_REGION_REGEX.exec(endpoint)
+    return match ? match[1] : 'unknown'
+  },
+  isNetworkError: err => !!err && (err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND' || err.code === 'ETIMEDOUT')
 }
 
 class OptimizedPayloadPool {
-  constructor() {
-    this.pool = new Array(POOL_SIZE);
-    this.size = POOL_SIZE;
-    for (let i = 0; i < POOL_SIZE; i++) {
-      this.pool[i] = this._createPayload();
-    }
+  constructor () {
+    this.pool = new Array(POOL_SIZE)
+    this.size = POOL_SIZE
+    for (let i = 0; i < POOL_SIZE; i++) this.pool[i] = this._createPayload()
   }
 
-  _createPayload() {
+  _createPayload () {
     return {
       guildId: null,
       data: {
@@ -51,40 +58,33 @@ class OptimizedPayloadPool {
         },
         volume: null
       }
-    };
-  }
-
-  acquire() {
-    return this.size > 0 ? this.pool[--this.size] : this._createPayload();
-  }
-
-  release(payload) {
-    if (!payload || this.size >= POOL_SIZE) return;
-
-    payload.guildId = null;
-    const voice = payload.data.voice;
-    voice.token = null;
-    voice.endpoint = null;
-    voice.sessionId = null;
-    voice.resume = undefined;
-    voice.sequence = undefined;
-    payload.data.volume = null;
-
-    this.pool[this.size++] = payload;
-  }
-
-  destroy() {
-    for (let i = 0; i < this.size; i++) {
-      this.pool[i] = null;
     }
-    this.pool = null;
-    this.size = 0;
+  }
+
+  acquire () {
+    return this.size > 0 ? this.pool[--this.size] : this._createPayload()
+  }
+
+  release (payload) {
+    if (!payload || this.size >= POOL_SIZE) return
+    payload.guildId = null
+    const voice = payload.data.voice
+    helpers.resetVoicePayload(voice)
+    payload.data.volume = null
+    this.pool[this.size++] = payload
+  }
+
+  destroy () {
+    for (let i = 0; i < this.pool.length; i++) this.pool[i] = null
+    this.pool = null
+    this.size = 0
   }
 }
+
 const sharedPool = new OptimizedPayloadPool()
 
 class Connection {
-  constructor(player) {
+  constructor (player) {
     if (!player?.aqua?.clientId || !player.nodes?.rest) {
       throw new TypeError('Invalid player configuration')
     }
@@ -105,38 +105,40 @@ class Connection {
     this._lastEndpoint = null
     this._pendingUpdate = null
     this._stateFlags = 0
-    this._lastListenerCheck = 0
     this._reconnectAttempts = 0
     this._destroyed = false
     this._reconnectTimer = null
+    this._lastVoiceDataUpdate = 0
+    this._consecutiveFailures = 0
 
     this._executeVoiceUpdate = this._executeVoiceUpdate.bind(this)
     this._handleReconnect = this._handleReconnect.bind(this)
   }
 
-  // Check if we have minimum required data for voice connection
-  _hasValidVoiceData() {
-    return !!(this.sessionId && this.endpoint && this.token)
+  _hasValidVoiceData () {
+    if (!this.sessionId || !this.endpoint || !this.token) return false
+    if (Date.now() - this._lastVoiceDataUpdate > VOICE_DATA_TIMEOUT) {
+      this._stateFlags |= STATE_FLAGS.VOICE_DATA_STALE
+      return false
+    }
+    return true
   }
 
-  // Check if connection is in a restorable state
-  _canAttemptResume() {
+  _canAttemptResume () {
     return !this._destroyed &&
            this._hasValidVoiceData() &&
            this._reconnectAttempts < MAX_RECONNECT_ATTEMPTS &&
-           !(this._stateFlags & STATE_FLAGS.ATTEMPTING_RESUME) &&
-           !(this._stateFlags & STATE_FLAGS.DISCONNECTING)
+           !(this._stateFlags & (STATE_FLAGS.ATTEMPTING_RESUME | STATE_FLAGS.DISCONNECTING | STATE_FLAGS.VOICE_DATA_STALE))
   }
 
-  setServerUpdate(data) {
-    if (this._destroyed || !data?.endpoint || !data.token ||
-        !_functions.isValidString(data.endpoint) || !_functions.isValidString(data.token)) return
+  setServerUpdate (data) {
+    if (this._destroyed || !data?.endpoint || !data.token) return
+    if (!helpers.isValidString(data.endpoint) || !helpers.isValidString(data.token)) return
 
     const endpoint = data.endpoint.trim()
     if (this._lastEndpoint === endpoint && this.token === data.token) return
 
-    const match = ENDPOINT_REGION_REGEX.exec(endpoint)
-    const newRegion = match ? match[1] : 'unknown'
+    const newRegion = helpers.extractRegionFromEndpoint(endpoint)
     const regionChanged = this.region !== newRegion
     const endpointChanged = this._lastEndpoint !== endpoint
 
@@ -145,34 +147,36 @@ class Connection {
         this.sequence = 0
         this._lastEndpoint = endpoint
         this._reconnectAttempts = 0
+        this._consecutiveFailures = 0
       }
       this.endpoint = endpoint
       this.region = newRegion
     }
 
     this.token = data.token
+    this._lastVoiceDataUpdate = Date.now()
+    this._stateFlags &= ~STATE_FLAGS.VOICE_DATA_STALE
+
     if (this._player.paused) this._player.pause(false)
     this._scheduleVoiceUpdate()
   }
 
-  resendVoiceUpdate() {
+  resendVoiceUpdate () {
     if (this._destroyed || !this._hasValidVoiceData()) return false
     this._scheduleVoiceUpdate()
     return true
   }
 
-  setStateUpdate(data) {
+  setStateUpdate (data) {
     if (this._destroyed || !data || data.user_id !== this._clientId) return
 
-    const {session_id, channel_id, self_deaf, self_mute} = data
+    const { session_id, channel_id, self_deaf, self_mute } = data
 
     if (channel_id) {
       let needsUpdate = false
 
       if (this.voiceChannel !== channel_id) {
-        if (this._stateFlags & STATE_FLAGS.HAS_MOVE) {
-          this._aqua.emit(AqualinkEvents.PlayerMove, this.voiceChannel, channel_id)
-        }
+        this._aqua.emit(AqualinkEvents.PlayerMove, this.voiceChannel, channel_id)
         this.voiceChannel = channel_id
         this._player.voiceChannel = channel_id
         needsUpdate = true
@@ -180,14 +184,19 @@ class Connection {
 
       if (this.sessionId !== session_id) {
         this.sessionId = session_id
+        this._lastVoiceDataUpdate = Date.now()
+        this._stateFlags &= ~STATE_FLAGS.VOICE_DATA_STALE
         needsUpdate = true
         this._reconnectAttempts = 0
+        this._consecutiveFailures = 0
       }
 
       this._player.connection.sessionId = session_id || this._player.connection.sessionId
-
       this._player.self_deaf = !!self_deaf
       this._player.self_mute = !!self_mute
+      this._player.selfDeaf = !!self_deaf
+      this._player.selfMute = !!self_mute
+
       this._player.connected = true
       this._stateFlags |= STATE_FLAGS.CONNECTED
 
@@ -197,14 +206,13 @@ class Connection {
     }
   }
 
-  _handleDisconnect() {
+  _handleDisconnect () {
     if (this._destroyed || !(this._stateFlags & STATE_FLAGS.CONNECTED)) return
 
     this._stateFlags = (this._stateFlags | STATE_FLAGS.DISCONNECTING) & ~STATE_FLAGS.CONNECTED
     this._player.connected = false
     this._clearPendingUpdate()
 
-    // Clear reconnect timer if active
     if (this._reconnectTimer) {
       clearTimeout(this._reconnectTimer)
       this._reconnectTimer = null
@@ -213,28 +221,31 @@ class Connection {
     this.voiceChannel = null
     this.sessionId = null
     this.sequence = 0
+    this._lastVoiceDataUpdate = 0
+    this._stateFlags |= STATE_FLAGS.VOICE_DATA_STALE
 
     try {
       if (typeof this._player.destroy === 'function') this._player.destroy()
     } catch (error) {
-      this._aqua.emit(AqualinkEvents.Debug, new Error(`Player destroy failed: ${error.message}`))
+      this._aqua.emit(AqualinkEvents.Debug, new Error(`Player destroy failed: ${error?.message || error}`))
     } finally {
       this._stateFlags &= ~STATE_FLAGS.DISCONNECTING
     }
   }
 
-  async attemptResume() {
-    // Early validation - don't attempt if we don't have required data
+  async attemptResume () {
     if (!this._canAttemptResume()) {
       this._aqua.emit(AqualinkEvents.Debug, `Resume blocked: destroyed=${this._destroyed}, hasValidData=${this._hasValidVoiceData()}, attempts=${this._reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}`)
+      if (this._reconnectAttempts >= MAX_RECONNECT_ATTEMPTS || (this._stateFlags & STATE_FLAGS.VOICE_DATA_STALE)) {
+        this._handleDisconnect()
+      }
       return false
     }
 
-    // Set attempting resume flag to prevent concurrent attempts
     this._stateFlags |= STATE_FLAGS.ATTEMPTING_RESUME
     this._reconnectAttempts++
 
-    this._aqua.emit(AqualinkEvents.Debug, `Attempt voice: G: ${this._guildId} E: ${this.endpoint} T: ${this.token?.substring(0, 10)}... S: ${this.sessionId}`)
+    this._aqua.emit(AqualinkEvents.Debug, `Attempt resume: guild=${this._guildId} endpoint=${this.endpoint} session=${this.sessionId}`)
 
     const payload = sharedPool.acquire()
 
@@ -244,60 +255,52 @@ class Connection {
       voice.token = this.token
       voice.endpoint = this.endpoint
       voice.sessionId = this.sessionId
-      voice.resume = true  // Always try to resume when we have valid data
+      voice.resume = true
       voice.sequence = this.sequence
       payload.data.volume = this._player?.volume ?? 100
 
       await this._sendUpdate(payload)
 
-      // Success - reset attempt counter
       this._reconnectAttempts = 0
+      this._consecutiveFailures = 0
       this._aqua.emit(AqualinkEvents.Debug, `Resume successful for guild ${this._guildId}`)
       return true
-
     } catch (error) {
-      this._aqua.emit(AqualinkEvents.Debug, `Resume failed for guild ${this._guildId}: ${error.message}`)
+      this._consecutiveFailures++
+      this._aqua.emit(AqualinkEvents.Debug, `Resume failed for guild ${this._guildId}: ${error?.message || error}`)
 
-      // Only schedule retry if we haven't exceeded max attempts
-      if (this._reconnectAttempts < MAX_RECONNECT_ATTEMPTS && !this._destroyed) {
-        const delay = RECONNECT_DELAY * Math.pow(2, this._reconnectAttempts - 1)
+      if (this._reconnectAttempts < MAX_RECONNECT_ATTEMPTS && !this._destroyed && this._consecutiveFailures < 5) {
+        const delay = Math.min(RECONNECT_DELAY * (1 << (this._reconnectAttempts - 1)), RESUME_BACKOFF_MAX)
         this._reconnectTimer = setTimeout(this._handleReconnect, delay)
-        _functions.safeUnref(this._reconnectTimer)
+        helpers.safeUnref(this._reconnectTimer)
       } else {
-        this._aqua.emit(AqualinkEvents.Debug, `Max reconnect attempts reached for guild ${this._guildId}`)
+        this._aqua.emit(AqualinkEvents.Debug, `Max reconnect attempts or failures reached for guild ${this._guildId}`)
+        this._handleDisconnect()
       }
 
       return false
-
     } finally {
       this._stateFlags &= ~STATE_FLAGS.ATTEMPTING_RESUME
       sharedPool.release(payload)
     }
   }
 
-  _handleReconnect() {
-    if (!this._destroyed) {
-      this.attemptResume()
-    }
+  _handleReconnect () {
+    if (!this._destroyed) this.attemptResume()
   }
 
-  updateSequence(seq) {
-    if (_functions.isValidNumber(seq)) {
-      this.sequence = Math.max(seq, this.sequence)
-    }
+  updateSequence (seq) {
+    if (helpers.isValidNumber(seq)) this.sequence = Math.max(seq, this.sequence)
   }
 
-  _clearPendingUpdate() {
+  _clearPendingUpdate () {
     this._stateFlags &= ~STATE_FLAGS.UPDATE_SCHEDULED
-    if (this._pendingUpdate?.payload) {
-      sharedPool.release(this._pendingUpdate.payload)
-    }
+    if (this._pendingUpdate?.payload) sharedPool.release(this._pendingUpdate.payload)
     this._pendingUpdate = null
   }
 
-  _scheduleVoiceUpdate() {
-    if (this._destroyed || !this._hasValidVoiceData() ||
-        (this._stateFlags & STATE_FLAGS.UPDATE_SCHEDULED)) return
+  _scheduleVoiceUpdate () {
+    if (this._destroyed || !this._hasValidVoiceData() || (this._stateFlags & STATE_FLAGS.UPDATE_SCHEDULED)) return
 
     this._clearPendingUpdate()
     const payload = sharedPool.acquire()
@@ -311,12 +314,13 @@ class Connection {
     voice.sequence = undefined
     payload.data.volume = this._player.volume
 
-    this._pendingUpdate = {payload, timestamp: Date.now()}
+    this._pendingUpdate = { payload, timestamp: Date.now() }
     this._stateFlags |= STATE_FLAGS.UPDATE_SCHEDULED
+
     queueMicrotask(this._executeVoiceUpdate)
   }
 
-  _executeVoiceUpdate() {
+  _executeVoiceUpdate () {
     if (this._destroyed) return
 
     this._stateFlags &= ~STATE_FLAGS.UPDATE_SCHEDULED
@@ -334,24 +338,21 @@ class Connection {
     this._sendUpdate(payload).finally(() => sharedPool.release(payload))
   }
 
-  async _sendUpdate(payload) {
+  async _sendUpdate (payload) {
     if (this._destroyed) throw new Error('Connection destroyed')
     if (!this._rest) throw new Error('REST interface unavailable')
 
     try {
       await this._rest.updatePlayer(payload)
     } catch (error) {
-      const isNetworkError = error.code === 'ECONNREFUSED' ||
-                            error.code === 'ENOTFOUND' ||
-                            error.code === 'ETIMEDOUT'
-      if (!isNetworkError) {
-        this._aqua.emit(AqualinkEvents.Debug, new Error(`Voice update failed: ${error.message}`))
+      if (!helpers.isNetworkError(error)) {
+        this._aqua.emit(AqualinkEvents.Debug, new Error(`Voice update failed: ${error?.message || error}`))
       }
       throw error
     }
   }
 
-  destroy() {
+  destroy () {
     if (this._destroyed) return
 
     this._destroyed = true
@@ -376,6 +377,8 @@ class Connection {
     this._stateFlags = 0
     this.sequence = 0
     this._reconnectAttempts = 0
+    this._consecutiveFailures = 0
+    this._lastVoiceDataUpdate = 0
   }
 }
 
