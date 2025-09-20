@@ -93,6 +93,7 @@ class Aqua extends EventEmitter {
     this._leastUsedNodesCacheTime = 0
     this._nodeLoadCache = new Map()
     this._nodeLoadCacheTime = new Map()
+    this._nodeLoadCacheMaxSize = 20
 
     this._bindEventHandlers()
   }
@@ -173,6 +174,12 @@ class Aqua extends EventEmitter {
     const load = this._calculateNodeLoad(node)
     this._nodeLoadCache.set(nodeId, load)
     this._nodeLoadCacheTime.set(nodeId, now)
+    // Limit cache size
+    if (this._nodeLoadCache.size > this._nodeLoadCacheMaxSize) {
+      const oldest = this._nodeLoadCacheTime.keys().next().value
+      this._nodeLoadCache.delete(oldest)
+      this._nodeLoadCacheTime.delete(oldest)
+    }
     return load
   }
 
@@ -412,7 +419,7 @@ class Aqua extends EventEmitter {
       paused: !!player.paused,
       position: player.position || 0,
       current: player.current || null,
-      queue: player.queue?.tracks?.slice(0, 50) || EMPTY_ARRAY,
+      queue: player.queue?.toArray() || EMPTY_ARRAY,
       repeat: player.loop,
       shuffle: player.shuffle,
       deaf: player.deaf ?? false,
@@ -790,9 +797,12 @@ class Aqua extends EventEmitter {
     }
 
     this._invalidateCache()
-    if (this._nodeLoadCache.size > 20) {
-      this._nodeLoadCache.clear()
-      this._nodeLoadCacheTime.clear()
+    if (this._nodeLoadCache.size > this._nodeLoadCacheMaxSize) {
+      const sorted = [...this._nodeLoadCacheTime.entries()].sort((a, b) => a[1] - b[1])
+      sorted.slice(0, sorted.length - this._nodeLoadCacheMaxSize).forEach(([nodeId]) => {
+        this._nodeLoadCache.delete(nodeId)
+        this._nodeLoadCacheTime.delete(nodeId)
+      })
     }
   }
 
