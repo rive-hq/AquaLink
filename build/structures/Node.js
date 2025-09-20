@@ -108,10 +108,6 @@ class Node {
       close: this._handleClose.bind(this),
       connect: this.connect.bind(this)
     })
-
-    // Pre-allocate reusable objects for performance
-    this._reusablePayload = {}
-    this._reusableStats = {}
   }
 
   _buildHeaders() {
