@@ -40,10 +40,42 @@ const _functions = {
   randIdx: len => (Math.random() * len) | 0,
   toId: v => v?.id || v || null,
   isNum: v => typeof v === 'number' && v === v,
-  noop: () => {},
-  safeUnref: t => { if (t?.unref) try { t.unref() } catch {} },
+  noop: () => { },
+  safeUnref: t => { if (t?.unref) try { t.unref() } catch { } },
   isInvalidLoad: r => !r?.tracks?.length || INVALID_LOADS.has(r.loadType),
   safeDel: msg => { if (msg?.delete) msg.delete().catch(_functions.noop) }
+}
+
+const circularBufferPool = []
+const updateBatcherPool = []
+
+function acquireCircularBuffer(size = PREVIOUS_TRACKS_SIZE) {
+  return circularBufferPool.pop() || new CircularBuffer(size)
+}
+
+function releaseCircularBuffer(buffer) {
+  if (buffer) {
+    buffer.clear()
+    circularBufferPool.push(buffer)
+  }
+}
+
+function acquireUpdateBatcher(player) {
+  const batcher = updateBatcherPool.pop()
+  if (batcher) {
+    batcher.player = player
+    batcher.updates = null
+    batcher.scheduled = 0
+    return batcher
+  }
+  return new MicrotaskUpdateBatcher(player)
+}
+
+function releaseUpdateBatcher(batcher) {
+  if (batcher) {
+    batcher.destroy()
+    updateBatcherPool.push(batcher)
+  }
 }
 
 class MicrotaskUpdateBatcher {
@@ -81,7 +113,7 @@ class MicrotaskUpdateBatcher {
     this.updates = null
     this.scheduled = 0
     return p.updatePlayer(u).catch(err => {
-      try { p.aqua?.emit?.(AqualinkEvents.Error, new Error(`Update error: ${err.message}`)) } catch {}
+      try { p.aqua?.emit?.(AqualinkEvents.Error, new Error(`Update error: ${err.message}`)) } catch { }
       throw err
     })
   }
@@ -157,8 +189,8 @@ class Player extends EventEmitter {
     this.filters = new Filters(this)
     this.queue = new Queue()
     this.previousIdentifiers = new Set()
-    this.previousTracks = new CircularBuffer(50)
-    this._updateBatcher = new MicrotaskUpdateBatcher(this)
+    this.previousTracks = acquireCircularBuffer(50)
+    this._updateBatcher = acquireUpdateBatcher(this)
     this._dataStore = null
     this._bindEvents()
     this._startWatchdog()
@@ -231,7 +263,7 @@ class Player extends EventEmitter {
 
   async play() {
     if (this.destroyed || !this.connected || !this.queue?.size) return this
-    const item = this.queue.shift()
+    const item = this.queue.dequeue()
     if (!item) return this
     try {
       this.current = item.track ? item : await item.resolve(this.aqua)
@@ -267,12 +299,12 @@ class Player extends EventEmitter {
 
   async _voiceWatchdog() {
     if (this.destroyed ||
-        !this.voiceChannel ||
-        this.connected ||
-        !this._voiceDownSince ||
-        (Date.now() - this._voiceDownSince) < VOICE_DOWN_THRESHOLD ||
-        this._voiceRecovering ||
-        this.reconnectionRetries >= 4) {
+      !this.voiceChannel ||
+      this.connected ||
+      !this._voiceDownSince ||
+      (Date.now() - this._voiceDownSince) < VOICE_DOWN_THRESHOLD ||
+      this._voiceRecovering ||
+      this.reconnectionRetries >= 4) {
       return
     }
 
@@ -348,14 +380,11 @@ class Player extends EventEmitter {
     if (this.aqua && this._boundAquaPlayerMove) {
       this.aqua.removeListener('playerMove', this._boundAquaPlayerMove)
     }
-
-    this._updateBatcher?.destroy()
-    this.connection?.destroy()
-    this.queue?.clear()
-    this.previousTracks?.clear()
-    this.previousIdentifiers?.clear()
+    releaseUpdateBatcher(this._updateBatcher)
+    releaseCircularBuffer(this.previousTracks)
 
     this._updateBatcher = this.connection = this.queue = this.previousTracks = null
+    this.previousIdentifiers?.clear()
     this.previousIdentifiers = this.filters = this._dataStore = this.current = null
     this.autoplaySeed = this._boundPlayerUpdate = this._boundEvent = null
     this._boundAquaPlayerMove = null
@@ -364,8 +393,8 @@ class Player extends EventEmitter {
       try {
         this.send({ guild_id: this.guildId, channel_id: null })
         this.aqua?.destroyPlayer?.(this.guildId)
-        this.nodes?.connected && this.nodes?.rest?.destroyPlayer?.(this.guildId).catch(() => {})
-      } catch (e) {}
+        this.nodes?.connected && this.nodes?.rest?.destroyPlayer?.(this.guildId).catch(() => { })
+      } catch (e) { }
     }
 
     if (!preserveClient) {
@@ -458,7 +487,7 @@ class Player extends EventEmitter {
       if (i !== j) [items[i], items[j]] = [items[j], items[i]]
     }
     this.queue.clear()
-    for (let i = 0; i < len; ++i) this.queue.push(items[i])
+    for (let i = 0; i < len; ++i) this.queue.add(items[i])
     return this
   }
 
@@ -510,7 +539,7 @@ class Player extends EventEmitter {
         if (track?.info?.title) {
           this.autoplayRetries = 0
           track.requester = prev.requester || { id: 'Unknown' }
-          this.queue.push(track)
+          this.queue.add(track)
           await this.play()
           return this
         }
@@ -558,12 +587,14 @@ class Player extends EventEmitter {
 
   async trackEnd(player, track, payload) {
     if (this.destroyed) return
-    track && this.previousTracks?.push(track)
-    this.shouldDeleteMessage && _functions.safeDel(this.nowPlayingMessage)
-    this.current = null
     const reason = payload?.reason
     const isFailure = reason === 'loadFailed' || reason === 'cleanup'
     const isReplaced = reason === 'replaced'
+    if (track) {
+      this.previousTracks?.push(track)
+    }
+    this.shouldDeleteMessage && _functions.safeDel(this.nowPlayingMessage)
+    this.current = null
     if (isFailure) {
       if (!this.queue?.size) {
         this.clearData()
@@ -574,10 +605,10 @@ class Player extends EventEmitter {
       }
       return
     }
-    if (track && !isReplaced) {
+    if (track && reason === 'finished') {
       const l = this.loop
-      if (l === 1) this.queue.unshift(track)
-      else if (l === 2) this.queue.push(track)
+      if (l === 1) this.queue.add(track)
+      else if (l === 2) this.queue.add(track)
     }
     if (this.queue?.size) {
       this.aqua.emit(AqualinkEvents.TrackEnd, this, track, reason)
@@ -643,7 +674,7 @@ class Player extends EventEmitter {
       try {
         await this._attemptVoiceResume()
         return
-      } catch (err) {}
+      } catch (err) { }
     }
     if (![4015, 4009, 4006].includes(code)) {
       this.aqua.emit(AqualinkEvents.SocketClosed, this, payload)
@@ -675,10 +706,10 @@ class Player extends EventEmitter {
         np.autoplaySeed = state.autoplaySeed
         np.previousIdentifiers = new Set(state.previousIdentifiers)
         const ct = state.currentTrack
-        ct && np.queue.unshift(ct)
+        ct && np.queue.add(ct)
         const q = state.queue
         for (let i = 0, len = q.length; i < len; ++i) {
-          q[i] !== ct && np.queue.push(q[i])
+          q[i] !== ct && np.queue.add(q[i])
         }
         if (ct) {
           await np.play()
@@ -715,11 +746,13 @@ class Player extends EventEmitter {
         this.voiceChannel = _functions.toId(newChannel)
         this.connected = !!newChannel
         this.send({
-          guild_id: this.guildId, channel_id: this.voiceChannel,
-          self_deaf: this.deaf, self_mute: this.mute
+          guild_id: this.guildId,
+          channel_id: this.voiceChannel,
+          self_deaf: this.deaf,
+          self_mute: this.mute
         })
       }
-    } catch {}
+    } catch { }
   }
 
   send(data) {
@@ -744,7 +777,6 @@ class Player extends EventEmitter {
     if (this.current?.dispose) this.current.dispose()
     this.current = null
     this.position = this.timestamp = 0
-    this.queue?.forEach(track => track?.dispose?.())
     this.queue?.clear()
     return this
   }
